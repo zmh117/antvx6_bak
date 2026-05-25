@@ -1,0 +1,10 @@
+{
+  "name": "antv-x6-er",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix front",
+    "dev:api": "cd back && uvicorn app.main:app --reload --port 8001",
+    "build": "npm run build --prefix front",
+    "preview": "npm run preview --prefix front"
+  }
+}

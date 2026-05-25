@@ -1,0 +1,439 @@
+-- ER Schema Graph: canvas snapshot + structured semantics for agent / upsert / Yjs projection
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE TABLE er_graph (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT,
+    business_domain TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    version BIGINT NOT NULL DEFAULT 1,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE er_graph_snapshot (
+    graph_id UUID PRIMARY KEY REFERENCES er_graph(id) ON DELETE CASCADE,
+    x6_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    business_json JSONB,
+    version BIGINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE er_table (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    table_key TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    business_name TEXT,
+    description TEXT,
+    business_domain TEXT,
+    table_type TEXT NOT NULL DEFAULT 'business',
+    importance INT NOT NULL DEFAULT 3,
+    tags TEXT[] NOT NULL DEFAULT '{}',
+    comment TEXT,
+    x NUMERIC,
+    y NUMERIC,
+    width NUMERIC,
+    height NUMERIC,
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version BIGINT NOT NULL DEFAULT 1,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (graph_id, table_key)
+);
+
+CREATE INDEX idx_er_table_graph ON er_table(graph_id) WHERE deleted_at IS NULL;
+
+CREATE TABLE er_column (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    table_key TEXT NOT NULL,
+    column_key TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    data_type TEXT,
+    business_name TEXT,
+    description TEXT,
+    comment TEXT,
+    default_value TEXT,
+    nullable BOOLEAN,
+    is_primary_key BOOLEAN NOT NULL DEFAULT FALSE,
+    is_unique BOOLEAN NOT NULL DEFAULT FALSE,
+    is_indexed BOOLEAN NOT NULL DEFAULT FALSE,
+    key_type TEXT,
+    column_role TEXT,
+    enum_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order INT NOT NULL DEFAULT 0,
+    tags TEXT[] NOT NULL DEFAULT '{}',
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version BIGINT NOT NULL DEFAULT 1,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (graph_id, table_key, column_key)
+);
+
+CREATE INDEX idx_er_column_graph_table ON er_column(graph_id, table_key) WHERE deleted_at IS NULL;
+
+CREATE TABLE er_column_enum_value (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    table_key TEXT NOT NULL,
+    column_key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    label TEXT NOT NULL,
+    description TEXT,
+    sort_order INT NOT NULL DEFAULT 0,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    raw_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version BIGINT NOT NULL DEFAULT 1,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (graph_id, table_key, column_key, value)
+);
+
+CREATE TABLE er_relation (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    relation_key TEXT NOT NULL,
+    source_table_key TEXT NOT NULL,
+    source_column_key TEXT NOT NULL,
+    target_table_key TEXT NOT NULL,
+    target_column_key TEXT NOT NULL,
+    relation_type TEXT NOT NULL DEFAULT 'logical_relation',
+    relationship TEXT,
+    cardinality TEXT,
+    relation_name TEXT,
+    description TEXT,
+    join_condition TEXT,
+    direction TEXT NOT NULL DEFAULT 'source_to_target',
+    confidence NUMERIC(4, 3) NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL DEFAULT 'manual',
+    verified BOOLEAN NOT NULL DEFAULT FALSE,
+    tags TEXT[] NOT NULL DEFAULT '{}',
+    raw_edge JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version BIGINT NOT NULL DEFAULT 1,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (graph_id, relation_key)
+);
+
+CREATE INDEX idx_er_relation_graph ON er_relation(graph_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_er_relation_source ON er_relation(graph_id, source_table_key, source_column_key) WHERE deleted_at IS NULL;
+CREATE INDEX idx_er_relation_target ON er_relation(graph_id, target_table_key, target_column_key) WHERE deleted_at IS NULL;
+
+CREATE TABLE er_business_path (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    path_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    intent TEXT,
+    description TEXT,
+    business_domain TEXT,
+    tags TEXT[] NOT NULL DEFAULT '{}',
+    table_keys TEXT[] NOT NULL DEFAULT '{}',
+    relation_keys TEXT[] NOT NULL DEFAULT '{}',
+    path_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    confidence NUMERIC(4, 3) NOT NULL DEFAULT 1.0,
+    version BIGINT NOT NULL DEFAULT 1,
+    created_by TEXT,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (graph_id, path_key)
+);
+
+CREATE TABLE er_search_document (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    doc_key TEXT NOT NULL,
+    doc_type TEXT NOT NULL,
+    ref_table_key TEXT,
+    ref_column_key TEXT,
+    ref_relation_key TEXT,
+    title TEXT,
+    content TEXT NOT NULL,
+    tags TEXT[] NOT NULL DEFAULT '{}',
+    version BIGINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (graph_id, doc_key)
+);
+
+CREATE INDEX idx_er_search_document_graph ON er_search_document(graph_id);
+
+CREATE TABLE er_validation_issue (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    issue_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    ref_type TEXT NOT NULL,
+    ref_key TEXT NOT NULL,
+    message TEXT NOT NULL,
+    suggestion TEXT,
+    resolved BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE er_change_log (
+    id BIGSERIAL PRIMARY KEY,
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    change_type TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    before_data JSONB,
+    after_data JSONB,
+    client_id TEXT,
+    user_id TEXT,
+    graph_version BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Yjs (future collaboration)
+CREATE TABLE er_yjs_doc (
+    graph_id UUID PRIMARY KEY REFERENCES er_graph(id) ON DELETE CASCADE,
+    state BYTEA NOT NULL,
+    state_vector BYTEA,
+    version BIGINT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE er_yjs_update (
+    id BIGSERIAL PRIMARY KEY,
+    graph_id UUID NOT NULL REFERENCES er_graph(id) ON DELETE CASCADE,
+    client_id TEXT,
+    update_bin BYTEA NOT NULL,
+    seq BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (graph_id, seq)
+);
+
+-- =============================================================================
+-- 表与字段注释（pg_catalog 元数据，供 DBA / Agent / 文档工具读取）
+-- =============================================================================
+
+COMMENT ON TABLE er_graph IS 'ER 图实例：一张逻辑图对应一个业务域或子域（如用户域、订单域），含版本号用于乐观锁与增量同步';
+COMMENT ON COLUMN er_graph.id IS '主键 UUID';
+COMMENT ON COLUMN er_graph.name IS '图名称，如 default、用户域 ER';
+COMMENT ON COLUMN er_graph.description IS '图级业务说明';
+COMMENT ON COLUMN er_graph.business_domain IS '业务域标识，如 内容域、用户域';
+COMMENT ON COLUMN er_graph.status IS '状态：active 在用 / archived 归档';
+COMMENT ON COLUMN er_graph.version IS '图版本号，每次结构化同步 +1，用于乐观锁';
+COMMENT ON COLUMN er_graph.created_by IS '创建人标识';
+COMMENT ON COLUMN er_graph.updated_by IS '最后更新人标识';
+COMMENT ON COLUMN er_graph.created_at IS '创建时间';
+COMMENT ON COLUMN er_graph.updated_at IS '最后更新时间';
+
+COMMENT ON TABLE er_graph_snapshot IS '画布快照层：保存 X6 完整 JSON，用于前端恢复画布与兜底；不作为 Agent 检索唯一数据源';
+COMMENT ON COLUMN er_graph_snapshot.graph_id IS '关联 er_graph.id，一对一';
+COMMENT ON COLUMN er_graph_snapshot.x6_json IS 'X6 画布 JSON：nodes + edges，含坐标、port、样式';
+COMMENT ON COLUMN er_graph_snapshot.business_json IS '兼容旧版业务表数组 [{id,name,fields,layout}]，便于前端快速加载';
+COMMENT ON COLUMN er_graph_snapshot.version IS '快照版本，随同步更新';
+COMMENT ON COLUMN er_graph_snapshot.created_at IS '创建时间';
+COMMENT ON COLUMN er_graph_snapshot.updated_at IS '最后更新时间';
+
+COMMENT ON TABLE er_table IS '业务语义层-表：结构化表元数据，供 Agent 检索与 upsert；table_key 对应 X6 节点 id';
+COMMENT ON COLUMN er_table.id IS '主键 UUID';
+COMMENT ON COLUMN er_table.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_table.table_key IS '稳定键，与 X6 node id 一致，如 posts、profiles';
+COMMENT ON COLUMN er_table.table_name IS '物理/逻辑表名';
+COMMENT ON COLUMN er_table.business_name IS '中文业务名，如 文章表';
+COMMENT ON COLUMN er_table.description IS '表级业务说明';
+COMMENT ON COLUMN er_table.business_domain IS '所属业务域';
+COMMENT ON COLUMN er_table.table_type IS '表类型：business/relation/log/dict/config/snapshot/archive/temp/unknown';
+COMMENT ON COLUMN er_table.importance IS 'Agent 检索权重 1-5，越大越优先';
+COMMENT ON COLUMN er_table.tags IS '检索关键词标签数组';
+COMMENT ON COLUMN er_table.comment IS '备注';
+COMMENT ON COLUMN er_table.x IS '画布 X 坐标';
+COMMENT ON COLUMN er_table.y IS '画布 Y 坐标';
+COMMENT ON COLUMN er_table.width IS '节点宽度';
+COMMENT ON COLUMN er_table.height IS '节点高度';
+COMMENT ON COLUMN er_table.raw_data IS '前端扩展字段 JSON 快照';
+COMMENT ON COLUMN er_table.version IS '行版本，软删恢复时递增';
+COMMENT ON COLUMN er_table.created_by IS '创建人';
+COMMENT ON COLUMN er_table.updated_by IS '更新人';
+COMMENT ON COLUMN er_table.created_at IS '创建时间';
+COMMENT ON COLUMN er_table.updated_at IS '更新时间';
+COMMENT ON COLUMN er_table.deleted_at IS '软删除时间，NULL 表示有效';
+
+COMMENT ON TABLE er_column IS '业务语义层-字段：列元数据；column_key 通常为字段名';
+COMMENT ON COLUMN er_column.id IS '主键 UUID';
+COMMENT ON COLUMN er_column.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_column.table_key IS '所属表键';
+COMMENT ON COLUMN er_column.column_key IS '字段稳定键，如 id、user_id、status';
+COMMENT ON COLUMN er_column.column_name IS '字段名';
+COMMENT ON COLUMN er_column.data_type IS '数据类型，如 bigint、varchar(255)';
+COMMENT ON COLUMN er_column.business_name IS '字段中文业务名';
+COMMENT ON COLUMN er_column.description IS '字段业务说明';
+COMMENT ON COLUMN er_column.comment IS '备注/注释';
+COMMENT ON COLUMN er_column.default_value IS '默认值字符串';
+COMMENT ON COLUMN er_column.nullable IS '是否可空';
+COMMENT ON COLUMN er_column.is_primary_key IS '是否主键';
+COMMENT ON COLUMN er_column.is_unique IS '是否唯一';
+COMMENT ON COLUMN er_column.is_indexed IS '是否索引列';
+COMMENT ON COLUMN er_column.key_type IS '标记类型：primary/unique/relation 等';
+COMMENT ON COLUMN er_column.column_role IS '语义角色：id=主键/标识；query_link=查询关联字段（逻辑连线，可据连线做跨表查询，非物理外键）；status/enum/amount/time/name/content/flag/type/audit/unknown';
+COMMENT ON COLUMN er_column.enum_enabled IS '是否启用枚举字典';
+COMMENT ON COLUMN er_column.sort_order IS '表内字段排序';
+COMMENT ON COLUMN er_column.tags IS '检索标签';
+COMMENT ON COLUMN er_column.raw_data IS '字段扩展 JSON';
+COMMENT ON COLUMN er_column.version IS '行版本';
+COMMENT ON COLUMN er_column.created_by IS '创建人';
+COMMENT ON COLUMN er_column.updated_by IS '更新人';
+COMMENT ON COLUMN er_column.created_at IS '创建时间';
+COMMENT ON COLUMN er_column.updated_at IS '更新时间';
+COMMENT ON COLUMN er_column.deleted_at IS '软删除时间';
+
+COMMENT ON TABLE er_column_enum_value IS '字段枚举字典：如 status 的 1=已发布、2=已取消；空 value+label 不入库';
+COMMENT ON COLUMN er_column_enum_value.id IS '主键 UUID';
+COMMENT ON COLUMN er_column_enum_value.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_column_enum_value.table_key IS '表键';
+COMMENT ON COLUMN er_column_enum_value.column_key IS '字段键';
+COMMENT ON COLUMN er_column_enum_value.value IS '枚举值，如 1、2';
+COMMENT ON COLUMN er_column_enum_value.label IS '枚举显示名';
+COMMENT ON COLUMN er_column_enum_value.description IS '枚举业务含义说明';
+COMMENT ON COLUMN er_column_enum_value.sort_order IS '展示排序';
+COMMENT ON COLUMN er_column_enum_value.enabled IS '是否启用';
+COMMENT ON COLUMN er_column_enum_value.raw_data IS '扩展 JSON';
+COMMENT ON COLUMN er_column_enum_value.version IS '行版本';
+COMMENT ON COLUMN er_column_enum_value.created_by IS '创建人';
+COMMENT ON COLUMN er_column_enum_value.updated_by IS '更新人';
+COMMENT ON COLUMN er_column_enum_value.created_at IS '创建时间';
+COMMENT ON COLUMN er_column_enum_value.updated_at IS '更新时间';
+COMMENT ON COLUMN er_column_enum_value.deleted_at IS '软删除时间';
+
+COMMENT ON TABLE er_relation IS '字段级逻辑关联（权威数据源）：如 profiles.user_id -> users.id；relation_key 稳定唯一';
+COMMENT ON COLUMN er_relation.id IS '主键 UUID';
+COMMENT ON COLUMN er_relation.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_relation.relation_key IS '稳定键，如 profiles.user_id__users.id';
+COMMENT ON COLUMN er_relation.source_table_key IS '源表键';
+COMMENT ON COLUMN er_relation.source_column_key IS '源字段键';
+COMMENT ON COLUMN er_relation.target_table_key IS '目标表键';
+COMMENT ON COLUMN er_relation.target_column_key IS '目标字段键';
+COMMENT ON COLUMN er_relation.relation_type IS '关系类型：foreign_key/logical_relation/business_relation/lookup_relation/derived_relation/same_meaning/unknown';
+COMMENT ON COLUMN er_relation.relationship IS '基数文案：1:1、1:N、N:1、N:M';
+COMMENT ON COLUMN er_relation.cardinality IS '标准化基数：one_to_one/one_to_many/many_to_one/many_to_many';
+COMMENT ON COLUMN er_relation.relation_name IS '关系业务名称';
+COMMENT ON COLUMN er_relation.description IS '关系说明';
+COMMENT ON COLUMN er_relation.join_condition IS 'JOIN 条件 SQL 片段';
+COMMENT ON COLUMN er_relation.direction IS '方向：source_to_target';
+COMMENT ON COLUMN er_relation.confidence IS '置信度 0-1，供 Agent 判断是否采信';
+COMMENT ON COLUMN er_relation.source IS '来源：manual/sql_analysis/code_analysis/name_rule/data_profiling/imported';
+COMMENT ON COLUMN er_relation.verified IS '是否人工确认';
+COMMENT ON COLUMN er_relation.tags IS '检索标签';
+COMMENT ON COLUMN er_relation.raw_edge IS '原始 X6 边 JSON';
+COMMENT ON COLUMN er_relation.version IS '行版本';
+COMMENT ON COLUMN er_relation.created_by IS '创建人';
+COMMENT ON COLUMN er_relation.updated_by IS '更新人';
+COMMENT ON COLUMN er_relation.created_at IS '创建时间';
+COMMENT ON COLUMN er_relation.updated_at IS '更新时间';
+COMMENT ON COLUMN er_relation.deleted_at IS '软删除时间';
+
+COMMENT ON TABLE er_business_path IS '业务查询路径：Agent 按场景走表链，比纯图遍历更稳定';
+COMMENT ON COLUMN er_business_path.id IS '主键 UUID';
+COMMENT ON COLUMN er_business_path.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_business_path.path_key IS '路径稳定键，如 user_profile_path';
+COMMENT ON COLUMN er_business_path.name IS '路径名称';
+COMMENT ON COLUMN er_business_path.intent IS '适用意图/问题类型';
+COMMENT ON COLUMN er_business_path.description IS '路径说明';
+COMMENT ON COLUMN er_business_path.business_domain IS '业务域';
+COMMENT ON COLUMN er_business_path.tags IS '检索标签';
+COMMENT ON COLUMN er_business_path.table_keys IS '路径经过的表键列表';
+COMMENT ON COLUMN er_business_path.relation_keys IS '路径经过的关系键列表';
+COMMENT ON COLUMN er_business_path.path_json IS '路径结构化 JSON 详情';
+COMMENT ON COLUMN er_business_path.confidence IS '置信度';
+COMMENT ON COLUMN er_business_path.version IS '行版本';
+COMMENT ON COLUMN er_business_path.created_by IS '创建人';
+COMMENT ON COLUMN er_business_path.updated_by IS '更新人';
+COMMENT ON COLUMN er_business_path.created_at IS '创建时间';
+COMMENT ON COLUMN er_business_path.updated_at IS '更新时间';
+COMMENT ON COLUMN er_business_path.deleted_at IS '软删除时间';
+
+COMMENT ON TABLE er_search_document IS 'Agent 检索索引文档：由表/字段/枚举/关系物化，可接全文或 pgvector';
+COMMENT ON COLUMN er_search_document.id IS '主键 UUID';
+COMMENT ON COLUMN er_search_document.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_search_document.doc_key IS '文档唯一键，如 table:posts、column:posts.status';
+COMMENT ON COLUMN er_search_document.doc_type IS '文档类型：table/column/enum/relation/business_path';
+COMMENT ON COLUMN er_search_document.ref_table_key IS '关联表键';
+COMMENT ON COLUMN er_search_document.ref_column_key IS '关联字段键';
+COMMENT ON COLUMN er_search_document.ref_relation_key IS '关联关系键';
+COMMENT ON COLUMN er_search_document.title IS '检索标题';
+COMMENT ON COLUMN er_search_document.content IS '检索正文（压缩业务语义）';
+COMMENT ON COLUMN er_search_document.tags IS '检索标签';
+COMMENT ON COLUMN er_search_document.version IS '索引版本';
+COMMENT ON COLUMN er_search_document.created_at IS '创建时间';
+COMMENT ON COLUMN er_search_document.updated_at IS '更新时间';
+
+COMMENT ON TABLE er_validation_issue IS '数据质量校验问题：类型不匹配、语义可疑关系等，避免 Agent 盲信';
+COMMENT ON COLUMN er_validation_issue.id IS '主键 UUID';
+COMMENT ON COLUMN er_validation_issue.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_validation_issue.issue_type IS '问题类型，如 type_mismatch_relation';
+COMMENT ON COLUMN er_validation_issue.severity IS '严重级别：info/warning/error';
+COMMENT ON COLUMN er_validation_issue.ref_type IS '引用实体类型：table/column/relation';
+COMMENT ON COLUMN er_validation_issue.ref_key IS '引用实体键';
+COMMENT ON COLUMN er_validation_issue.message IS '问题描述';
+COMMENT ON COLUMN er_validation_issue.suggestion IS '修复建议';
+COMMENT ON COLUMN er_validation_issue.resolved IS '是否已解决';
+COMMENT ON COLUMN er_validation_issue.created_at IS '创建时间';
+
+COMMENT ON TABLE er_change_log IS '变更审计日志：记录 upsert/删除前后快照，支持回滚与调试';
+COMMENT ON COLUMN er_change_log.id IS '自增主键';
+COMMENT ON COLUMN er_change_log.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_change_log.change_type IS '变更类型：upsert/delete';
+COMMENT ON COLUMN er_change_log.entity_type IS '实体类型：table/column/enum/relation/...';
+COMMENT ON COLUMN er_change_log.entity_key IS '实体键';
+COMMENT ON COLUMN er_change_log.before_data IS '变更前 JSON';
+COMMENT ON COLUMN er_change_log.after_data IS '变更后 JSON';
+COMMENT ON COLUMN er_change_log.client_id IS '客户端标识';
+COMMENT ON COLUMN er_change_log.user_id IS '用户标识';
+COMMENT ON COLUMN er_change_log.graph_version IS '变更时图版本';
+COMMENT ON COLUMN er_change_log.created_at IS '创建时间';
+
+COMMENT ON TABLE er_yjs_doc IS 'Yjs 协同文档完整状态（未来）：协同编辑源，需定期物化到结构化表';
+COMMENT ON COLUMN er_yjs_doc.graph_id IS '关联 ER 图，一对一';
+COMMENT ON COLUMN er_yjs_doc.state IS 'Yjs Document 完整二进制状态';
+COMMENT ON COLUMN er_yjs_doc.state_vector IS 'Yjs 状态向量';
+COMMENT ON COLUMN er_yjs_doc.version IS '文档版本';
+COMMENT ON COLUMN er_yjs_doc.updated_at IS '最后同步时间';
+
+COMMENT ON TABLE er_yjs_update IS 'Yjs 增量更新日志（未来）：支持增量同步、审计与故障恢复';
+COMMENT ON COLUMN er_yjs_update.id IS '自增主键';
+COMMENT ON COLUMN er_yjs_update.graph_id IS '所属 ER 图';
+COMMENT ON COLUMN er_yjs_update.client_id IS '协同客户端 ID';
+COMMENT ON COLUMN er_yjs_update.update_bin IS 'Yjs update 二进制包';
+COMMENT ON COLUMN er_yjs_update.seq IS '图内递增序号';
+COMMENT ON COLUMN er_yjs_update.created_at IS '写入时间';
+
+-- Default graph for local dev
+INSERT INTO er_graph (id, name, description, business_domain)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    'default',
+    'Default ER graph',
+    'default'
+)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO er_graph_snapshot (graph_id, x6_json, business_json)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    '{"nodes":[],"edges":[]}'::jsonb,
+    '[]'::jsonb
+)
+ON CONFLICT (graph_id) DO NOTHING;

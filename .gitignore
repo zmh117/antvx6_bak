@@ -1,0 +1,12 @@
+ .env
+data/
+var/
+node_modules/
+dist/
+front/node_modules/
+front/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.tar
+.venv
