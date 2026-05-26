@@ -30,6 +30,13 @@ export type HistoryResponse = {
   entries: ChangeLogEntry[]
 }
 
+export type AgentContextResponse = {
+  graph_id: string
+  version: number
+  text: string
+  documents: Record<string, unknown>[]
+}
+
 export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {
   const res = await fetch(`${API_BASE}/api/graphs/${graphId}`)
   if (!res.ok) throw new Error(await res.text())
@@ -77,6 +84,18 @@ export async function fetchGraphHistory(
   const res = await fetch(`${API_BASE}/api/graphs/${graphId}/history?limit=${limit}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<HistoryResponse>
+}
+
+export async function fetchAgentContext(
+  graphId = DEFAULT_GRAPH_ID,
+  query = '',
+): Promise<AgentContextResponse> {
+  const params = new URLSearchParams()
+  if (query.trim()) params.set('q', query.trim())
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/agent-context${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<AgentContextResponse>
 }
 
 export async function restoreGraphCheckpoint(

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import {
   AlertDialog,
@@ -13,10 +13,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
-  fetchGraphHistory,
   getDefaultGraphId,
-  restoreGraphCheckpoint,
   type ChangeLogEntry,
+  useGraphHistoryQuery,
+  useRestoreGraphCheckpointMutation,
 } from '@/entities/er-graph/api'
 
 function formatTime(iso: string) {
@@ -71,44 +71,28 @@ export function HistoryPanel({
   refreshKey = 0,
   onRestored,
 }: HistoryPanelProps) {
-  const [entries, setEntries] = useState<ChangeLogEntry[]>([])
-  const [version, setVersion] = useState<number | undefined>()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [restoreTarget, setRestoreTarget] = useState<ChangeLogEntry | null>(null)
-  const [restoring, setRestoring] = useState(false)
-
-  const loadHistory = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await fetchGraphHistory(graphId)
-      setEntries(data.entries)
-      setVersion(data.version)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [graphId])
+  const historyQuery = useGraphHistoryQuery(graphId, { enabled: false })
+  const restoreMutation = useRestoreGraphCheckpointMutation(graphId)
+  const entries = historyQuery.data?.entries ?? []
+  const version = historyQuery.data?.version
+  const refetchHistory = historyQuery.refetch
+  const error = historyQuery.error ?? restoreMutation.error
+  const errorMessage = error instanceof Error ? error.message : error ? String(error) : null
 
   useEffect(() => {
-    if (open) void loadHistory()
-  }, [open, loadHistory, refreshKey])
+    if (open) void refetchHistory()
+  }, [open, refreshKey, refetchHistory])
 
   const confirmRestore = async () => {
     if (!restoreTarget) return
-    setRestoring(true)
-    setError(null)
     try {
-      const result = await restoreGraphCheckpoint(restoreTarget.id, graphId)
+      const result = await restoreMutation.mutateAsync(restoreTarget.id)
       setRestoreTarget(null)
       onOpenChange(false)
       onRestored?.(result.new_version)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setRestoring(false)
+    } catch {
+      /* surfaced through restoreMutation.error */
     }
   }
 
@@ -139,18 +123,18 @@ export function HistoryPanel({
           </Button>
         </div>
 
-        {error ? (
-          <p className="shrink-0 px-3 py-2 text-xs text-destructive">{error}</p>
+        {errorMessage ? (
+          <p className="shrink-0 px-3 py-2 text-xs text-destructive">{errorMessage}</p>
         ) : null}
 
         <ScrollArea className="min-h-0 flex-1">
           <ul className="divide-y divide-border px-2 py-1">
-            {loading && entries.length === 0 ? (
+            {historyQuery.isFetching && entries.length === 0 ? (
               <li className="px-2 py-4 text-center text-xs text-muted-foreground">
                 加载中…
               </li>
             ) : null}
-            {!loading && entries.length === 0 ? (
+            {!historyQuery.isFetching && entries.length === 0 ? (
               <li className="px-2 py-4 text-center text-xs text-muted-foreground">
                 暂无历史
               </li>
@@ -227,15 +211,15 @@ export function HistoryPanel({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={restoring}>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={restoreMutation.isPending}>取消</AlertDialogCancel>
             <AlertDialogAction
-              disabled={restoring}
+              disabled={restoreMutation.isPending}
               onClick={(e) => {
                 e.preventDefault()
                 void confirmRestore()
               }}
             >
-              {restoring ? '恢复中…' : '确认恢复'}
+              {restoreMutation.isPending ? '恢复中…' : '确认恢复'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

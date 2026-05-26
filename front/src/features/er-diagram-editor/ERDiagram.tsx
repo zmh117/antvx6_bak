@@ -9,6 +9,7 @@ import {
   type ValidateConnectionArgs,
 } from '@antv/x6'
 import { useTheme } from 'next-themes'
+import { useQueryClient } from '@tanstack/react-query'
 import { register } from '@antv/x6-react-shape'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
@@ -30,7 +31,7 @@ import {
 } from './erFieldContext'
 import { FieldEnumPanel } from './FieldEnumPanel'
 import { applyErTablesToGraphNodes, graphToErTables, normalizeRelationshipType } from './graphToErData'
-import { fetchGraphLoad, getDefaultGraphId, syncGraphCanvas } from '@/entities/er-graph/api'
+import { fetchGraphLoad, getDefaultGraphId, graphKeys, syncGraphCanvas } from '@/entities/er-graph/api'
 import { HistoryPanel } from './HistoryPanel'
 import { resolveTablesFromLoad } from './resolveGraphTables'
 import { buildRelationEdgeData, resolveRelationEndpoints } from './relationUtils'
@@ -326,6 +327,7 @@ function applyGraphTheme(graph: Graph, mode: ErColorMode) {
 
 export default function ERDiagram() {
   const { resolvedTheme } = useTheme()
+  const queryClient = useQueryClient()
   const containerRef = useRef<HTMLDivElement>(null)
   const minimapContainerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
@@ -499,6 +501,12 @@ export default function ERDiagram() {
             operationSource: takeOperationSource('auto_save'),
           })
           graphVersionRef.current = result.new_version
+          void queryClient.invalidateQueries({
+            queryKey: graphKeys.histories(graphIdRef.current),
+          })
+          void queryClient.invalidateQueries({
+            queryKey: graphKeys.agentContexts(graphIdRef.current),
+          })
           setGraphDataRevision((v) => v + 1)
           if (result.warnings?.length) {
             console.warn('[ER sync warnings]', result.warnings)
