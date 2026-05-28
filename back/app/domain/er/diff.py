@@ -32,7 +32,20 @@ def compute_graph_diff(old_state: GraphState, payload: GraphPayload) -> GraphCha
         elif not _row_equal(
             old_state.tables[key],
             row,
-            ["table_name", "business_name", "description", "x", "y", "width", "height"],
+            [
+                "table_name",
+                "business_name",
+                "description",
+                "business_domain",
+                "table_type",
+                "importance",
+                "tags",
+                "comment",
+                "x",
+                "y",
+                "width",
+                "height",
+            ],
         ):
             changes.tables.updated.append(row)
     for key in old_state.tables:
@@ -51,6 +64,7 @@ def compute_graph_diff(old_state: GraphState, payload: GraphPayload) -> GraphCha
         "column_role",
         "enum_enabled",
         "sort_order",
+        "tags",
     ]
     for key, row in new_columns.items():
         if key not in old_state.columns:
@@ -81,9 +95,13 @@ def compute_graph_diff(old_state: GraphState, payload: GraphPayload) -> GraphCha
         "source_column_key",
         "target_table_key",
         "target_column_key",
+        "relation_type",
         "relationship",
+        "relation_name",
         "join_condition",
         "description",
+        "verified",
+        "tags",
     ]
     for key, row in new_relations.items():
         if key not in old_state.relations:

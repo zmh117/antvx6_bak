@@ -2,7 +2,7 @@ import {
   buildNormalizedSyncBody,
   type GraphOperationSource,
 } from '@/entities/er-graph/lib/normalizeGraphPayload'
-import type { TableNodeData } from '@/entities/er-graph/model/erSchema'
+import type { RelationType, TableNodeData } from '@/entities/er-graph/model/erSchema'
 import { API_BASE, DEFAULT_GRAPH_ID } from '@/shared/api/config'
 import type { Graph } from '@antv/x6'
 
@@ -47,21 +47,38 @@ export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {
     tables?: Array<{
       table_key: string
       table_name?: string
+      business_name?: string | null
+      description?: string | null
+      business_domain?: string | null
+      table_type?: TableNodeData['tableType'] | null
+      importance?: number | null
+      tags?: string[] | null
+      comment?: string | null
       x?: number | null
       y?: number | null
       raw_data?: TableNodeData
     }>
     relations?: Array<{
+      relation_key?: string
       source_table_key: string
       source_column_key: string
       target_table_key: string
       target_column_key: string
+      relation_type?: RelationType | null
+      relation_name?: string | null
+      description?: string | null
       relationship?: string | null
+      verified?: boolean | null
+      tags?: string[] | null
     }>
     columns?: Array<{
       table_key: string
       column_key: string
+      business_name?: string | null
+      description?: string | null
       comment?: string | null
+      column_role?: string | null
+      tags?: string[] | null
       data_type?: string | null
       default_value?: string | null
       enum_enabled?: boolean

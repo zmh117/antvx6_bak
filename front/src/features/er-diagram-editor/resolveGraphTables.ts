@@ -1,7 +1,9 @@
 import {
   normalizeErTables,
   normalizeFieldRefs,
+  normalizeColumnRole,
   type FieldEnumEntry,
+  type RelationBusinessData,
   type RelationRef,
   type TableNodeData,
 } from '@/entities/er-graph/model/erSchema'
@@ -9,6 +11,13 @@ import {
 type TableRow = {
   table_key: string
   table_name?: string
+  business_name?: string | null
+  description?: string | null
+  business_domain?: string | null
+  table_type?: TableNodeData['tableType'] | null
+  importance?: number | null
+  tags?: string[] | null
+  comment?: string | null
   x?: number | null
   y?: number | null
   raw_data?: TableNodeData
@@ -29,18 +38,50 @@ function countRelationRefs(table: TableNodeData) {
   )
 }
 
+function applyStructuredTableFields(table: TableNodeData, row: TableRow): TableNodeData {
+  return {
+    ...table,
+    id: row.table_key,
+    name: table.name || row.table_name || row.table_key,
+    businessName:
+      row.business_name !== undefined ? row.business_name ?? undefined : table.businessName,
+    description: row.description !== undefined ? row.description ?? undefined : table.description,
+    businessDomain:
+      row.business_domain !== undefined
+        ? row.business_domain ?? undefined
+        : table.businessDomain,
+    tableType: row.table_type !== undefined ? row.table_type ?? undefined : table.tableType,
+    importance: row.importance !== undefined ? row.importance ?? undefined : table.importance,
+    tags: row.tags !== undefined ? row.tags ?? undefined : table.tags,
+    comment: row.comment !== undefined ? row.comment ?? undefined : table.comment,
+    layout:
+      table.layout ??
+      (row.x != null && row.y != null ? { x: Number(row.x), y: Number(row.y) } : undefined),
+  }
+}
+
 export type RelationRow = {
+  relation_key?: string
   source_table_key: string
   source_column_key: string
   target_table_key: string
   target_column_key: string
+  relation_type?: RelationBusinessData['relationType'] | null
+  relation_name?: string | null
+  description?: string | null
   relationship?: string | null
+  verified?: boolean | null
+  tags?: string[] | null
 }
 
 export type ColumnRow = {
   table_key: string
   column_key: string
+  business_name?: string | null
+  description?: string | null
   comment?: string | null
+  column_role?: string | null
+  tags?: string[] | null
   data_type?: string | null
   default_value?: string | null
   enum_enabled?: boolean
@@ -69,6 +110,7 @@ export function applyColumnsAndEnumsToTables(
       value: e.value,
       label: e.label,
       description: e.description ?? undefined,
+      sortOrder: e.sort_order,
     })
     enumByCol.set(key, list)
   }
@@ -99,10 +141,29 @@ export function applyColumnsAndEnumsToTables(
       if (col) {
         if (col.comment != null && String(col.comment).trim() !== '') {
           next.comment = col.comment
-        } else if (col.comment != null) {
+        } else if (col.comment !== undefined) {
           delete next.comment
         }
         if (col.data_type) next.type = col.data_type
+        if (col.business_name != null && String(col.business_name).trim() !== '') {
+          next.businessName = col.business_name
+        } else if (col.business_name !== undefined) {
+          delete next.businessName
+        }
+        if (col.description != null && String(col.description).trim() !== '') {
+          next.description = col.description
+        } else if (col.description !== undefined) {
+          delete next.description
+        }
+        if (col.column_role !== undefined) {
+          const role = normalizeColumnRole(col.column_role)
+          if (role) next.columnRole = role
+          else delete next.columnRole
+        }
+        if (col.tags != null) {
+          if (col.tags.length) next.tags = [...col.tags]
+          else delete next.tags
+        }
         if (col.default_value != null) next.defaultValue = col.default_value
         const evs = enumByCol.get(key)
         if (evs?.length) {
@@ -141,6 +202,12 @@ export function applyRelationsToTables(
       table: r.target_table_key,
       field: r.target_column_key,
       relationship: (r.relationship as RelationRef['relationship']) || '1:1',
+      relationKey: r.relation_key,
+      relationType: r.relation_type ?? undefined,
+      relationName: r.relation_name ?? undefined,
+      description: r.description ?? undefined,
+      verified: r.verified ?? undefined,
+      tags: r.tags ?? undefined,
     }
     field.keyType = 'relation'
     const existing = normalizeFieldRefs(field.ref)
@@ -173,15 +240,7 @@ export function resolveTablesFromLoad(loaded: {
     if (!isValidTableId(row.table_key)) continue
     const raw = row.raw_data
     if (!raw?.fields?.length) continue
-    const merged: TableNodeData = {
-      ...raw,
-      id: row.table_key,
-      name: raw.name || row.table_name || row.table_key,
-      fields: raw.fields,
-      layout:
-        raw.layout ??
-        (row.x != null && row.y != null ? { x: Number(row.x), y: Number(row.y) } : undefined),
-    }
+    const merged = applyStructuredTableFields({ ...raw, fields: raw.fields }, row)
     const prev = byId.get(row.table_key)
     if (!prev) {
       byId.set(row.table_key, merged)
@@ -197,8 +256,8 @@ export function resolveTablesFromLoad(loaded: {
     ) {
       byId.set(row.table_key, merged)
     } else if (mergedRefs === prevRefs && mergedFieldCount === prevFieldCount) {
-      // 字段数相同：保留 prev 的布局/业务字段，单字段元数据由 columns/enums 覆盖
-      byId.set(row.table_key, prev)
+      // 字段数相同：保留 prev 的字段/ref，结构化表业务字段覆盖 raw_data 旧值
+      byId.set(row.table_key, applyStructuredTableFields(prev, row))
     }
   }
 

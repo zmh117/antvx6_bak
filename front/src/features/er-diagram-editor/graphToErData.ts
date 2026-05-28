@@ -121,6 +121,12 @@ export function graphToErTables(graph: Graph): TableNodeData[] {
       table: toCellId,
       field: toField.name,
       relationship: relType,
+      relationKey: edgeData?.relationKey,
+      relationType: edgeData?.relationType,
+      relationName: edgeData?.relationName,
+      description: edgeData?.description,
+      verified: edgeData?.verified,
+      tags: edgeData?.tags,
     }
     const mapKey = `${fromCellId}\0${fieldKey(fromField.name)}`
     const list = relationRefsByPort.get(mapKey)

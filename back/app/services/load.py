@@ -77,6 +77,7 @@ def _apply_columns_enums_to_legacy(
                 "value": ev.value,
                 "label": ev.label,
                 "description": ev.description,
+                "sortOrder": ev.sort_order,
                 "_sort": ev.sort_order,
             }
         )
@@ -112,6 +113,22 @@ def _apply_columns_enums_to_legacy(
                     pass
                 if col.data_type:
                     merged_field["type"] = col.data_type
+                if col.business_name:
+                    merged_field["businessName"] = col.business_name
+                elif col.business_name is None:
+                    merged_field.pop("businessName", None)
+                if col.description:
+                    merged_field["description"] = col.description
+                elif col.description is None:
+                    merged_field.pop("description", None)
+                if col.column_role:
+                    merged_field["columnRole"] = col.column_role
+                elif col.column_role is None:
+                    merged_field.pop("columnRole", None)
+                if col.tags:
+                    merged_field["tags"] = col.tags
+                elif col.tags == []:
+                    merged_field.pop("tags", None)
                 if col.default_value is not None:
                     merged_field["defaultValue"] = col.default_value
             col_enums = enum_by_col.get(ck)

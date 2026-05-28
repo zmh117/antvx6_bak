@@ -8,6 +8,7 @@ import {
   type EdgeMetadata,
   type ValidateConnectionArgs,
 } from '@antv/x6'
+import { Pencil } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useQueryClient } from '@tanstack/react-query'
 import { register } from '@antv/x6-react-shape'
@@ -18,18 +19,28 @@ import {
   fieldMetaTooltip,
   normalizeErTables,
   normalizeFieldRefs,
-  type FieldEnumEntry,
   type FieldSelection,
+  type RelationSelection,
   type RelationshipData,
+  type TableSelection,
   type TableField,
   type TableNodeData,
 } from '@/entities/er-graph/model/erSchema'
 import {
   registerFieldPanelHandler,
+  registerTablePanelHandler,
   selectErField,
+  selectErTable,
   subscribeFieldSelection,
 } from './erFieldContext'
-import { FieldEnumPanel } from './FieldEnumPanel'
+import {
+  FieldEnumPanel,
+  RelationBusinessPanel,
+  TableBusinessPanel,
+  type FieldBusinessPatch,
+  type RelationBusinessPatch,
+  type TableBusinessPatch,
+} from './FieldEnumPanel'
 import { applyErTablesToGraphNodes, graphToErTables, normalizeRelationshipType } from './graphToErData'
 import { fetchGraphLoad, getDefaultGraphId, graphKeys, syncGraphCanvas } from '@/entities/er-graph/api'
 import { HistoryPanel } from './HistoryPanel'
@@ -97,7 +108,7 @@ const ICONS: Record<NonNullable<TableField['keyType']>, string> = {
 // React 节点组件（@antv/x6-react-shape 会传入 node、graph）
 const ERTableNode = React.memo(
   ({ node, graph }: { node: Node; graph: Graph }) => {
-    const { name, fields = [] } = node.getData<TableNodeData>()
+    const { name, fields = [], businessName } = node.getData<TableNodeData>()
     const tableRef = useRef<HTMLDivElement>(null)
     const tableId = String(node.id)
     const [selection, setSelection] = useState<FieldSelection | null>(null)
@@ -118,7 +129,24 @@ const ERTableNode = React.memo(
         className="er-table"
         style={{ minHeight: tableBodyHeight(fields.length) }}
       >
-        <header className="er-table-header table-code">{name}</header>
+        <header className="er-table-header">
+          <span className="table-code er-table-title" title={businessName || name}>
+            {name}
+          </span>
+          <button
+            type="button"
+            className="er-table-edit"
+            title="编辑表业务属性"
+            aria-label={`编辑表 ${name}`}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              selectErTable({ tableId })
+            }}
+          >
+            <Pencil className="size-3" />
+          </button>
+        </header>
         <div className="er-table-fields">
           {fields.length === 0 ? (
             <div className="er-table-empty">No fields</div>
@@ -243,6 +271,14 @@ const transformToGraphData = (tables: TableNodeData[]) => {
             r.table,
             r.field,
             relType,
+            {
+              relationKey: r.relationKey,
+              relationType: r.relationType,
+              relationName: r.relationName,
+              description: r.description,
+              verified: r.verified,
+              tags: r.tags,
+            },
           )
           acc.edges.push({
             id: relData.relationKey!,
@@ -339,6 +375,8 @@ export default function ERDiagram() {
   const [autosaveErr, setAutosaveErr] = useState<string | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [selectedField, setSelectedField] = useState<FieldSelection | null>(null)
+  const [selectedTable, setSelectedTable] = useState<TableSelection | null>(null)
+  const [selectedRelation, setSelectedRelation] = useState<RelationSelection | null>(null)
   const [graphDataRevision, setGraphDataRevision] = useState(0)
 
   const selectedFieldMeta = useMemo(() => {
@@ -352,8 +390,22 @@ export default function ERDiagram() {
     // graphDataRevision: 加载/保存后强制从节点重新读取
   }, [selectedField, graphDataRevision])
 
+  const selectedTableMeta = useMemo(() => {
+    if (!selectedTable || !graphRef.current) return null
+    const node = graphRef.current.getCellById(selectedTable.tableId)
+    if (!node?.isNode()) return null
+    return node.getData<TableNodeData>()
+  }, [selectedTable, graphDataRevision])
+
+  const selectedRelationMeta = useMemo(() => {
+    if (!selectedRelation || !graphRef.current) return null
+    const edge = graphRef.current.getCellById(selectedRelation.edgeId)
+    if (!edge?.isEdge()) return null
+    return { relation: { ...edge.getData<RelationBusinessData>() } }
+  }, [selectedRelation, graphDataRevision])
+
   const patchSelectedField = useCallback(
-    (patch: { comment?: string; enumValues?: FieldEnumEntry[] | undefined }) => {
+    (patch: FieldBusinessPatch) => {
       if (!selectedField || !graphRef.current) return
       const node = graphRef.current.getCellById(selectedField.tableId)
       if (!node?.isNode()) return
@@ -364,6 +416,22 @@ export default function ERDiagram() {
       if ('comment' in patch) {
         if (patch.comment) next.comment = patch.comment
         else delete next.comment
+      }
+      if ('businessName' in patch) {
+        if (patch.businessName) next.businessName = patch.businessName
+        else delete next.businessName
+      }
+      if ('description' in patch) {
+        if (patch.description) next.description = patch.description
+        else delete next.description
+      }
+      if ('columnRole' in patch) {
+        if (patch.columnRole) next.columnRole = patch.columnRole
+        else delete next.columnRole
+      }
+      if ('tags' in patch) {
+        if (patch.tags?.length) next.tags = patch.tags
+        else delete next.tags
       }
       if ('enumValues' in patch) {
         if (patch.enumValues?.length) next.enumValues = patch.enumValues
@@ -380,9 +448,110 @@ export default function ERDiagram() {
     [selectedField],
   )
 
+  const patchSelectedTable = useCallback(
+    (patch: TableBusinessPatch) => {
+      if (!selectedTable || !graphRef.current) return
+      const node = graphRef.current.getCellById(selectedTable.tableId)
+      if (!node?.isNode()) return
+      const data = node.getData<TableNodeData>()
+      const next = { ...data }
+      if ('businessName' in patch) {
+        if (patch.businessName) next.businessName = patch.businessName
+        else delete next.businessName
+      }
+      if ('description' in patch) {
+        if (patch.description) next.description = patch.description
+        else delete next.description
+      }
+      if ('businessDomain' in patch) {
+        if (patch.businessDomain) next.businessDomain = patch.businessDomain
+        else delete next.businessDomain
+      }
+      if ('tableType' in patch) {
+        if (patch.tableType) next.tableType = patch.tableType
+        else delete next.tableType
+      }
+      if ('importance' in patch) {
+        if (typeof patch.importance === 'number') next.importance = patch.importance
+        else delete next.importance
+      }
+      if ('tags' in patch) {
+        if (patch.tags?.length) next.tags = patch.tags
+        else delete next.tags
+      }
+      if ('comment' in patch) {
+        if (patch.comment) next.comment = patch.comment
+        else delete next.comment
+      }
+      graphRef.current.batchUpdate(() => {
+        node.setData(next, { overwrite: true, deep: true })
+      })
+      setGraphDataRevision((v) => v + 1)
+      schedulePersistRef.current(false, true)
+    },
+    [selectedTable],
+  )
+
+  const patchSelectedRelation = useCallback(
+    (patch: RelationBusinessPatch) => {
+      if (!selectedRelation || !graphRef.current) return
+      const edge = graphRef.current.getCellById(selectedRelation.edgeId)
+      if (!edge?.isEdge()) return
+      const data = edge.getData<RelationBusinessData>() || {}
+      const next = { ...data }
+      if ('relationName' in patch) {
+        if (patch.relationName) next.relationName = patch.relationName
+        else delete next.relationName
+      }
+      if ('description' in patch) {
+        if (patch.description) next.description = patch.description
+        else delete next.description
+      }
+      if ('relationType' in patch) {
+        if (patch.relationType) next.relationType = patch.relationType
+        else delete next.relationType
+      }
+      if ('relationship' in patch) {
+        const rel = normalizeRelationshipType(patch.relationship)
+        next.relationship = rel
+        next.type = rel
+      }
+      if ('verified' in patch) next.verified = Boolean(patch.verified)
+      if ('tags' in patch) {
+        if (patch.tags?.length) next.tags = patch.tags
+        else delete next.tags
+      }
+      graphRef.current.batchUpdate(() => {
+        edge.setData(next)
+        if (patch.relationship) {
+          edge.setLabels([buildErRelationshipLabel(normalizeRelationshipType(next.relationship || next.type))])
+        }
+      })
+      setGraphDataRevision((v) => v + 1)
+      schedulePersistRef.current(true, true)
+    },
+    [selectedRelation],
+  )
+
   useEffect(() => {
-    registerFieldPanelHandler(setSelectedField)
-    return () => registerFieldPanelHandler(null)
+    registerFieldPanelHandler((sel) => {
+      setSelectedField(sel)
+      if (sel) {
+        setSelectedTable(null)
+        setSelectedRelation(null)
+      }
+    })
+    registerTablePanelHandler((sel) => {
+      setSelectedTable(sel)
+      if (sel) {
+        setSelectedField(null)
+        setSelectedRelation(null)
+      }
+    })
+    return () => {
+      registerFieldPanelHandler(null)
+      registerTablePanelHandler(null)
+    }
   }, [])
 
   useEffect(() => {
@@ -584,7 +753,11 @@ export default function ERDiagram() {
     schedulePersistRef.current = schedulePersist
     flushPersistRef.current = flushPersist
 
-    const onBlankClick = () => selectErField(null)
+    const onBlankClick = () => {
+      selectErField(null)
+      selectErTable(null)
+      setSelectedRelation(null)
+    }
     graph.on('blank:click', onBlankClick)
 
     const onTableNodeClick = ({
@@ -650,12 +823,37 @@ export default function ERDiagram() {
     graph.on('edge:removed', onEdgeRemoved)
     graph.on('edge:change:data', onEdgeDataChange)
 
-    const onEdgeClick = ({ edge, e }: { edge: Edge; e: { stopPropagation(): void } }) => {
+    const onEdgeClick = ({
+      edge,
+      e,
+    }: {
+      edge: Edge
+      e: { stopPropagation(): void; detail?: number }
+    }) => {
       if (edge.shape === 'er-relationship') {
         e.stopPropagation()
+        if (e.detail && e.detail > 1) return
         toggleRelationshipType(graph, edge)
         schedulePersist(true, true)
       }
+    }
+
+    const openRelationPanel = (edge: Edge) => {
+      setSelectedRelation({ edgeId: String(edge.id) })
+      selectErField(null)
+      selectErTable(null)
+    }
+
+    const onEdgeDblClick = ({
+      edge,
+      e,
+    }: {
+      edge: Edge
+      e: { stopPropagation(): void }
+    }) => {
+      if (edge.shape !== 'er-relationship') return
+      e.stopPropagation()
+      openRelationPanel(edge)
     }
 
     const onEdgeMouseEnter = ({ edge }: { edge: Edge }) => {
@@ -663,6 +861,41 @@ export default function ERDiagram() {
       withHistoryPaused(graph, () => {
         edge.attr('line/stroke', readErThemeVars().edgeHover)
         edge.addTools([
+          {
+            name: 'button',
+            args: {
+              distance: -64,
+              markup: [
+                {
+                  tagName: 'circle',
+                  selector: 'button',
+                  attrs: {
+                    r: 8,
+                    fill: '#2563eb',
+                    stroke: '#fff',
+                    strokeWidth: 2,
+                    cursor: 'pointer',
+                  },
+                },
+                {
+                  tagName: 'text',
+                  selector: 'icon',
+                  textContent: '✎',
+                  attrs: {
+                    fill: '#fff',
+                    fontSize: 11,
+                    fontWeight: 'bold',
+                    textAnchor: 'middle',
+                    dominantBaseline: 'central',
+                  },
+                },
+              ],
+              onClick: ({ e }: { e: { stopPropagation(): void } }) => {
+                e.stopPropagation()
+                openRelationPanel(edge)
+              },
+            },
+          },
           {
             name: 'button-remove',
             args: {
@@ -706,6 +939,7 @@ export default function ERDiagram() {
     }
 
     graph.on('edge:click', onEdgeClick)
+    graph.on('edge:dblclick', onEdgeDblClick)
     graph.on('edge:mouseenter', onEdgeMouseEnter)
     graph.on('edge:mouseleave', onEdgeMouseLeave)
 
@@ -792,6 +1026,8 @@ export default function ERDiagram() {
     reloadGraphRef.current = async () => {
       suppressPersist = true
       selectErField(null)
+      selectErTable(null)
+      setSelectedRelation(null)
       await applyLoadedToGraph({ fallbackErJson: false })
       finishInitialLayout()
     }
@@ -821,6 +1057,7 @@ export default function ERDiagram() {
       graph.off('blank:click', onBlankClick)
       graph.off('node:click', onTableNodeClick)
       graph.off('edge:click', onEdgeClick)
+      graph.off('edge:dblclick', onEdgeDblClick)
       graph.off('edge:mouseenter', onEdgeMouseEnter)
       graph.off('edge:mouseleave', onEdgeMouseLeave)
       schedulePersistRef.current = () => {
@@ -899,6 +1136,20 @@ export default function ERDiagram() {
             field={selectedFieldMeta.field}
             onChange={patchSelectedField}
             onClose={() => selectErField(null)}
+          />
+        ) : null}
+        {selectedTable && selectedTableMeta ? (
+          <TableBusinessPanel
+            table={selectedTableMeta}
+            onChange={patchSelectedTable}
+            onClose={() => selectErTable(null)}
+          />
+        ) : null}
+        {selectedRelation && selectedRelationMeta ? (
+          <RelationBusinessPanel
+            relation={selectedRelationMeta.relation}
+            onChange={patchSelectedRelation}
+            onClose={() => setSelectedRelation(null)}
           />
         ) : null}
       </section>

@@ -75,7 +75,12 @@ def _enrich_legacy_table_fields(payload: GraphPayload) -> None:
     for ev in payload.enums:
         ck = f"{ev.table_key}::{ev.column_key}"
         enums_by_col.setdefault(ck, []).append(
-            {"value": ev.value, "label": ev.label, "description": ev.description}
+            {
+                "value": ev.value,
+                "label": ev.label,
+                "description": ev.description,
+                "sortOrder": ev.sort_order,
+            }
         )
     for items in enums_by_col.values():
         items.sort(key=lambda x: str(x.get("value", "")))

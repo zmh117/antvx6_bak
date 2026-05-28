@@ -85,6 +85,7 @@ export function buildNormalizedSyncBody(
       table_type: t.tableType ?? 'business',
       importance: t.importance ?? 3,
       tags: t.tags ?? [],
+      comment: t.comment,
       x: pos?.x ?? t.layout?.x,
       y: pos?.y ?? t.layout?.y,
       width: size.width,
@@ -114,6 +115,7 @@ export function buildNormalizedSyncBody(
         column_role: inferColumnRole(field),
         enum_enabled: validEnums.length > 0,
         sort_order: idx,
+        tags: field.tags ?? [],
         raw_data: field,
       })
       validEnums.forEach((e, eidx) => {
@@ -123,7 +125,7 @@ export function buildNormalizedSyncBody(
           value: e.value,
           label: e.label || e.value,
           description: e.description,
-          sort_order: eidx,
+          sort_order: e.sortOrder ?? eidx,
         })
       })
     })
@@ -174,6 +176,7 @@ export function buildNormalizedSyncBody(
       confidence: data.confidence ?? 1,
       source: data.source ?? 'manual',
       verified: data.verified ?? false,
+      tags: data.tags ?? [],
       raw_edge: enriched,
     })
   }

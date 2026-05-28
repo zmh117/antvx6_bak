@@ -251,6 +251,7 @@ def normalize_from_canvas(
                     column_role=infer_column_role(field),
                     enum_enabled=len(valid_enums) > 0,
                     sort_order=idx,
+                    tags=field.get("tags") or [],
                     raw_data=field,
                 )
             )
@@ -262,7 +263,7 @@ def normalize_from_canvas(
                         value=str(ev.get("value", "")),
                         label=str(ev.get("label") or ev.get("value") or ""),
                         description=ev.get("description"),
-                        sort_order=eidx,
+                        sort_order=int(ev.get("sortOrder") if ev.get("sortOrder") is not None else eidx),
                         raw_data=ev,
                     )
                 )
@@ -280,6 +281,13 @@ def normalize_from_canvas(
         {
             "id": t.table_key,
             "name": t.table_name,
+            "businessName": t.business_name,
+            "description": t.description,
+            "businessDomain": t.business_domain,
+            "tableType": t.table_type,
+            "importance": t.importance,
+            "tags": t.tags,
+            "comment": t.comment,
             "fields": tables_by_key[t.table_key].get("fields") or [],
             "layout": (
                 {"x": t.x, "y": t.y}
@@ -339,7 +347,9 @@ def normalize_legacy_tables_array(
                 target_field = r.get("field")
                 if not target_table or not target_field:
                     continue
-                rk = build_relation_key(tid, field["name"], target_table, target_field)
+                rk = r.get("relationKey") or build_relation_key(
+                    tid, field["name"], target_table, target_field
+                )
                 fake_edges.append(
                     {
                         "id": rk,
@@ -351,13 +361,17 @@ def normalize_legacy_tables_array(
                         },
                         "data": {
                             "relationKey": rk,
-                            "relationType": "logical_relation",
+                            "relationType": r.get("relationType") or "logical_relation",
                             "relationship": rel_type,
+                            "relationName": r.get("relationName"),
+                            "description": r.get("description"),
                             "sourceTable": tid,
                             "sourceColumn": field["name"],
                             "targetTable": target_table,
                             "targetColumn": target_field,
                             "joinCondition": f"{tid}.{field['name']} = {target_table}.{target_field}",
+                            "verified": bool(r.get("verified") or False),
+                            "tags": r.get("tags") or [],
                         },
                     }
                 )

@@ -3,6 +3,12 @@ import { fieldKey } from './erLayout'
 import type { RelationBusinessData, RelationshipData } from '@/entities/er-graph/model/erSchema'
 import { normalizeRelationshipType } from './graphToErData'
 
+function withoutUndefined<T extends object>(obj: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, value]) => value !== undefined),
+  ) as Partial<T>
+}
+
 export function buildRelationKey(
   sourceTable: string,
   sourceColumn: string,
@@ -79,7 +85,7 @@ export function buildRelationEdgeData(
     confidence: 1,
     source: 'manual',
     verified: false,
-    ...extra,
+    ...withoutUndefined(extra ?? {}),
   }
 }
 

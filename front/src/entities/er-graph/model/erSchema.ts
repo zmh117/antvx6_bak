@@ -2,7 +2,13 @@
 export interface RelationRef {
   table: string
   field: string
-  relationship?: '1:1' | '1:N' | 'N:N'
+  relationship?: RelationshipType
+  relationKey?: string
+  relationType?: RelationType
+  relationName?: string
+  description?: string
+  verified?: boolean
+  tags?: string[]
 }
 
 /** @deprecated 使用 RelationRef */
@@ -13,6 +19,7 @@ export interface FieldEnumEntry {
   value: string
   label: string
   description?: string
+  sortOrder?: number
 }
 
 export type TableType =
@@ -44,12 +51,67 @@ export type ColumnRole =
   | 'audit'
   | 'unknown'
 
+export type RelationshipType = '1:1' | '1:N' | 'N:N'
+
+export type RelationType =
+  | 'logical_relation'
+  | 'foreign_key'
+  | 'business_relation'
+  | 'lookup_relation'
+  | 'derived_relation'
+  | 'same_meaning'
+  | 'unknown'
+
+export const TABLE_TYPE_OPTIONS: Array<{ value: TableType; label: string }> = [
+  { value: 'business', label: '业务表' },
+  { value: 'relation', label: '关系表' },
+  { value: 'log', label: '日志表' },
+  { value: 'dict', label: '字典表' },
+  { value: 'config', label: '配置表' },
+  { value: 'snapshot', label: '快照表' },
+  { value: 'archive', label: '归档表' },
+  { value: 'temp', label: '临时表' },
+  { value: 'unknown', label: '未知' },
+]
+
+export const COLUMN_ROLE_OPTIONS: Array<{ value: ColumnRole; label: string }> = [
+  { value: 'id', label: '标识' },
+  { value: 'query_link', label: '查询关联' },
+  { value: 'status', label: '状态' },
+  { value: 'enum', label: '枚举' },
+  { value: 'amount', label: '金额' },
+  { value: 'time', label: '时间' },
+  { value: 'name', label: '名称' },
+  { value: 'content', label: '内容' },
+  { value: 'flag', label: '标志' },
+  { value: 'type', label: '类型' },
+  { value: 'audit', label: '审计' },
+  { value: 'unknown', label: '未知' },
+]
+
+export const RELATION_TYPE_OPTIONS: Array<{ value: RelationType; label: string }> = [
+  { value: 'logical_relation', label: '逻辑关系' },
+  { value: 'foreign_key', label: '外键关系' },
+  { value: 'business_relation', label: '业务关系' },
+  { value: 'lookup_relation', label: '查询关系' },
+  { value: 'derived_relation', label: '派生关系' },
+  { value: 'same_meaning', label: '同义关系' },
+  { value: 'unknown', label: '未知' },
+]
+
+export const RELATIONSHIP_OPTIONS: Array<{ value: RelationshipType; label: string }> = [
+  { value: '1:1', label: '1:1' },
+  { value: '1:N', label: '1:N' },
+  { value: 'N:N', label: 'N:N' },
+]
+
 export interface TableField {
   name: string
   type: string
   businessName?: string
   description?: string
   columnRole?: ColumnRole
+  tags?: string[]
   /** 注释，画布上可作 tooltip / 简略展示（按需扩展更多列属性时用同一套：先改此处再改 ERTableNode） */
   comment?: string
   /**
@@ -82,20 +144,21 @@ export interface TableNodeData {
   tableType?: TableType
   importance?: number
   tags?: string[]
+  comment?: string
   typicalQuestions?: string[]
   /** 画布上表节点左上角；有则加载时用此坐标，否则按网格排版 */
   layout?: { x: number; y: number }
 }
 
 export interface RelationshipData {
-  type: '1:1' | '1:N' | 'N:N'
+  type: RelationshipType
 }
 
 /** 连线业务语义（权威来源：edges / er_relation，field.ref 仅作展示回填） */
 export interface RelationBusinessData extends RelationshipData {
   relationKey?: string
-  relationType?: 'logical_relation' | 'foreign_key' | 'business_relation' | 'lookup_relation' | 'derived_relation' | 'same_meaning' | 'unknown'
-  relationship?: '1:1' | '1:N' | 'N:N'
+  relationType?: RelationType
+  relationship?: RelationshipType
   sourceTable?: string
   sourceColumn?: string
   targetTable?: string
@@ -106,6 +169,7 @@ export interface RelationBusinessData extends RelationshipData {
   confidence?: number
   source?: 'manual' | 'sql_analysis' | 'code_analysis' | 'name_rule' | 'data_profiling' | 'imported'
   verified?: boolean
+  tags?: string[]
 }
 
 /** 画布快照：与 X6 graph.toJSON() 解耦后的 nodes/edges */
@@ -118,6 +182,14 @@ export interface CanvasSnapshot {
 export interface FieldSelection {
   tableId: string
   fieldName: string
+}
+
+export interface TableSelection {
+  tableId: string
+}
+
+export interface RelationSelection {
+  edgeId: string
 }
 
 /** 兼容旧 column_role: foreign_ref → query_link */
