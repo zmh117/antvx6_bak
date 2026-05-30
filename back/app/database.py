@@ -38,4 +38,8 @@ def run_migrations() -> None:
                 encoding="utf-8"
             )
             cur.execute(business_flows_sql)
+            collaboration_sql = (migrations_dir / "004_collaboration_users.sql").read_text(
+                encoding="utf-8"
+            )
+            cur.execute(collaboration_sql)
         conn.commit()

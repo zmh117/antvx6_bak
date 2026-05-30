@@ -28,3 +28,4 @@ cd front && npm install && npm run dev
 见 [back/README.md](./back/README.md)。
 
 uvicorn app.main:app --reload --port 8001
+npm run start --prefix collab

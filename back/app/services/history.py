@@ -15,6 +15,8 @@ _OPERATION_SOURCE_LABELS = {
     "auto_save": "自动保存",
     "manual_save": "手动保存",
     "restore": "恢复",
+    "collab_auto_save": "协同物化",
+    "collab_restore": "协同恢复",
 }
 
 
@@ -78,7 +80,7 @@ def list_change_history(
     cur.execute(
         """
         SELECT id, graph_id, change_type, entity_type, entity_key,
-               before_data, after_data, client_id, graph_version, created_at
+               before_data, after_data, client_id, user_id, graph_version, created_at
         FROM er_change_log
         WHERE graph_id = %s
         ORDER BY id DESC
@@ -100,6 +102,7 @@ def list_change_history(
                 before_data=r.get("before_data"),
                 after_data=r.get("after_data"),
                 client_id=r.get("client_id"),
+                user_id=r.get("user_id"),
                 graph_version=r.get("graph_version"),
                 created_at=created.isoformat() if hasattr(created, "isoformat") else str(created),
             )

@@ -20,6 +20,8 @@ class GraphSyncService:
         self,
         conn: psycopg.Connection,
         dto: NormalizedGraphPayload,
+        *,
+        user_id: UUID | str | None = None,
     ) -> SyncResponse:
         incoming = payload_from_dto(dto)
         graph_id = incoming.graph_id
@@ -59,6 +61,7 @@ class GraphSyncService:
                     old_x6_json=old_state.x6_json,
                     old_business_json=old_state.business_json,
                     client_id=incoming.client_id,
+                    user_id=user_id,
                     graph_version_before=meta["version"],
                 )
 
@@ -77,6 +80,7 @@ class GraphSyncService:
         *,
         base_version: int | None,
         client_id: str | None,
+        user_id: UUID | str | None = None,
     ) -> SyncResponse:
         changes = changes_from_dto(dto_changes)
 
@@ -100,6 +104,7 @@ class GraphSyncService:
                     old_x6_json=old_state.x6_json,
                     old_business_json=old_state.business_json,
                     client_id=client_id,
+                    user_id=user_id,
                     graph_version_before=meta["version"],
                 )
 

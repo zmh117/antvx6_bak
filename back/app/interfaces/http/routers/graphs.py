@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.application.graph_sync import graph_sync_service
 from app.config import get_settings
@@ -19,6 +19,12 @@ from app.interfaces.http.schemas.graph import (
     SyncResponse,
 )
 from app.services.agent import build_agent_context
+from app.services.auth import (
+    AuthenticatedUser,
+    ensure_graph_role,
+    ensure_internal_token,
+    get_current_user_from_header,
+)
 from app.services.history import list_change_history
 from app.services.load import load_graph
 from app.services.normalize import normalize_from_canvas, normalize_legacy_tables_array
@@ -29,11 +35,18 @@ router = APIRouter(prefix="/graphs", tags=["graphs"])
 
 
 @router.get("", response_model=list[GraphMetaResponse])
-def list_graphs() -> list[GraphMetaResponse]:
+def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header)) -> list[GraphMetaResponse]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, description, business_domain, version, status FROM er_graph ORDER BY name"
+                """
+                SELECT g.id, g.name, g.description, g.business_domain, g.version, g.status
+                FROM er_graph g
+                JOIN er_graph_member m ON m.graph_id = g.id
+                WHERE m.user_id = %s
+                ORDER BY g.name
+                """,
+                (user.id,),
             )
             rows = cur.fetchall()
     return [
@@ -50,21 +63,32 @@ def list_graphs() -> list[GraphMetaResponse]:
 
 
 @router.get("/{graph_id}", response_model=GraphLoadResponse)
-def get_graph(graph_id: UUID) -> GraphLoadResponse:
+def get_graph(
+    graph_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> GraphLoadResponse:
     try:
         with get_connection() as conn:
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "viewer")
             return load_graph(conn, graph_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.post("/{graph_id}/sync", response_model=SyncResponse)
-def sync_graph(graph_id: UUID, body: SyncFullRequest) -> SyncResponse:
+def sync_graph(
+    graph_id: UUID,
+    body: SyncFullRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> SyncResponse:
     payload = body.payload
     payload.graph_id = graph_id
     try:
         with db_transaction() as conn:
-            return apply_full_sync(conn, payload)
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "editor")
+            return apply_full_sync(conn, payload, user_id=user.id)
     except VersionConflictError as e:
         raise HTTPException(
             status_code=409,
@@ -78,6 +102,7 @@ def sync_graph(graph_id: UUID, body: SyncFullRequest) -> SyncResponse:
 def sync_from_canvas(
     graph_id: UUID,
     body: dict,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
 ) -> SyncResponse:
     """Accept ``{ x6Json, baseVersion?, clientId?, legacyTables?, operationSource? }`` from frontend."""
     x6 = body.get("x6Json") or body.get("x6_json") or {}
@@ -121,7 +146,9 @@ def sync_from_canvas(
 
     try:
         with db_transaction() as conn:
-            return apply_full_sync(conn, payload)
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "editor")
+            return apply_full_sync(conn, payload, user_id=user.id)
     except VersionConflictError as e:
         raise HTTPException(
             status_code=409,
@@ -130,7 +157,14 @@ def sync_from_canvas(
 
 
 @router.post("/{graph_id}/normalize", response_model=NormalizedGraphPayload)
-def normalize_preview(graph_id: UUID, body: dict) -> NormalizedGraphPayload:
+def normalize_preview(
+    graph_id: UUID,
+    body: dict,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> NormalizedGraphPayload:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "viewer")
     x6 = body.get("x6Json") or body.get("x6_json") or {}
     legacy = body.get("legacyTables") or body.get("legacy_tables")
     if legacy and not x6.get("cells") and not x6.get("nodes"):
@@ -139,9 +173,14 @@ def normalize_preview(graph_id: UUID, body: dict) -> NormalizedGraphPayload:
 
 
 @router.get("/{graph_id}/agent-context", response_model=AgentContextResponse)
-def agent_context(graph_id: UUID, q: str | None = None) -> AgentContextResponse:
+def agent_context(
+    graph_id: UUID,
+    q: str | None = None,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> AgentContextResponse:
     with get_connection() as conn:
         with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "viewer")
             try:
                 data = build_agent_context(cur, graph_id, q)
             except ValueError as e:
@@ -155,16 +194,23 @@ def agent_context(graph_id: UUID, q: str | None = None) -> AgentContextResponse:
 
 
 @router.post("/{graph_id}/sync/changes", response_model=SyncResponse)
-def sync_graph_changes(graph_id: UUID, body: SyncChangesRequest) -> SyncResponse:
+def sync_graph_changes(
+    graph_id: UUID,
+    body: SyncChangesRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> SyncResponse:
     body.graph_id = graph_id
     try:
         with db_transaction() as conn:
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "editor")
             return graph_sync_service.sync_changes(
                 conn,
                 graph_id,
                 body.changes,
                 client_id=body.client_id,
                 base_version=body.base_version,
+                user_id=user.id,
             )
     except VersionConflictError as e:
         raise HTTPException(
@@ -174,9 +220,14 @@ def sync_graph_changes(graph_id: UUID, body: SyncChangesRequest) -> SyncResponse
 
 
 @router.get("/{graph_id}/history", response_model=HistoryResponse)
-def graph_history(graph_id: UUID, limit: int = 100) -> HistoryResponse:
+def graph_history(
+    graph_id: UUID,
+    limit: int = 100,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> HistoryResponse:
     with get_connection() as conn:
         with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "viewer")
             try:
                 return list_change_history(cur, graph_id, limit=limit)
             except ValueError as e:
@@ -184,13 +235,21 @@ def graph_history(graph_id: UUID, limit: int = 100) -> HistoryResponse:
 
 
 @router.post("/{graph_id}/restore", response_model=RestoreResponse)
-def graph_restore(graph_id: UUID, body: RestoreRequest) -> RestoreResponse:
+def graph_restore(
+    graph_id: UUID,
+    body: RestoreRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> RestoreResponse:
     try:
         with db_transaction() as conn:
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "editor")
             return restore_from_change_log(
                 conn,
                 graph_id,
                 body.change_log_id,
+                client_id=str(user.id),
+                user_id=user.id,
             )
     except VersionConflictError as e:
         raise HTTPException(
@@ -204,3 +263,42 @@ def graph_restore(graph_id: UUID, body: RestoreRequest) -> RestoreResponse:
 @router.get("/default/id")
 def default_graph_id() -> dict[str, str]:
     return {"graph_id": get_settings().default_graph_id}
+
+
+@router.post("/{graph_id}/internal/materialize", response_model=SyncResponse)
+def materialize_from_collab(
+    graph_id: UUID,
+    body: dict,
+    x_internal_token: str | None = Header(default=None),
+) -> SyncResponse:
+    """Internal endpoint used by the Hocuspocus sidecar to materialize Y.Doc state."""
+    ensure_internal_token(x_internal_token)
+    x6 = body.get("x6Json") or body.get("x6_json") or {}
+    legacy = body.get("legacyTables") or body.get("legacy_tables") or []
+    client_id = body.get("clientId") or body.get("client_id") or "collab-sidecar"
+    user_id = body.get("userId") or body.get("user_id")
+    snapshot = None
+    if x6.get("nodes") or x6.get("edges") or x6.get("cells"):
+        from app.services.normalize import is_edge_cell, is_table_cell
+
+        cells = x6.get("cells") or [*(x6.get("nodes") or []), *(x6.get("edges") or [])]
+        snapshot = CanvasSnapshotPayload(
+            nodes=[c for c in cells if is_table_cell(c)],
+            edges=[c for c in cells if is_edge_cell(c)],
+        )
+    payload = normalize_legacy_tables_array(
+        graph_id,
+        legacy,
+        snapshot=snapshot,
+        base_version=None,
+    )
+    payload.client_id = client_id
+    payload.operation_source = body.get("operationSource") or "collab_auto_save"
+    try:
+        with db_transaction() as conn:
+            return apply_full_sync(conn, payload, user_id=user_id)
+    except VersionConflictError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(e), "expected": e.expected, "actual": e.actual},
+        ) from e

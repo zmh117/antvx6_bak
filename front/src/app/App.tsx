@@ -1,4 +1,5 @@
 import { AppShell } from '@/components/app-shell'
+import { AuthGate } from '@/features/auth/AuthGate'
 import { ErDiagramEditor } from '@/features/er-diagram-editor'
 import { AppProviders } from './providers'
 
@@ -6,7 +7,9 @@ export default function App() {
   return (
     <AppProviders>
       <AppShell>
-        <ErDiagramEditor />
+        <AuthGate>
+          <ErDiagramEditor />
+        </AuthGate>
       </AppShell>
     </AppProviders>
   )

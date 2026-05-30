@@ -35,14 +35,15 @@ def _log_change(
     before_data: Any,
     after_data: Any,
     client_id: str | None,
+    user_id: UUID | str | None = None,
     graph_version: int | None = None,
 ) -> None:
     cur.execute(
         """
         INSERT INTO er_change_log (
             graph_id, change_type, entity_type, entity_key,
-            before_data, after_data, client_id, graph_version
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            before_data, after_data, client_id, user_id, graph_version
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             graph_id,
@@ -52,6 +53,7 @@ def _log_change(
             Jsonb(to_jsonable(before_data)) if before_data is not None else None,
             Jsonb(to_jsonable(after_data)) if after_data is not None else None,
             client_id,
+            str(user_id) if user_id is not None else None,
             graph_version,
         ),
     )
@@ -73,6 +75,7 @@ def _log_entity_diffs(
     old_map: dict[str, Any],
     diff: EntityDiff,
     client_id: str | None,
+    user_id: UUID | str | None,
 ) -> None:
     for row in diff.added:
         _log_change(
@@ -84,6 +87,7 @@ def _log_entity_diffs(
             before_data=None,
             after_data=row,
             client_id=client_id,
+            user_id=user_id,
         )
     for row in diff.updated:
         key = _entity_key(entity_type, row)
@@ -96,6 +100,7 @@ def _log_entity_diffs(
             before_data=old_map.get(key),
             after_data=row,
             client_id=client_id,
+            user_id=user_id,
         )
     for key in diff.deleted:
         _log_change(
@@ -107,6 +112,7 @@ def _log_entity_diffs(
             before_data=old_map.get(str(key)),
             after_data=None,
             client_id=client_id,
+            user_id=user_id,
         )
 
 
@@ -408,6 +414,7 @@ def apply_changes(
     old_x6_json: dict[str, Any] | None = None,
     old_business_json: list[dict[str, Any]] | None = None,
     client_id: str | None = None,
+    user_id: UUID | str | None = None,
     graph_version_before: int,
 ) -> tuple[int, list[str]]:
     """在同一事务 cursor 内应用变更，返回 (new_version, warnings)。"""
@@ -452,12 +459,20 @@ def apply_changes(
             (graph_id, Jsonb(x6), Jsonb(business_json)),
         )
 
-    _log_entity_diffs(cur, graph_id, "table", old_state_tables, changes.tables, client_id)
-    _log_entity_diffs(cur, graph_id, "column", old_state_columns, changes.columns, client_id)
-    _log_entity_diffs(cur, graph_id, "enum", old_state_enums, changes.enums, client_id)
-    _log_entity_diffs(cur, graph_id, "relation", old_state_relations, changes.relations, client_id)
+    _log_entity_diffs(cur, graph_id, "table", old_state_tables, changes.tables, client_id, user_id)
+    _log_entity_diffs(cur, graph_id, "column", old_state_columns, changes.columns, client_id, user_id)
+    _log_entity_diffs(cur, graph_id, "enum", old_state_enums, changes.enums, client_id, user_id)
     _log_entity_diffs(
-        cur, graph_id, "business_path", old_state_business_paths, changes.business_paths, client_id
+        cur, graph_id, "relation", old_state_relations, changes.relations, client_id, user_id
+    )
+    _log_entity_diffs(
+        cur,
+        graph_id,
+        "business_path",
+        old_state_business_paths,
+        changes.business_paths,
+        client_id,
+        user_id,
     )
 
     cur.execute(
@@ -486,6 +501,7 @@ def apply_changes(
         before_data={"version": graph_version_before},
         after_data=checkpoint,
         client_id=client_id,
+        user_id=user_id,
         graph_version=new_version,
     )
 

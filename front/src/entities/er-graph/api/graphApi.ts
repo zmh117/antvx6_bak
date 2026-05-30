@@ -4,6 +4,7 @@ import {
 } from '@/entities/er-graph/lib/normalizeGraphPayload'
 import type { RelationType, TableNodeData } from '@/entities/er-graph/model/erSchema'
 import { API_BASE, DEFAULT_GRAPH_ID } from '@/shared/api/config'
+import { authHeaders } from '@/entities/auth'
 import type { Graph } from '@antv/x6'
 
 export function getDefaultGraphId() {
@@ -20,6 +21,7 @@ export type ChangeLogEntry = {
   before_data?: Record<string, unknown> | null
   after_data?: Record<string, unknown> | null
   client_id?: string | null
+  user_id?: string | null
   graph_version?: number | null
   created_at: string
 }
@@ -38,7 +40,9 @@ export type AgentContextResponse = {
 }
 
 export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {
-  const res = await fetch(`${API_BASE}/api/graphs/${graphId}`)
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}`, {
+    headers: { ...authHeaders() },
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<{
     graph: { version: number }
@@ -98,7 +102,9 @@ export async function fetchGraphHistory(
   graphId = DEFAULT_GRAPH_ID,
   limit = 100,
 ): Promise<HistoryResponse> {
-  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/history?limit=${limit}`)
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/history?limit=${limit}`, {
+    headers: { ...authHeaders() },
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<HistoryResponse>
 }
@@ -110,7 +116,9 @@ export async function fetchAgentContext(
   const params = new URLSearchParams()
   if (query.trim()) params.set('q', query.trim())
   const qs = params.toString()
-  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/agent-context${qs ? `?${qs}` : ''}`)
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/agent-context${qs ? `?${qs}` : ''}`, {
+    headers: { ...authHeaders() },
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<AgentContextResponse>
 }
@@ -121,7 +129,7 @@ export async function restoreGraphCheckpoint(
 ): Promise<{ ok: boolean; new_version: number; restored_from: number }> {
   const res = await fetch(`${API_BASE}/api/graphs/${graphId}/restore`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ change_log_id: changeLogId }),
   })
   if (res.status === 409) {
@@ -142,7 +150,7 @@ async function postSyncCanvas(
 ) {
   const res = await fetch(`${API_BASE}/api/graphs/${graphId}/sync/canvas`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({
       x6Json: body.x6Json,
       legacyTables: body.legacyTables,

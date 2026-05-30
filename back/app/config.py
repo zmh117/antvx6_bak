@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     default_graph_id: str = "00000000-0000-0000-0000-000000000001"
     api_prefix: str = "/api"
+    jwt_secret: str = "dev-antvx6-change-me"
+    jwt_issuer: str = "antvx6"
+    jwt_expire_minutes: int = 60 * 24 * 7
+    collab_internal_token: str = "dev-collab-internal-token"
 
     @property
     def database_url(self) -> str:

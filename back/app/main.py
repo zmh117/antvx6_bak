@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import run_migrations
-from app.interfaces.http.routers import business_flows, graphs
+from app.interfaces.http.routers import auth, business_flows, graphs
 from app.routers import health
 
 
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router, prefix=settings.api_prefix)
+    app.include_router(auth.router, prefix=settings.api_prefix)
     app.include_router(graphs.router, prefix=settings.api_prefix)
     app.include_router(business_flows.router, prefix=settings.api_prefix)
     return app

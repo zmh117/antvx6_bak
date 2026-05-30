@@ -16,10 +16,15 @@ from app.services.graph_lock import VersionConflictError, lock_graph
 __all__ = ["VersionConflictError", "apply_full_sync", "apply_full_sync_legacy"]
 
 
-def apply_full_sync(conn: psycopg.Connection, payload: NormalizedGraphPayload) -> SyncResponse:
+def apply_full_sync(
+    conn: psycopg.Connection,
+    payload: NormalizedGraphPayload,
+    *,
+    user_id: UUID | str | None = None,
+) -> SyncResponse:
     from app.application.graph_sync import graph_sync_service
 
-    return graph_sync_service.sync_payload(conn, payload)
+    return graph_sync_service.sync_payload(conn, payload, user_id=user_id)
 
 
 def apply_full_sync_legacy(conn: psycopg.Connection, payload: NormalizedGraphPayload) -> SyncResponse:

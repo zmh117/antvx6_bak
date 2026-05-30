@@ -17,6 +17,7 @@ def restore_from_change_log(
     change_log_id: int,
     *,
     client_id: str | None = "restore",
+    user_id: UUID | str | None = None,
 ) -> RestoreResponse:
     with conn.cursor() as cur:
         cur.execute(
@@ -51,7 +52,10 @@ def restore_from_change_log(
     )
     payload.client_id = client_id
 
-    result = graph_sync_service.sync_payload(conn, payload)
+    result = graph_sync_service.sync_payload(conn, payload, user_id=user_id)
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM er_yjs_update WHERE graph_id = %s", (graph_id,))
+        cur.execute("DELETE FROM er_yjs_doc WHERE graph_id = %s", (graph_id,))
     return RestoreResponse(
         ok=True,
         graph_id=graph_id,

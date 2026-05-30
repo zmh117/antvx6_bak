@@ -18,3 +18,31 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+  collab:
+    image: node:22-alpine
+    container_name: antvx6-collab
+    working_dir: /app/collab
+    command: sh -c "npm install && npm run start"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${COLLAB_PORT:-1234}:1234"
+    environment:
+      COLLAB_PORT: ${COLLAB_PORT:-1234}
+      API_BASE: ${API_BASE:-http://host.docker.internal:8001}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-antvx6}
+      JWT_SECRET: ${JWT_SECRET:-dev-antvx6-change-me}
+      JWT_ISSUER: ${JWT_ISSUER:-antvx6}
+      COLLAB_INTERNAL_TOKEN: ${COLLAB_INTERNAL_TOKEN:-dev-collab-internal-token}
+    volumes:
+      - .:/app
+      - collab_node_modules:/app/collab/node_modules
+
+volumes:
+  collab_node_modules:

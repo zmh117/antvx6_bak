@@ -43,6 +43,7 @@ import {
 } from './FieldEnumPanel'
 import { applyErTablesToGraphNodes, graphToErTables, normalizeRelationshipType } from './graphToErData'
 import { fetchGraphLoad, getDefaultGraphId, graphKeys, syncGraphCanvas } from '@/entities/er-graph/api'
+import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { HistoryPanel } from './HistoryPanel'
 import { resolveTablesFromLoad } from './resolveGraphTables'
 import { buildRelationEdgeData, resolveRelationEndpoints } from './relationUtils'
@@ -67,6 +68,10 @@ import { withHistoryPaused } from './lib/withHistoryPaused'
 import { repairErEdgesAfterHistory } from './lib/repairErEdgesAfterHistory'
 import { historyCmdsNeedEdgeRepair } from './lib/historyCmdUtils'
 import { setOperationSource, takeOperationSource } from './lib/graphOperationSource'
+import {
+  createErCollaboration,
+  type ErCollaborationController,
+} from './lib/erCollaboration'
 
 /** 小地图外框尺寸（与 .er-minimap-widget 一致） */
 const MINIMAP_FRAME = { width: 200, height: 160, padding: 10 } as const
@@ -372,7 +377,10 @@ export default function ERDiagram() {
   const graphVersionRef = useRef<number | undefined>(undefined)
   const graphIdRef = useRef(getDefaultGraphId())
   const reloadGraphRef = useRef<(() => Promise<void>) | null>(null)
+  const collabRef = useRef<ErCollaborationController | null>(null)
   const [autosaveErr, setAutosaveErr] = useState<string | null>(null)
+  const [collabStatus, setCollabStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected')
+  const [onlineUsers, setOnlineUsers] = useState<Array<{ id?: string; name?: string; email?: string; color?: string }>>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [selectedField, setSelectedField] = useState<FieldSelection | null>(null)
   const [selectedTable, setSelectedTable] = useState<TableSelection | null>(null)
@@ -575,6 +583,7 @@ export default function ERDiagram() {
     let applyingEdgeMeta = false
     let immediatePersistQueued = false
     let applyingHistory = false
+    let applyingRemote = false
 
     const unbindKeyboard = bindX6KeyboardHistory(graph, {
       beforeApply: () => {
@@ -590,6 +599,12 @@ export default function ERDiagram() {
     const scheduleMinimapReflow = FunctionExt.debounce(() => {
       reflowMinimap(graph)
     }, 48)
+    const scheduleCollabPush = FunctionExt.debounce(() => {
+      if (!collabRef.current?.isRealtimeEnabled()) return
+      collabRef.current.pushGraph()
+      setGraphDataRevision((v) => v + 1)
+      setAutosaveErr(null)
+    }, 80)
 
     graph.on('node:change:position', scheduleMinimapReflow)
     graph.on('node:change:size', scheduleMinimapReflow)
@@ -606,6 +621,7 @@ export default function ERDiagram() {
       immediatePersistQueued = false
       if (historyPersistTimer) clearTimeout(historyPersistTimer)
       historyPersistTimer = undefined
+      scheduleCollabPush.cancel()
     }
 
     const scheduleHistoryPersist = () => {
@@ -662,6 +678,12 @@ export default function ERDiagram() {
       pendingSyncNodes = false
       try {
         const tables = graphToErTables(graph)
+        if (collabRef.current?.isRealtimeEnabled()) {
+          collabRef.current.pushGraph()
+          setAutosaveErr(null)
+          setGraphDataRevision((v) => v + 1)
+          return
+        }
         const useApi = import.meta.env.VITE_USE_API !== 'false'
         if (useApi) {
           const result = await syncGraphCanvas(graph, {
@@ -718,9 +740,21 @@ export default function ERDiagram() {
     }
 
     const schedulePersist = (syncNodes = false, immediate = false) => {
-      if (applyingHistory) return
+      if (applyingHistory || applyingRemote) return
       if (suppressPersist) {
         if (!syncNodes) metadataPersistPending = true
+        return
+      }
+      if (collabRef.current?.isRealtimeEnabled()) {
+        if (syncNodes) pendingSyncNodes = true
+        if (immediate) {
+          scheduleCollabPush.cancel()
+          collabRef.current.pushGraph()
+          setGraphDataRevision((v) => v + 1)
+          setAutosaveErr(null)
+        } else {
+          scheduleCollabPush()
+        }
         return
       }
       if (syncNodes) pendingSyncNodes = true
@@ -747,6 +781,12 @@ export default function ERDiagram() {
       if (suppressPersist) return
       if (persistTimer) clearTimeout(persistTimer)
       persistTimer = undefined
+      if (collabRef.current?.isRealtimeEnabled()) {
+        scheduleCollabPush.cancel()
+        collabRef.current.pushGraph()
+        setGraphDataRevision((v) => v + 1)
+        return
+      }
       void runPersist()
     }
 
@@ -779,11 +819,11 @@ export default function ERDiagram() {
     graph.on('node:click', onTableNodeClick)
 
     graph.on('node:change:position', () => {
-      if (applyingHistory) return
+      if (applyingHistory || applyingRemote) return
       schedulePersist(true)
     })
     const onEdgeStructureChange = ({ edge }: { edge: Edge }) => {
-      if (applyingHistory) return
+      if (applyingHistory || applyingRemote) return
       if (edge.shape === 'er-relationship') {
         const resolved = resolveRelationEndpoints({
           source: edge.getSource() as { cell?: string; port?: string },
@@ -811,11 +851,11 @@ export default function ERDiagram() {
     }
 
     const onEdgeRemoved = () => {
-      if (applyingHistory) return
+      if (applyingHistory || applyingRemote) return
       schedulePersist(true, true)
     }
     const onEdgeDataChange = () => {
-      if (applyingHistory || applyingEdgeMeta) return
+      if (applyingHistory || applyingRemote || applyingEdgeMeta) return
       schedulePersist(true, true)
     }
 
@@ -1036,6 +1076,26 @@ export default function ERDiagram() {
     ;(async () => {
       await applyLoadedToGraph()
       if (cancelled) return
+      const token = getAccessToken()
+      if (token) {
+        collabRef.current?.destroy()
+        collabRef.current = createErCollaboration({
+          graph,
+          graphId: graphIdRef.current,
+          token,
+          onStatus: setCollabStatus,
+          onRemoteApply: () => {
+            setGraphDataRevision((v) => v + 1)
+            reflowMinimap(graph)
+          },
+          onAwareness: setOnlineUsers,
+          onError: setAutosaveErr,
+          setApplyingRemote: (value) => {
+            applyingRemote = value
+          },
+          currentUser: getCurrentUser(),
+        })
+      }
       finishInitialLayout()
     })().catch((err: unknown) => {
       console.error('加载 ER 数据失败:', err)
@@ -1060,6 +1120,7 @@ export default function ERDiagram() {
       graph.off('edge:dblclick', onEdgeDblClick)
       graph.off('edge:mouseenter', onEdgeMouseEnter)
       graph.off('edge:mouseleave', onEdgeMouseLeave)
+      scheduleCollabPush.cancel()
       schedulePersistRef.current = () => {
         /* disposed */
       }
@@ -1067,6 +1128,8 @@ export default function ERDiagram() {
         /* disposed */
       }
       reloadGraphRef.current = null
+      collabRef.current?.destroy()
+      collabRef.current = null
       graph.dispose()
       graphRef.current = null
     }
@@ -1092,6 +1155,14 @@ export default function ERDiagram() {
     requestAnimationFrame(apply)
   }, [resolvedTheme])
 
+  useEffect(() => {
+    collabRef.current?.provider.awareness?.setLocalStateField('selection', {
+      field: selectedField,
+      table: selectedTable,
+      relation: selectedRelation,
+    })
+  }, [selectedField, selectedTable, selectedRelation])
+
   const useApi = import.meta.env.VITE_USE_API !== 'false'
 
   return (
@@ -1105,6 +1176,29 @@ export default function ERDiagram() {
           历史记录
         </button>
       ) : null}
+      <div className="absolute left-3 top-3 z-40 rounded-md border border-border bg-card/95 px-3 py-1.5 text-xs shadow-sm backdrop-blur">
+        协同：
+        <span
+          className={
+            collabStatus === 'connected'
+              ? 'text-emerald-600'
+              : collabStatus === 'error'
+                ? 'text-destructive'
+                : 'text-muted-foreground'
+          }
+        >
+          {collabStatus === 'connected'
+            ? '已连接'
+            : collabStatus === 'connecting'
+              ? '连接中'
+              : collabStatus === 'error'
+                ? '异常'
+            : '未连接'}
+        </span>
+        {onlineUsers.length ? (
+          <span className="ml-2 text-muted-foreground">在线 {onlineUsers.length}</span>
+        ) : null}
+      </div>
       {autosaveErr ? (
         <Alert
           variant="destructive"

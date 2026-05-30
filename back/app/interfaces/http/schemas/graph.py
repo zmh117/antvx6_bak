@@ -96,7 +96,13 @@ class NormalizedGraphPayload(BaseModel):
     base_version: int | None = None
     client_id: str | None = None
     operation_source: Literal[
-        "manual_save", "auto_save", "undo", "redo", "restore"
+        "manual_save",
+        "auto_save",
+        "undo",
+        "redo",
+        "restore",
+        "collab_auto_save",
+        "collab_restore",
     ] = "auto_save"
     tables: list[TablePayload] = Field(default_factory=list)
     columns: list[ColumnPayload] = Field(default_factory=list)
@@ -180,6 +186,7 @@ class ChangeLogEntry(BaseModel):
     before_data: dict[str, Any] | None = None
     after_data: dict[str, Any] | None = None
     client_id: str | None = None
+    user_id: str | None = None
     graph_version: int | None = None
     created_at: str
 

@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix front",
+    "dev:collab": "npm run dev --prefix collab",
     "dev:api": "cd back && uvicorn app.main:app --reload --port 8001",
     "build": "npm run build --prefix front",
     "preview": "npm run preview --prefix front"
