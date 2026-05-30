@@ -71,10 +71,27 @@ import { setOperationSource, takeOperationSource } from './lib/graphOperationSou
 import {
   createErCollaboration,
   type ErCollaborationController,
+  type ErPresenceActivity,
+  type ErPresenceTarget,
+  type ErRemoteAwareness,
 } from './lib/erCollaboration'
 
 /** 小地图外框尺寸（与 .er-minimap-widget 一致） */
 const MINIMAP_FRAME = { width: 200, height: 160, padding: 10 } as const
+const PRESENCE_STALE_MS = 30_000
+const PRESENCE_LABELS: Record<ErPresenceActivity, string> = {
+  selecting: '正在查看',
+  editing: '正在编辑',
+  dragging: '正在移动',
+  connecting: '已连接',
+}
+
+type PresenceHighlight = {
+  key: string
+  label: string
+  color: string
+  rect: { x: number; y: number; width: number; height: number }
+}
 
 /** 边上未写入 router 时由 graph.connecting 回退，与 er-relationship 形定义一致 */
 const SHARED_EDGE_ROUTE = {
@@ -381,6 +398,8 @@ export default function ERDiagram() {
   const [autosaveErr, setAutosaveErr] = useState<string | null>(null)
   const [collabStatus, setCollabStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected')
   const [onlineUsers, setOnlineUsers] = useState<Array<{ id?: string; name?: string; email?: string; color?: string }>>([])
+  const [remoteAwareness, setRemoteAwareness] = useState<ErRemoteAwareness[]>([])
+  const [presenceHighlights, setPresenceHighlights] = useState<PresenceHighlight[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [selectedField, setSelectedField] = useState<FieldSelection | null>(null)
   const [selectedTable, setSelectedTable] = useState<TableSelection | null>(null)
@@ -411,6 +430,81 @@ export default function ERDiagram() {
     if (!edge?.isEdge()) return null
     return { relation: { ...edge.getData<RelationBusinessData>() } }
   }, [selectedRelation, graphDataRevision])
+
+  const publishPresence = useCallback(
+    (target: ErPresenceTarget | null, activity?: ErPresenceActivity) => {
+      collabRef.current?.setLocalPresence(target, activity)
+    },
+    [],
+  )
+
+  const recomputePresenceHighlights = useCallback(() => {
+    const graph = graphRef.current
+    const container = containerRef.current
+    if (!graph || !container) {
+      setPresenceHighlights([])
+      return
+    }
+
+    const containerRect = container.getBoundingClientRect()
+    const now = Date.now()
+    const next: PresenceHighlight[] = []
+
+    const toRelativeRect = (rect: DOMRect, pad = 4) => ({
+      x: rect.left - containerRect.left - pad,
+      y: rect.top - containerRect.top - pad,
+      width: Math.max(24, rect.width + pad * 2),
+      height: Math.max(20, rect.height + pad * 2),
+    })
+
+    const rectForTarget = (target: ErPresenceTarget): PresenceHighlight['rect'] | null => {
+      if (target.kind === 'table' || target.kind === 'field') {
+        const node = graph.getCellById(target.tableId)
+        if (!node?.isNode()) return null
+        const view = graph.findViewByCell(node)
+        const tableEl = view?.container.querySelector('.er-table') as HTMLElement | null
+        if (!tableEl) return null
+        if (target.kind === 'field') {
+          const row = tableEl.querySelector<HTMLElement>(
+            `[data-field-name="${CSS.escape(target.fieldName)}"]`,
+          )
+          if (!row) return null
+          return toRelativeRect(row.getBoundingClientRect(), 3)
+        }
+        return toRelativeRect(tableEl.getBoundingClientRect(), 5)
+      }
+
+      const edge = graph.getCellById(target.edgeId)
+      if (!edge?.isEdge()) return null
+      const view = graph.findViewByCell(edge)
+      const line = view?.container.querySelector<SVGElement>('[selector="line"], path, polyline')
+      const rect = (line || (view?.container as SVGElement | undefined))?.getBoundingClientRect()
+      if (!rect) return null
+      return toRelativeRect(rect, 8)
+    }
+
+    for (const state of remoteAwareness) {
+      if (!state.target) continue
+      if (state.isLocal) continue
+      if (state.updatedAt && now - state.updatedAt > PRESENCE_STALE_MS) continue
+      const rect = rectForTarget(state.target)
+      if (!rect) continue
+      const name = state.user.name || state.user.email || '其他成员'
+      const activity = state.activity || 'editing'
+      next.push({
+        key: `${state.clientId}:${state.target.kind}:${
+          'edgeId' in state.target
+            ? state.target.edgeId
+            : `${state.target.tableId}:${'fieldName' in state.target ? state.target.fieldName : ''}`
+        }`,
+        label: `${name} ${PRESENCE_LABELS[activity]}`,
+        color: state.user.color || '#2563eb',
+        rect,
+      })
+    }
+
+    setPresenceHighlights(next)
+  }, [remoteAwareness])
 
   const patchSelectedField = useCallback(
     (patch: FieldBusinessPatch) => {
@@ -797,6 +891,7 @@ export default function ERDiagram() {
       selectErField(null)
       selectErTable(null)
       setSelectedRelation(null)
+      publishPresence(null)
     }
     graph.on('blank:click', onBlankClick)
 
@@ -815,13 +910,38 @@ export default function ERDiagram() {
       if (!fieldName) return
       e.stopPropagation()
       selectErField({ tableId: String(node.id), fieldName })
+      publishPresence({ kind: 'field', tableId: String(node.id), fieldName }, 'editing')
     }
     graph.on('node:click', onTableNodeClick)
 
-    graph.on('node:change:position', () => {
+    const onTableNodeMouseDown = ({
+      node,
+      e,
+    }: {
+      node: Node
+      e: { target: EventTarget | null }
+    }) => {
+      if (node.shape !== 'er-table') return
+      const target = e.target as HTMLElement | null
+      const row = target?.closest?.('.er-table-field')
+      const tableId = String(node.id)
+      const fieldName = row?.getAttribute('data-field-name')
+      if (fieldName) {
+        publishPresence({ kind: 'field', tableId, fieldName }, 'editing')
+        return
+      }
+      publishPresence({ kind: 'table', tableId }, 'dragging')
+    }
+    graph.on('node:mousedown', onTableNodeMouseDown)
+
+    const onNodePositionChange = ({ node }: { node: Node }) => {
       if (applyingHistory || applyingRemote) return
+      if (node.shape === 'er-table') {
+        publishPresence({ kind: 'table', tableId: String(node.id) }, 'dragging')
+      }
       schedulePersist(true)
-    })
+    }
+    graph.on('node:change:position', onNodePositionChange)
     const onEdgeStructureChange = ({ edge }: { edge: Edge }) => {
       if (applyingHistory || applyingRemote) return
       if (edge.shape === 'er-relationship') {
@@ -847,6 +967,7 @@ export default function ERDiagram() {
           }
         }
       }
+      publishPresence({ kind: 'relation', edgeId: String(edge.id) }, 'editing')
       schedulePersist(true, true)
     }
 
@@ -873,6 +994,7 @@ export default function ERDiagram() {
       if (edge.shape === 'er-relationship') {
         e.stopPropagation()
         if (e.detail && e.detail > 1) return
+        publishPresence({ kind: 'relation', edgeId: String(edge.id) }, 'editing')
         toggleRelationshipType(graph, edge)
         schedulePersist(true, true)
       }
@@ -882,6 +1004,7 @@ export default function ERDiagram() {
       setSelectedRelation({ edgeId: String(edge.id) })
       selectErField(null)
       selectErTable(null)
+      publishPresence({ kind: 'relation', edgeId: String(edge.id) }, 'editing')
     }
 
     const onEdgeDblClick = ({
@@ -1088,7 +1211,10 @@ export default function ERDiagram() {
             setGraphDataRevision((v) => v + 1)
             reflowMinimap(graph)
           },
-          onAwareness: setOnlineUsers,
+          onAwareness: (states) => {
+            setRemoteAwareness(states)
+            setOnlineUsers(states.map((state) => state.user))
+          },
           onError: setAutosaveErr,
           setApplyingRemote: (value) => {
             applyingRemote = value
@@ -1107,7 +1233,7 @@ export default function ERDiagram() {
       unbindKeyboard()
       graph.off('history:undo', onHistoryUndo)
       graph.off('history:redo', onHistoryRedo)
-      graph.off('node:change:position', schedulePersist)
+      graph.off('node:change:position', onNodePositionChange)
       graph.off('node:change:position', scheduleMinimapReflow)
       graph.off('node:change:size', scheduleMinimapReflow)
       graph.off('edge:change:vertices', scheduleMinimapReflow)
@@ -1116,6 +1242,7 @@ export default function ERDiagram() {
       graph.off('edge:change:data', onEdgeDataChange)
       graph.off('blank:click', onBlankClick)
       graph.off('node:click', onTableNodeClick)
+      graph.off('node:mousedown', onTableNodeMouseDown)
       graph.off('edge:click', onEdgeClick)
       graph.off('edge:dblclick', onEdgeDblClick)
       graph.off('edge:mouseenter', onEdgeMouseEnter)
@@ -1156,12 +1283,56 @@ export default function ERDiagram() {
   }, [resolvedTheme])
 
   useEffect(() => {
-    collabRef.current?.provider.awareness?.setLocalStateField('selection', {
-      field: selectedField,
-      table: selectedTable,
-      relation: selectedRelation,
-    })
-  }, [selectedField, selectedTable, selectedRelation])
+    recomputePresenceHighlights()
+  }, [recomputePresenceHighlights, graphDataRevision])
+
+  useEffect(() => {
+    const graph = graphRef.current
+    if (!graph) return
+    let raf = 0
+    const schedule = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(recomputePresenceHighlights)
+    }
+    const events = [
+      'node:change:position',
+      'node:change:size',
+      'edge:change:source',
+      'edge:change:target',
+      'edge:change:vertices',
+      'edge:change:data',
+      'scale',
+      'translate',
+      'resize',
+    ]
+    events.forEach((event) => graph.on(event, schedule))
+    window.addEventListener('resize', schedule)
+    schedule()
+    return () => {
+      cancelAnimationFrame(raf)
+      events.forEach((event) => graph.off(event, schedule))
+      window.removeEventListener('resize', schedule)
+    }
+  }, [recomputePresenceHighlights])
+
+  useEffect(() => {
+    if (selectedField) {
+      publishPresence(
+        { kind: 'field', tableId: selectedField.tableId, fieldName: selectedField.fieldName },
+        'editing',
+      )
+      return
+    }
+    if (selectedTable) {
+      publishPresence({ kind: 'table', tableId: selectedTable.tableId }, 'editing')
+      return
+    }
+    if (selectedRelation) {
+      publishPresence({ kind: 'relation', edgeId: selectedRelation.edgeId }, 'editing')
+      return
+    }
+    publishPresence(null)
+  }, [publishPresence, selectedField, selectedTable, selectedRelation])
 
   const useApi = import.meta.env.VITE_USE_API !== 'false'
 
@@ -1222,6 +1393,32 @@ export default function ERDiagram() {
             className="er-minimap-widget"
             aria-label="画布小地图"
           />
+          <div className="pointer-events-none absolute inset-0 z-30">
+            {presenceHighlights.map((item) => (
+              <div
+                key={item.key}
+                className="er-presence-highlight absolute rounded-md border-2 shadow-sm"
+                data-presence-highlight={item.key}
+                aria-hidden="true"
+                style={{
+                  left: item.rect.x,
+                  top: item.rect.y,
+                  width: item.rect.width,
+                  height: item.rect.height,
+                  borderColor: item.color,
+                  boxShadow: `0 0 0 1px color-mix(in srgb, ${item.color} 18%, transparent)`,
+                }}
+              >
+                <span
+                  className="absolute left-0 top-0 max-w-48 -translate-y-full truncate rounded-t-md px-1.5 py-0.5 text-[11px] font-medium leading-4 text-white shadow-sm"
+                  data-presence-label={item.key}
+                  style={{ backgroundColor: item.color }}
+                >
+                  {item.label}
+                </span>
+              </div>
+            ))}
+          </div>
         </section>
         {selectedField && selectedFieldMeta ? (
           <FieldEnumPanel

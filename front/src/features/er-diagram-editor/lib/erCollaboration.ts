@@ -27,9 +27,31 @@ const FIELD_SEP = '::'
 
 type CollabStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
+export type ErPresenceTarget =
+  | { kind: 'table'; tableId: string }
+  | { kind: 'field'; tableId: string; fieldName: string }
+  | { kind: 'relation'; edgeId: string }
+
+export type ErPresenceActivity = 'selecting' | 'editing' | 'dragging' | 'connecting'
+
+export type ErRemoteAwareness = {
+  clientId: number
+  isLocal?: boolean
+  user: {
+    id?: string
+    name?: string
+    email?: string
+    color?: string
+  }
+  target?: ErPresenceTarget | null
+  activity?: ErPresenceActivity
+  updatedAt?: number
+}
+
 export type ErCollaborationController = {
   pushGraph: (origin?: string) => void
   isRealtimeEnabled: () => boolean
+  setLocalPresence: (target: ErPresenceTarget | null, activity?: ErPresenceActivity) => void
   destroy: () => void
   doc: Y.Doc
   provider: HocuspocusProvider
@@ -41,7 +63,7 @@ export type ErCollaborationOptions = {
   token: string
   onStatus: (status: CollabStatus) => void
   onRemoteApply: () => void
-  onAwareness: (users: Array<{ id?: string; name?: string; email?: string; color?: string }>) => void
+  onAwareness: (states: ErRemoteAwareness[]) => void
   onError: (message: string) => void
   setApplyingRemote: (value: boolean) => void
   currentUser?: { id: string; email: string; display_name: string } | null
@@ -435,16 +457,21 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
 
   const updateAwareness = () => {
     if (!provider.awareness) return
-    const states = Array.from(provider.awareness.getStates().values())
+    const states = Array.from(provider.awareness.getStates().entries())
     options.onAwareness(
       states
-        .map((state) => mapObject((state as Record<string, unknown>).user))
-        .filter((user) => user.id || user.email || user.name) as Array<{
-        id?: string
-        name?: string
-        email?: string
-        color?: string
-      }>,
+        .map(([clientId, state]) => {
+          const raw = state as Record<string, unknown>
+          return {
+            clientId,
+            isLocal: clientId === doc.clientID,
+            user: mapObject(raw.user),
+            target: raw.target as ErPresenceTarget | null | undefined,
+            activity: raw.activity as ErPresenceActivity | undefined,
+            updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : undefined,
+          }
+        })
+        .filter((state) => state.user.id || state.user.email || state.user.name) as ErRemoteAwareness[],
     )
   }
 
@@ -455,6 +482,8 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
       name: options.currentUser?.display_name || options.currentUser?.email,
       color: `hsl(${Math.abs((options.currentUser?.id || 'local').split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)) % 360} 70% 45%)`,
     })
+    provider.awareness.setLocalStateField('activity', 'connecting')
+    provider.awareness.setLocalStateField('updatedAt', Date.now())
     provider.awareness.on('change', updateAwareness)
     updateAwareness()
   }
@@ -469,6 +498,12 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
     },
     isRealtimeEnabled() {
       return connected
+    },
+    setLocalPresence(target, activity = target ? 'editing' : 'selecting') {
+      if (!provider.awareness) return
+      provider.awareness.setLocalStateField('target', target)
+      provider.awareness.setLocalStateField('activity', target ? activity : undefined)
+      provider.awareness.setLocalStateField('updatedAt', Date.now())
     },
     destroy() {
       doc.off('afterTransaction', onRemoteChange)
