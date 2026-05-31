@@ -346,58 +346,13 @@ function graphDataFromTables(tables: TableNodeData[]) {
 function applyDocToGraph(graph: Graph, doc: Y.Doc) {
   const tables = tablesFromDoc(doc)
   const { nodes, edges } = graphDataFromTables(tables)
-  const nodeById = new Map(nodes.map((node) => [String(node.id), node]))
-  const edgeById = new Map(edges.map((edge) => [String(edge.id), edge]))
 
   withHistoryPaused(graph, () => {
-    const seen = new Set<string>()
-    const duplicateCells = graph.getCells().filter((cell) => {
-      const id = String(cell.id)
-      if (!seen.has(id)) {
-        seen.add(id)
-        return false
-      }
-      return true
-    })
-    if (duplicateCells.length) {
-      graph.removeCells(duplicateCells)
-    }
-
-    const staleNodes = graph
-      .getNodes()
-      .filter((node) => node.shape === 'er-table' && !nodeById.has(String(node.id)))
-    const staleEdges = graph
-      .getEdges()
-      .filter((edge) => edge.shape === 'er-relationship' && !edgeById.has(String(edge.id)))
-    if (staleEdges.length || staleNodes.length) {
-      graph.removeCells([...staleEdges, ...staleNodes])
-    }
-
-    for (const meta of nodes) {
-      const id = String(meta.id)
-      const existing = graph.getCellById(id)
-      const table = meta.data as TableNodeData
-      if (existing?.isNode()) {
-        existing.position(Number(meta.x ?? 0), Number(meta.y ?? 0))
-        existing.resize(Number(meta.width ?? ER_LAYOUT.nodeWidth), Number(meta.height ?? tableBodyHeight(table.fields.length)))
-        existing.setData(table, { overwrite: true, deep: true })
-        setErTablePorts(existing, table.fields)
-      } else {
-        graph.addNode(meta)
-      }
-    }
-
-    for (const meta of edges) {
-      const id = String(meta.id)
-      const existing = graph.getCellById(id)
-      if (existing?.isEdge()) {
-        if (meta.source) existing.setSource(meta.source as never)
-        if (meta.target) existing.setTarget(meta.target as never)
-        existing.setData(meta.data)
-        existing.setLabels(meta.labels ?? [])
-      } else {
-        graph.addEdge(meta)
-      }
+    graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
+    for (const node of graph.getNodes()) {
+      if (node.shape !== 'er-table') continue
+      const table = node.getData<TableNodeData>()
+      setErTablePorts(node, table.fields ?? [])
     }
   })
   graph.cleanHistory()

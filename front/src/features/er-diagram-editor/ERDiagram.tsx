@@ -8,7 +8,7 @@ import {
   type EdgeMetadata,
   type ValidateConnectionArgs,
 } from '@antv/x6'
-import { Pencil } from 'lucide-react'
+import { Database, Pencil } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useQueryClient } from '@tanstack/react-query'
 import { register } from '@antv/x6-react-shape'
@@ -45,6 +45,7 @@ import { applyErTablesToGraphNodes, graphToErTables, normalizeRelationshipType }
 import { fetchGraphLoad, getDefaultGraphId, graphKeys, syncGraphCanvas } from '@/entities/er-graph/api'
 import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { HistoryPanel } from './HistoryPanel'
+import { DatabaseImportPanel } from './DatabaseImportPanel'
 import { resolveTablesFromLoad } from './resolveGraphTables'
 import { buildRelationEdgeData, resolveRelationEndpoints } from './relationUtils'
 import type { RelationBusinessData } from '@/entities/er-graph/model/erSchema'
@@ -403,6 +404,7 @@ export default function ERDiagram() {
   const [remoteAwareness, setRemoteAwareness] = useState<ErRemoteAwareness[]>([])
   const [presenceHighlights, setPresenceHighlights] = useState<PresenceHighlight[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [databaseImportOpen, setDatabaseImportOpen] = useState(false)
   const [selectedField, setSelectedField] = useState<FieldSelection | null>(null)
   const [selectedTable, setSelectedTable] = useState<TableSelection | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<RelationSelection | null>(null)
@@ -1112,9 +1114,6 @@ export default function ERDiagram() {
     const applyLoadedToGraph = async (opts?: { fallbackErJson?: boolean }) => {
       const useApi = import.meta.env.VITE_USE_API !== 'false'
       let loadedFromSnapshot = false
-      withHistoryPaused(graph, () => {
-        graph.clearCells()
-      })
       try {
         if (useApi) {
           const loaded = await fetchGraphLoad(graphIdRef.current)
@@ -1123,8 +1122,7 @@ export default function ERDiagram() {
           if (tables.length) {
             const { nodes, edges } = transformToGraphData(tables)
             withHistoryPaused(graph, () => {
-              graph.addNodes(nodes)
-              graph.addEdges(edges)
+              graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
               applyErTablesToGraphNodes(graph, tables)
             })
             setGraphDataRevision((v) => v + 1)
@@ -1149,8 +1147,7 @@ export default function ERDiagram() {
           const tables = normalizeErTables((await response.json()) as TableNodeData[])
           const { nodes, edges } = transformToGraphData(tables)
           withHistoryPaused(graph, () => {
-            graph.addNodes(nodes)
-            graph.addEdges(edges)
+            graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
           })
         }
       } catch (err) {
@@ -1160,8 +1157,7 @@ export default function ERDiagram() {
           const tables = normalizeErTables((await response.json()) as TableNodeData[])
           const { nodes, edges } = transformToGraphData(tables)
           withHistoryPaused(graph, () => {
-            graph.addNodes(nodes)
-            graph.addEdges(edges)
+            graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
           })
         }
       }
@@ -1342,13 +1338,23 @@ export default function ERDiagram() {
   return (
     <section className="relative flex h-full min-h-0 min-w-0 flex-1">
       {useApi && !historyOpen ? (
-        <button
-          type="button"
-          className="absolute right-3 top-3 z-40 rounded-md border border-border bg-card/95 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-accent"
-          onClick={() => setHistoryOpen(true)}
-        >
-          历史记录
-        </button>
+        <div className="absolute right-3 top-3 z-40 flex items-center gap-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-card/95 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-accent"
+            onClick={() => setDatabaseImportOpen(true)}
+          >
+            <Database className="size-3.5" />
+            读取数据库
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border bg-card/95 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-accent"
+            onClick={() => setHistoryOpen(true)}
+          >
+            历史记录
+          </button>
+        </div>
       ) : null}
       <div className="absolute left-3 top-3 z-40 rounded-md border border-border bg-card/95 px-3 py-1.5 text-xs shadow-sm backdrop-blur">
         协同：
@@ -1458,6 +1464,26 @@ export default function ERDiagram() {
             graphVersionRef.current = newVersion
             setGraphDataRevision((v) => v + 1)
             void reloadGraphRef.current?.()
+          }}
+        />
+      ) : null}
+      {useApi ? (
+        <DatabaseImportPanel
+          open={databaseImportOpen}
+          graphId={graphIdRef.current}
+          onClose={() => setDatabaseImportOpen(false)}
+          onImported={(newVersion) => {
+            graphVersionRef.current = newVersion
+            setGraphDataRevision((v) => v + 1)
+            void queryClient.invalidateQueries({
+              queryKey: graphKeys.histories(graphIdRef.current),
+            })
+            void queryClient.invalidateQueries({
+              queryKey: graphKeys.agentContexts(graphIdRef.current),
+            })
+            void reloadGraphRef.current?.().then(() => {
+              collabRef.current?.pushGraph('database-import')
+            })
           }}
         />
       ) : null}

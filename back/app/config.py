@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     jwt_issuer: str = "antvx6"
     jwt_expire_minutes: int = 60 * 24 * 7
     collab_internal_token: str = "dev-collab-internal-token"
+    connection_secret_key: str = "dev-antvx6-connection-secret"
+
+    target_database_type: str = "mysql"
+    target_database_user: str = ""
+    target_database_password: str = ""
+    target_database_db: str = ""
+    target_database_host: str = ""
+    target_database_port: int = 3306
+    target_database_schema: str = ""
 
     @property
     def database_url(self) -> str:

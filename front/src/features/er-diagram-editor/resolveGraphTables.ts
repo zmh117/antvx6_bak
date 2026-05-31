@@ -55,8 +55,9 @@ function applyStructuredTableFields(table: TableNodeData, row: TableRow): TableN
     tags: row.tags !== undefined ? row.tags ?? undefined : table.tags,
     comment: row.comment !== undefined ? row.comment ?? undefined : table.comment,
     layout:
-      table.layout ??
-      (row.x != null && row.y != null ? { x: Number(row.x), y: Number(row.y) } : undefined),
+      row.x != null && row.y != null
+        ? { x: Number(row.x), y: Number(row.y) }
+        : table.layout,
   }
 }
 

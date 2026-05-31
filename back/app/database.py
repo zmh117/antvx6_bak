@@ -6,6 +6,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.config import get_settings
+from app.application.database_connection_service import database_connection_service
 
 
 def get_connection() -> psycopg.Connection:
@@ -42,4 +43,9 @@ def run_migrations() -> None:
                 encoding="utf-8"
             )
             cur.execute(collaboration_sql)
+            database_connections_sql = (
+                migrations_dir / "005_database_connections.sql"
+            ).read_text(encoding="utf-8")
+            cur.execute(database_connections_sql)
+            database_connection_service.seed_env_target_connection(cur)
         conn.commit()

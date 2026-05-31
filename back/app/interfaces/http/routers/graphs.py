@@ -3,8 +3,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.application.graph_sync import graph_sync_service
+from app.application.er_import_service import er_import_service
 from app.config import get_settings
 from app.database import db_transaction, get_connection
+from app.domain.er_import import ImportMode
+from app.interfaces.http.schemas.database_connection import (
+    ImportDatabaseRequest,
+    ImportDatabaseResponse,
+)
 from app.interfaces.http.schemas.graph import (
     AgentContextResponse,
     CanvasSnapshotPayload,
@@ -258,6 +264,39 @@ def graph_restore(
         ) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/{graph_id}/import/database", response_model=ImportDatabaseResponse)
+def import_graph_from_database(
+    graph_id: UUID,
+    body: ImportDatabaseRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> ImportDatabaseResponse:
+    selected = {name.strip() for name in body.selected_tables if name.strip()}
+    if not selected:
+        raise HTTPException(status_code=400, detail="selected_tables cannot be empty")
+    try:
+        with db_transaction() as conn:
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "editor")
+            result = er_import_service.import_database(
+                conn,
+                graph_id=graph_id,
+                connection_id=body.connection_id,
+                mode=ImportMode(body.mode),
+                selected_tables=selected,
+                user_id=user.id,
+            )
+            return ImportDatabaseResponse(
+                ok=result.ok,
+                graph_id=result.graph_id,
+                new_version=result.new_version,
+                warnings=result.warnings,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/default/id")
