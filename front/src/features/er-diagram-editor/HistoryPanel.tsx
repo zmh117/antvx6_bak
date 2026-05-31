@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ChevronDown, ChevronRight, X } from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,6 +46,8 @@ const SOURCE_BADGE: Record<string, string> = {
   auto_save: '自动',
   manual_save: '手动',
   restore: '恢复',
+  collab_auto_save: '协同',
+  collab_restore: '协同恢复',
 }
 
 function checkpointSourceBadge(entry: ChangeLogEntry): string | null {
@@ -53,6 +55,41 @@ function checkpointSourceBadge(entry: ChangeLogEntry): string | null {
   const source = entry.after_data?.operation_source
   if (typeof source !== 'string') return null
   return SOURCE_BADGE[source] ?? source
+}
+
+type SnapshotHistoryGroup = {
+  checkpoint: ChangeLogEntry
+  changes: ChangeLogEntry[]
+}
+
+function groupSnapshotHistory(entries: ChangeLogEntry[]) {
+  const groups: SnapshotHistoryGroup[] = []
+  const looseChanges: ChangeLogEntry[] = []
+  let currentGroup: SnapshotHistoryGroup | null = null
+
+  for (const entry of entries) {
+    if (entry.change_type === 'checkpoint') {
+      currentGroup = { checkpoint: entry, changes: [] }
+      groups.push(currentGroup)
+      continue
+    }
+
+    if (currentGroup) {
+      currentGroup.changes.push(entry)
+    } else {
+      looseChanges.push(entry)
+    }
+  }
+
+  return { groups, looseChanges }
+}
+
+function changeBadgeClass(entry: ChangeLogEntry) {
+  if (entry.change_type === 'delete') return 'bg-destructive/15 text-destructive'
+  if (entry.entity_type === 'relation') return 'bg-sky-500/15 text-sky-700 dark:text-sky-300'
+  if (entry.entity_type === 'table') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+  if (entry.entity_type === 'column') return 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+  return 'bg-muted text-muted-foreground'
 }
 
 type HistoryPanelProps = {
@@ -72,9 +109,11 @@ export function HistoryPanel({
   onRestored,
 }: HistoryPanelProps) {
   const [restoreTarget, setRestoreTarget] = useState<ChangeLogEntry | null>(null)
-  const historyQuery = useGraphHistoryQuery(graphId, { enabled: false })
+  const [expandedCheckpointId, setExpandedCheckpointId] = useState<number | null>(null)
+  const historyQuery = useGraphHistoryQuery(graphId, { enabled: false, limit: 200 })
   const restoreMutation = useRestoreGraphCheckpointMutation(graphId)
   const entries = historyQuery.data?.entries ?? []
+  const { groups, looseChanges } = useMemo(() => groupSnapshotHistory(entries), [entries])
   const version = historyQuery.data?.version
   const refetchHistory = historyQuery.refetch
   const error = historyQuery.error ?? restoreMutation.error
@@ -128,7 +167,7 @@ export function HistoryPanel({
         ) : null}
 
         <ScrollArea className="min-h-0 flex-1">
-          <ul className="divide-y divide-border px-2 py-1">
+          <ul className="space-y-2 px-2 py-2">
             {historyQuery.isFetching && entries.length === 0 ? (
               <li className="px-2 py-4 text-center text-xs text-muted-foreground">
                 加载中…
@@ -139,58 +178,133 @@ export function HistoryPanel({
                 暂无历史
               </li>
             ) : null}
-            {entries.map((entry) => {
-              const isCheckpoint = entry.change_type === 'checkpoint'
+            {groups.map((group) => {
+              const entry = group.checkpoint
               const sourceBadge = checkpointSourceBadge(entry)
+              const expanded = expandedCheckpointId === entry.id
+              const changeCount = group.changes.length
               return (
-                <li key={entry.id} className="px-2 py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className={`inline-flex rounded px-1 py-0.5 text-[10px] font-medium ${
-                            isCheckpoint
-                              ? 'bg-primary/15 text-primary'
-                              : entry.change_type === 'delete'
-                                ? 'bg-destructive/15 text-destructive'
-                                : 'bg-muted text-muted-foreground'
-                          }`}
-                        >
-                          {entryBadge(entry)}
-                        </span>
-                        {sourceBadge ? (
-                          <span className="inline-flex rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            {sourceBadge}
+                <li key={entry.id}>
+                  <div className="rounded-lg border border-border bg-background p-2.5 shadow-sm transition-colors hover:border-primary/30">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                            快照
                           </span>
-                        ) : null}
-                        {entry.graph_version != null ? (
-                          <span className="text-[10px] text-muted-foreground">
-                            v{entry.graph_version}
-                          </span>
-                        ) : null}
+                          {sourceBadge ? (
+                            <span className="inline-flex rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              {sourceBadge}
+                            </span>
+                          ) : null}
+                          {entry.graph_version != null ? (
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              v{entry.graph_version}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs font-medium leading-snug">
+                          {entry.summary}
+                        </p>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+                          <span>{formatTime(entry.created_at)}</span>
+                          <span>{changeCount > 0 ? `${changeCount} 条变更` : '无实体变更'}</span>
+                        </div>
                       </div>
-                      <p className="mt-1 line-clamp-2 text-xs leading-snug">
-                        {entry.summary}
-                      </p>
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        {formatTime(entry.created_at)}
-                      </p>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          disabled={changeCount === 0}
+                          onClick={() =>
+                            setExpandedCheckpointId(expanded ? null : entry.id)
+                          }
+                          aria-expanded={expanded}
+                        >
+                          {expanded ? (
+                            <ChevronDown className="size-3" />
+                          ) : (
+                            <ChevronRight className="size-3" />
+                          )}
+                          变更
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setRestoreTarget(entry)}
+                        >
+                          恢复
+                        </Button>
+                      </div>
                     </div>
-                    {isCheckpoint ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 shrink-0 px-2 text-xs"
-                        onClick={() => setRestoreTarget(entry)}
-                      >
-                        恢复
-                      </Button>
+
+                    {expanded ? (
+                      <div className="mt-2 border-t border-border pt-2">
+                        <div className="mb-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>本次快照的全部变更</span>
+                          <span>{changeCount} 条</span>
+                        </div>
+                        <ul className="max-h-56 space-y-1 overflow-auto pr-1">
+                          {group.changes.map((change) => (
+                            <li
+                              key={change.id}
+                              className="rounded-md bg-muted/45 px-2 py-1.5"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className={`inline-flex shrink-0 rounded px-1 py-0.5 text-[10px] font-medium ${changeBadgeClass(change)}`}
+                                >
+                                  {entryBadge(change)}
+                                </span>
+                                {change.graph_version != null ? (
+                                  <span className="font-mono text-[10px] text-muted-foreground">
+                                    v{change.graph_version}
+                                  </span>
+                                ) : null}
+                                <span className="min-w-0 truncate text-xs">
+                                  {change.summary}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                {formatTime(change.created_at)}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     ) : null}
                   </div>
                 </li>
               )
             })}
+            {groups.length === 0 && looseChanges.length > 0
+              ? looseChanges.map((entry) => (
+                  <li key={entry.id}>
+                    <div className="rounded-lg border border-border bg-background p-2.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium ${changeBadgeClass(entry)}`}
+                        >
+                          {entryBadge(entry)}
+                        </span>
+                        {entry.graph_version != null ? (
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            v{entry.graph_version}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs leading-snug">{entry.summary}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {formatTime(entry.created_at)}
+                      </p>
+                    </div>
+                  </li>
+                ))
+              : null}
           </ul>
         </ScrollArea>
       </aside>
