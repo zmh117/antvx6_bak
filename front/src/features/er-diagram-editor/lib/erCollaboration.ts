@@ -298,6 +298,7 @@ function graphDataFromTables(tables: TableNodeData[]) {
   const edges: EdgeMetadata[] = []
   for (const [index, table] of tables.entries()) {
     const height = tableBodyHeight(table.fields.length)
+    const { layout: _layout, ...nodeData } = table
     nodes.push({
       id: table.id,
       shape: 'er-table',
@@ -305,7 +306,7 @@ function graphDataFromTables(tables: TableNodeData[]) {
       y: table.layout?.y ?? Math.floor(index / 2) * (height + 100),
       width: ER_LAYOUT.nodeWidth,
       height,
-      data: table,
+      data: nodeData,
       ports: {
         groups: ER_PORT_GROUPS,
         items: buildFieldPortItems(table.fields),
@@ -343,17 +344,108 @@ function graphDataFromTables(tables: TableNodeData[]) {
   return { nodes, edges }
 }
 
+function jsonStableEqual(a: unknown, b: unknown) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+}
+
+function graphNodeDataForCompare(value: unknown) {
+  const raw = mapObject(value)
+  delete raw.layout
+  return raw
+}
+
+function samePoint(a: { x?: number; y?: number } | null | undefined, b: { x?: number; y?: number }) {
+  return Math.abs(Number(a?.x ?? 0) - Number(b?.x ?? 0)) < 0.5 &&
+    Math.abs(Number(a?.y ?? 0) - Number(b?.y ?? 0)) < 0.5
+}
+
+function edgeEndpointKey(endpoint: unknown) {
+  const value = endpoint as { cell?: string; port?: string } | null | undefined
+  return `${value?.cell || ''}:${value?.port || ''}`
+}
+
 function applyDocToGraph(graph: Graph, doc: Y.Doc) {
   const tables = tablesFromDoc(doc)
   const { nodes, edges } = graphDataFromTables(tables)
 
   withHistoryPaused(graph, () => {
-    graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
-    for (const node of graph.getNodes()) {
-      if (node.shape !== 'er-table') continue
-      const table = node.getData<TableNodeData>()
-      setErTablePorts(node, table.fields ?? [])
-    }
+    graph.batchUpdate(() => {
+      const incomingNodeIds = new Set(nodes.map((node) => String(node.id)))
+      const incomingEdgeIds = new Set(edges.map((edge) => String(edge.id)))
+
+      for (const edge of graph.getEdges()) {
+        if (edge.shape === 'er-relationship' && !incomingEdgeIds.has(String(edge.id))) {
+          graph.removeCell(edge)
+        }
+      }
+      for (const node of graph.getNodes()) {
+        if (node.shape === 'er-table' && !incomingNodeIds.has(String(node.id))) {
+          graph.removeCell(node)
+        }
+      }
+
+      for (const nodeMeta of nodes) {
+        const nodeId = String(nodeMeta.id)
+        const existing = graph.getCellById(nodeId)
+        const nextPosition = {
+          x: Number(nodeMeta.x ?? 0),
+          y: Number(nodeMeta.y ?? 0),
+        }
+        const nextSize = {
+          width: Number(nodeMeta.width ?? ER_LAYOUT.nodeWidth),
+          height: Number(nodeMeta.height ?? tableBodyHeight(0)),
+        }
+        const nextData = graphNodeDataForCompare(nodeMeta.data)
+
+        if (!existing?.isNode()) {
+          graph.addNode(nodeMeta)
+          continue
+        }
+
+        if (!samePoint(existing.position(), nextPosition)) {
+          existing.position(nextPosition.x, nextPosition.y)
+        }
+
+        const size = existing.getSize()
+        if (
+          Math.abs(size.width - nextSize.width) >= 0.5 ||
+          Math.abs(size.height - nextSize.height) >= 0.5
+        ) {
+          existing.resize(nextSize.width, nextSize.height)
+        }
+
+        if (!jsonStableEqual(graphNodeDataForCompare(existing.getData()), nextData)) {
+          existing.setData(nextData, { overwrite: true, deep: true })
+          setErTablePorts(existing, (nextData.fields as TableField[] | undefined) ?? [])
+        }
+      }
+
+      for (const edgeMeta of edges) {
+        const edgeId = String(edgeMeta.id)
+        const existing = graph.getCellById(edgeId)
+        const nextData = mapObject(edgeMeta.data)
+        const relationship = normalizeRelationshipType((nextData.relationship || nextData.type) as never)
+        const nextLabels = [buildErRelationshipLabel(relationship)]
+
+        if (!existing?.isEdge()) {
+          graph.addEdge(edgeMeta)
+          continue
+        }
+
+        if (edgeEndpointKey(existing.getSource()) !== edgeEndpointKey(edgeMeta.source)) {
+          existing.setSource(edgeMeta.source as never)
+        }
+        if (edgeEndpointKey(existing.getTarget()) !== edgeEndpointKey(edgeMeta.target)) {
+          existing.setTarget(edgeMeta.target as never)
+        }
+        if (!jsonStableEqual(existing.getData(), nextData)) {
+          existing.setData(nextData, { overwrite: true, deep: true })
+        }
+        if (!jsonStableEqual(existing.getLabels(), nextLabels)) {
+          existing.setLabels(nextLabels)
+        }
+      }
+    })
   })
   graph.cleanHistory()
 }
