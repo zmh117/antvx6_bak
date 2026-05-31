@@ -324,14 +324,16 @@ const transformToGraphData = (tables: TableNodeData[]) => {
 }
 
 const toggleRelationshipType = (graph: Graph, edge: Edge) => {
+  let next: RelationshipData['type'] = '1:1'
   graph.batchUpdate(() => {
     const types: RelationshipData['type'][] = ['1:1', '1:N', 'N:N']
     const data = edge.getData<RelationBusinessData>() || {}
     const current = data.relationship || data.type || '1:1'
-    const next = types[(types.indexOf(current) + 1) % types.length]
+    next = types[(types.indexOf(current) + 1) % types.length]
     edge.setData({ ...data, type: next, relationship: next })
     edge.setLabels([buildErRelationshipLabel(next)])
   })
+  return next
 }
 
 function applyErEdgesTheme(graph: Graph, mode: ErColorMode) {
@@ -630,7 +632,7 @@ export default function ERDiagram() {
         }
       })
       setGraphDataRevision((v) => v + 1)
-      schedulePersistRef.current(true, true)
+      schedulePersistRef.current(false, false)
     },
     [selectedRelation],
   )
@@ -994,8 +996,9 @@ export default function ERDiagram() {
       if (edge.shape === 'er-relationship') {
         e.stopPropagation()
         if (e.detail && e.detail > 1) return
-        publishPresence({ kind: 'relation', edgeId: String(edge.id) }, 'editing')
         toggleRelationshipType(graph, edge)
+        openRelationPanel(edge)
+        setGraphDataRevision((v) => v + 1)
         schedulePersist(true, true)
       }
     }

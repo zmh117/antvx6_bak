@@ -369,10 +369,11 @@ function RelationshipSegmented({
           <button
             key={option.value}
             type="button"
+            aria-pressed={value === option.value}
             className={cn(
-              'h-8 rounded-sm text-xs font-medium transition-colors',
+              'h-8 rounded-sm text-xs font-semibold transition-colors',
               value === option.value
-                ? 'bg-background text-foreground shadow-xs'
+                ? 'bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/40'
                 : 'text-muted-foreground hover:bg-background/60 hover:text-foreground',
             )}
             onClick={() => onChange(option.value)}

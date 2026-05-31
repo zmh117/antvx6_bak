@@ -407,12 +407,19 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
   const doc = new Y.Doc()
   let connected = false
   let applying = false
+  let disconnectTimer: ReturnType<typeof setTimeout> | undefined
   const provider = new HocuspocusProvider({
     url: COLLAB_WS_URL,
     name: `graph:${options.graphId}`,
     document: doc,
     token: options.token,
   })
+
+  const clearDisconnectTimer = () => {
+    if (!disconnectTimer) return
+    clearTimeout(disconnectTimer)
+    disconnectTimer = undefined
+  }
 
   const onRemoteChange = (transaction: Y.Transaction) => {
     if ((transaction.local && transaction.origin === LOCAL_ORIGIN) || applying) return
@@ -430,11 +437,22 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
   doc.on('afterTransaction', onRemoteChange)
 
   provider.on('status', ({ status }: { status: string }) => {
-    connected = status === 'connected'
-    options.onStatus(connected ? 'connected' : 'disconnected')
+    if (status === 'connected') {
+      clearDisconnectTimer()
+      connected = true
+      options.onStatus('connected')
+      return
+    }
+    if (disconnectTimer) return
+    disconnectTimer = setTimeout(() => {
+      disconnectTimer = undefined
+      connected = false
+      options.onStatus('disconnected')
+    }, 1500)
   })
   provider.on('synced', ({ state }: { state: boolean }) => {
     if (!state) return
+    clearDisconnectTimer()
     connected = true
     options.onStatus('connected')
     if (doc.getMap('tables').size === 0 && options.graph.getNodes().length) {
@@ -450,6 +468,7 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
     }
   })
   provider.on('connection-error', (payload: unknown) => {
+    clearDisconnectTimer()
     connected = false
     options.onStatus('error')
     options.onError(`协同连接失败：${JSON.stringify(payload)}`)
@@ -506,6 +525,7 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
       provider.awareness.setLocalStateField('updatedAt', Date.now())
     },
     destroy() {
+      clearDisconnectTimer()
       doc.off('afterTransaction', onRemoteChange)
       provider.awareness?.off('change', updateAwareness)
       provider.destroy()
