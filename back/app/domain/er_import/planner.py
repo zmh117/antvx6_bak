@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import ceil, sqrt
 from typing import Any
 from uuid import UUID
 
@@ -21,6 +22,7 @@ from app.domain.er_import.models import ImportMode, ImportedColumn, ImportedSche
 NODE_WIDTH = 320
 NODE_V_GAP = 120
 NODE_H_GAP = 120
+NODE_ROW_HEIGHT = 320
 
 
 def _has_value(value: Any) -> bool:
@@ -64,17 +66,27 @@ def _legacy_field(col: ImportedColumn) -> dict[str, Any]:
     return field
 
 
-def _layout(index: int) -> tuple[float, float]:
+def _layout_columns(total_count: int | None = None) -> int:
+    if not total_count or total_count <= 0:
+        return 3
+    return max(1, ceil(sqrt(total_count)))
+
+
+def _layout(index: int, total_count: int | None = None) -> tuple[float, float]:
+    cols = _layout_columns(total_count)
     return (
-        float((index % 3) * (NODE_WIDTH + NODE_H_GAP)),
-        float((index // 3) * (320 + NODE_V_GAP)),
+        float((index % cols) * (NODE_WIDTH + NODE_H_GAP)),
+        float((index // cols) * (NODE_ROW_HEIGHT + NODE_V_GAP)),
     )
 
 
 def _layout_key(x: float | None, y: float | None) -> tuple[int, int] | None:
     if x is None or y is None:
         return None
-    return (round(float(x) / (NODE_WIDTH + NODE_H_GAP)), round(float(y) / (320 + NODE_V_GAP)))
+    return (
+        round(float(x) / (NODE_WIDTH + NODE_H_GAP)),
+        round(float(y) / (NODE_ROW_HEIGHT + NODE_V_GAP)),
+    )
 
 
 def _raw_layout(table: Table) -> tuple[float | None, float | None]:
@@ -99,11 +111,13 @@ def _sync_table_layout(table: Table, x: float, y: float) -> Table:
 
 
 def _next_free_layout(
-    occupied: set[tuple[int, int]], start_index: int = 0
+    occupied: set[tuple[int, int]],
+    start_index: int = 0,
+    total_count: int | None = None,
 ) -> tuple[float, float, int]:
     index = max(0, start_index)
     while True:
-        x, y = _layout(index)
+        x, y = _layout(index, total_count)
         key = _layout_key(x, y)
         if key is not None and key not in occupied:
             occupied.add(key)
@@ -111,8 +125,12 @@ def _next_free_layout(
         index += 1
 
 
-def _legacy_table(table: ImportedTable, index: int) -> dict[str, Any]:
-    x, y = _layout(index)
+def _legacy_table(
+    table: ImportedTable,
+    index: int,
+    total_count: int | None = None,
+) -> dict[str, Any]:
+    x, y = _layout(index, total_count)
     return {
         "id": _table_key(table.table_name),
         "name": table.table_name,
@@ -122,9 +140,13 @@ def _legacy_table(table: ImportedTable, index: int) -> dict[str, Any]:
     }
 
 
-def _table_from_import(table: ImportedTable, index: int) -> Table:
-    x, y = _layout(index)
-    legacy = _legacy_table(table, index)
+def _table_from_import(
+    table: ImportedTable,
+    index: int,
+    total_count: int | None = None,
+) -> Table:
+    x, y = _layout(index, total_count)
+    legacy = _legacy_table(table, index, total_count)
     return Table(
         table_key=_table_key(table.table_name),
         table_name=table.table_name,
@@ -249,9 +271,14 @@ def build_import_payload(
     selected = _selected_tables(schema, selected_table_names)
 
     if mode == ImportMode.OVERWRITE:
-        tables = [_table_from_import(table, idx) for idx, table in enumerate(selected)]
+        total_count = len(selected)
+        tables = [
+            _table_from_import(table, idx, total_count) for idx, table in enumerate(selected)
+        ]
         columns = [column for table in selected for column in [_column_from_import(table, c) for c in table.columns]]
-        legacy_tables = [_legacy_table(table, idx) for idx, table in enumerate(selected)]
+        legacy_tables = [
+            _legacy_table(table, idx, total_count) for idx, table in enumerate(selected)
+        ]
         return GraphPayload(
             graph_id=graph_id,
             client_id=client_id,
@@ -278,6 +305,7 @@ def build_import_payload(
             occupied.add(pos_key)
 
     next_index = len(tables_by_key)
+    total_count = max(len(tables_by_key), len(tables_by_key) + len(selected_keys))
     for table in selected:
         key = _table_key(table.table_name)
         layout_x: float
@@ -290,8 +318,16 @@ def build_import_payload(
             layout_x = float(layout_x)
             layout_y = float(layout_y)
         else:
-            layout_x, layout_y, next_index = _next_free_layout(occupied, next_index)
-        imported_table = _sync_table_layout(_table_from_import(table, next_index), layout_x, layout_y)
+            layout_x, layout_y, next_index = _next_free_layout(
+                occupied,
+                next_index,
+                total_count,
+            )
+        imported_table = _sync_table_layout(
+            _table_from_import(table, next_index, total_count),
+            layout_x,
+            layout_y,
+        )
         if key in tables_by_key:
             imported_table = _preserve_business_table(tables_by_key[key], imported_table)
             imported_table = _sync_table_layout(imported_table, layout_x, layout_y)

@@ -261,3 +261,30 @@
   background-color: var(--er-minimap-bg) !important;
   border: 2px solid var(--er-primary) !important;
 }
+
+.er-simple-minimap {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--er-minimap-bg);
+}
+
+.er-simple-minimap-nodes rect {
+  fill: color-mix(in srgb, var(--er-primary) 32%, var(--er-canvas-bg));
+  stroke: color-mix(in srgb, var(--er-primary) 46%, transparent);
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.er-simple-minimap-edges line {
+  stroke: color-mix(in srgb, var(--er-edge-stroke) 70%, transparent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.er-simple-minimap-viewport {
+  fill: none;
+  stroke: #111827;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}

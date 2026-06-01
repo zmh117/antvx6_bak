@@ -2,7 +2,6 @@ import {
   Graph,
   History,
   Keyboard,
-  MiniMap,
   type Edge,
   type ValidateConnectionArgs,
 } from '@antv/x6'
@@ -13,8 +12,6 @@ const SHARED_EDGE_ROUTE = {
   router: { name: 'metro' as const },
   connector: { name: 'rounded' as const, args: { radius: 8 } },
 } as const
-
-const MINIMAP_VIEW = { width: 180, height: 140 } as const
 
 function keyboardGuard(this: Graph, e: KeyboardEvent): boolean {
   const el = e.target as HTMLElement | null
@@ -27,7 +24,6 @@ function keyboardGuard(this: Graph, e: KeyboardEvent): boolean {
 
 export type CreateErGraphOptions = {
   container: HTMLElement
-  minimapContainer: HTMLElement
   validateConnection: (graph: Graph, args: ValidateConnectionArgs) => boolean
 }
 
@@ -78,21 +74,6 @@ export function createErGraph(opts: CreateErGraphOptions): Graph {
     new History({
       enabled: true,
       stackSize: 100,
-    }),
-  )
-
-  graph.use(
-    new MiniMap({
-      container: opts.minimapContainer,
-      width: MINIMAP_VIEW.width,
-      height: MINIMAP_VIEW.height,
-      padding: 0,
-      scalable: true,
-      minScale: 0.01,
-      maxScale: 16,
-      graphOptions: {
-        background: { color: initialTheme.minimapBg },
-      },
     }),
   )
 

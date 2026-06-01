@@ -51,7 +51,6 @@ import { buildRelationEdgeData, resolveRelationEndpoints } from './relationUtils
 import type { RelationBusinessData } from '@/entities/er-graph/model/erSchema'
 import {
   buildErRelationshipLabel,
-  readErColorMode,
   readErThemeVars,
   type ErColorMode,
 } from './erTheme'
@@ -77,8 +76,6 @@ import {
   type ErRemoteAwareness,
 } from './lib/erCollaboration'
 
-/** 小地图外框尺寸（与 .er-minimap-widget 一致） */
-const MINIMAP_FRAME = { width: 200, height: 160, padding: 10 } as const
 const PRESENCE_STALE_MS = 30_000
 const PRESENCE_LABELS: Record<ErPresenceActivity, string> = {
   selecting: '正在查看',
@@ -92,6 +89,29 @@ type PresenceHighlight = {
   label: string
   color: string
   rect: { x: number; y: number; width: number; height: number }
+}
+
+type SimpleMinimapNode = {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+type SimpleMinimapEdge = {
+  id: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+type SimpleMinimapState = {
+  viewBox: string
+  nodes: SimpleMinimapNode[]
+  edges: SimpleMinimapEdge[]
+  viewport: { x: number; y: number; width: number; height: number } | null
 }
 
 /** 边上未写入 router 时由 graph.connecting 回退，与 er-relationship 形定义一致 */
@@ -349,32 +369,79 @@ function applyErEdgesTheme(graph: Graph, mode: ErColorMode) {
   })
 }
 
-function getMinimapPlugin(graph: Graph) {
-  return graph.getPlugin('minimap') as
-    | {
-        targetGraph?: Graph
-        onModelUpdated(): void
-        updateViewport(): void
+function emptyMinimapState(): SimpleMinimapState {
+  return { viewBox: '0 0 1 1', nodes: [], edges: [], viewport: null }
+}
+
+function buildSimpleMinimapState(graph: Graph): SimpleMinimapState {
+  const nodes = graph
+    .getNodes()
+    .filter((node) => node.shape === 'er-table')
+    .map((node) => {
+      const box = node.getBBox()
+      return {
+        id: String(node.id),
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
       }
-    | undefined
+    })
+  if (!nodes.length) return emptyMinimapState()
+
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const edges = graph
+    .getEdges()
+    .filter((edge) => edge.shape === 'er-relationship')
+    .map((edge) => {
+      const source = edge.getSourceCellId()
+      const target = edge.getTargetCellId()
+      const sourceNode = source ? byId.get(String(source)) : undefined
+      const targetNode = target ? byId.get(String(target)) : undefined
+      if (!sourceNode || !targetNode) return null
+      return {
+        id: String(edge.id),
+        x1: sourceNode.x + sourceNode.width / 2,
+        y1: sourceNode.y + sourceNode.height / 2,
+        x2: targetNode.x + targetNode.width / 2,
+        y2: targetNode.y + targetNode.height / 2,
+      }
+    })
+    .filter((edge): edge is SimpleMinimapEdge => edge != null)
+
+  const viewport = (() => {
+    const rect = graph.container.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return null
+    const local = graph.clientToLocal(rect.left, rect.top, rect.width, rect.height)
+    return {
+      x: local.x,
+      y: local.y,
+      width: Math.max(1, local.width),
+      height: Math.max(1, local.height),
+    }
+  })()
+
+  const boxes = viewport ? [...nodes, viewport] : nodes
+  const minX = Math.min(...boxes.map((box) => box.x))
+  const minY = Math.min(...boxes.map((box) => box.y))
+  const maxX = Math.max(...boxes.map((box) => box.x + box.width))
+  const maxY = Math.max(...boxes.map((box) => box.y + box.height))
+  const padX = Math.max(80, (maxX - minX) * 0.04)
+  const padY = Math.max(80, (maxY - minY) * 0.04)
+
+  return {
+    viewBox: `${minX - padX} ${minY - padY} ${Math.max(1, maxX - minX + padX * 2)} ${Math.max(1, maxY - minY + padY * 2)}`,
+    nodes,
+    edges,
+    viewport,
+  }
 }
 
-function applyMinimapTheme(graph: Graph, mode: ErColorMode) {
-  const theme = readErThemeVars(mode)
-  const mini = getMinimapPlugin(graph)?.targetGraph
-  if (!mini) return
-  mini.drawBackground({ color: theme.minimapBg })
-  applyErEdgesTheme(mini, mode)
-}
-
-/** 缩略图内容居中并缩放到可视区（padding 与插件默认留白一致） */
-function reflowMinimap(graph: Graph) {
-  const plugin = getMinimapPlugin(graph)
-  const mini = plugin?.targetGraph
-  if (!mini) return
-  mini.zoomToFit({ padding: MINIMAP_FRAME.padding })
-  applyMinimapTheme(graph, readErColorMode())
-  plugin.updateViewport()
+function reflowMinimap(
+  graph: Graph,
+  setState: React.Dispatch<React.SetStateAction<SimpleMinimapState>>,
+) {
+  setState(buildSimpleMinimapState(graph))
 }
 
 function applyGraphTheme(graph: Graph, mode: ErColorMode) {
@@ -382,15 +449,12 @@ function applyGraphTheme(graph: Graph, mode: ErColorMode) {
   graph.drawBackground({ color: theme.canvasBg })
   graph.drawGrid({ type: 'dot', args: { color: theme.canvasGrid } })
   applyErEdgesTheme(graph, mode)
-  applyMinimapTheme(graph, mode)
-  getMinimapPlugin(graph)?.updateViewport()
 }
 
 export default function ERDiagram() {
   const { resolvedTheme } = useTheme()
   const queryClient = useQueryClient()
   const containerRef = useRef<HTMLDivElement>(null)
-  const minimapContainerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
   const schedulePersistRef = useRef<(syncNodes?: boolean, immediate?: boolean) => void>(() => {})
   const flushPersistRef = useRef<() => void>(() => {})
@@ -409,6 +473,9 @@ export default function ERDiagram() {
   const [selectedTable, setSelectedTable] = useState<TableSelection | null>(null)
   const [selectedRelation, setSelectedRelation] = useState<RelationSelection | null>(null)
   const [graphDataRevision, setGraphDataRevision] = useState(0)
+  const [minimapState, setMinimapState] = useState<SimpleMinimapState>(() =>
+    emptyMinimapState(),
+  )
 
   const selectedFieldMeta = useMemo(() => {
     if (!selectedField || !graphRef.current) return null
@@ -662,12 +729,10 @@ export default function ERDiagram() {
 
   useEffect(() => {
     const el = containerRef.current
-    const minimapEl = minimapContainerRef.current
-    if (!el || !minimapEl) return
+    if (!el) return
 
     const graph = createErGraph({
       container: el,
-      minimapContainer: minimapEl,
       validateConnection: erPortValidateConnection,
     })
 
@@ -689,14 +754,13 @@ export default function ERDiagram() {
       },
     })
 
-    /*
-     * 不使用 Scroller 时，MiniMap 只在 graph「model:updated」（增删、合并等集合变更）时对内部画布 zoomToFit。
-     * 拖拽节点只会触发「node:change:position」，不会走 model.collection 的 updated，因此小地图不会自动缩放进整张图。
-     * 此处与插件内部 onModelUpdated 对齐：几何变化后让缩略图重新 zoomToFit，并刷新视口矩形。
-     */
-    const scheduleMinimapReflow = FunctionExt.debounce(() => {
-      reflowMinimap(graph)
-    }, 48)
+    let minimapRaf = 0
+    const scheduleMinimapReflow = () => {
+      cancelAnimationFrame(minimapRaf)
+      minimapRaf = requestAnimationFrame(() => {
+        reflowMinimap(graph, setMinimapState)
+      })
+    }
     const scheduleCollabPush = FunctionExt.debounce(() => {
       if (!collabRef.current?.isRealtimeEnabled()) return
       collabRef.current.pushGraph()
@@ -707,6 +771,10 @@ export default function ERDiagram() {
     graph.on('node:change:position', scheduleMinimapReflow)
     graph.on('node:change:size', scheduleMinimapReflow)
     graph.on('edge:change:vertices', scheduleMinimapReflow)
+    graph.on('scale', scheduleMinimapReflow)
+    graph.on('translate', scheduleMinimapReflow)
+    graph.on('resize', scheduleMinimapReflow)
+    window.addEventListener('resize', scheduleMinimapReflow)
 
     graphRef.current = graph
 
@@ -1173,7 +1241,7 @@ export default function ERDiagram() {
             maxScale: 1.2,
             minScale: 0.3,
           })
-          reflowMinimap(graph)
+          reflowMinimap(graph, setMinimapState)
           queueMicrotask(() => {
             suppressPersist = false
             if (metadataPersistPending) {
@@ -1208,7 +1276,7 @@ export default function ERDiagram() {
           onStatus: setCollabStatus,
           onRemoteApply: () => {
             setGraphDataRevision((v) => v + 1)
-            reflowMinimap(graph)
+            reflowMinimap(graph, setMinimapState)
           },
           onAwareness: (states) => {
             setRemoteAwareness(states)
@@ -1236,6 +1304,11 @@ export default function ERDiagram() {
       graph.off('node:change:position', scheduleMinimapReflow)
       graph.off('node:change:size', scheduleMinimapReflow)
       graph.off('edge:change:vertices', scheduleMinimapReflow)
+      graph.off('scale', scheduleMinimapReflow)
+      graph.off('translate', scheduleMinimapReflow)
+      graph.off('resize', scheduleMinimapReflow)
+      window.removeEventListener('resize', scheduleMinimapReflow)
+      cancelAnimationFrame(minimapRaf)
       graph.off('edge:connected', onEdgeStructureChange)
       graph.off('edge:removed', onEdgeRemoved)
       graph.off('edge:change:data', onEdgeDataChange)
@@ -1275,7 +1348,7 @@ export default function ERDiagram() {
       withHistoryPaused(graph, () => {
         applyGraphTheme(graph, mode)
       })
-      reflowMinimap(graph)
+      reflowMinimap(graph, setMinimapState)
     }
     apply()
     requestAnimationFrame(apply)
@@ -1398,10 +1471,50 @@ export default function ERDiagram() {
             onMouseDown={() => containerRef.current?.focus()}
           />
           <div
-            ref={minimapContainerRef}
             className="er-minimap-widget"
             aria-label="画布小地图"
-          />
+          >
+            <svg
+              className="er-simple-minimap"
+              viewBox={minimapState.viewBox}
+              preserveAspectRatio="xMidYMid meet"
+              role="img"
+              aria-hidden="true"
+            >
+              <g className="er-simple-minimap-edges">
+                {minimapState.edges.map((edge) => (
+                  <line
+                    key={edge.id}
+                    x1={edge.x1}
+                    y1={edge.y1}
+                    x2={edge.x2}
+                    y2={edge.y2}
+                  />
+                ))}
+              </g>
+              <g className="er-simple-minimap-nodes">
+                {minimapState.nodes.map((node) => (
+                  <rect
+                    key={node.id}
+                    x={node.x}
+                    y={node.y}
+                    width={node.width}
+                    height={node.height}
+                    rx={10}
+                  />
+                ))}
+              </g>
+              {minimapState.viewport ? (
+                <rect
+                  className="er-simple-minimap-viewport"
+                  x={minimapState.viewport.x}
+                  y={minimapState.viewport.y}
+                  width={minimapState.viewport.width}
+                  height={minimapState.viewport.height}
+                />
+              ) : null}
+            </svg>
+          </div>
           <div className="pointer-events-none absolute inset-0 z-30">
             {presenceHighlights.map((item) => (
               <div
