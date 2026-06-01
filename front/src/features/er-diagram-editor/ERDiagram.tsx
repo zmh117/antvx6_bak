@@ -1507,6 +1507,10 @@ export default function ERDiagram() {
               {minimapState.viewport ? (
                 <rect
                   className="er-simple-minimap-viewport"
+                  fill="none"
+                  stroke="#111827"
+                  strokeWidth={3}
+                  vectorEffect="non-scaling-stroke"
                   x={minimapState.viewport.x}
                   y={minimapState.viewport.y}
                   width={minimapState.viewport.width}

@@ -283,8 +283,8 @@
 }
 
 .er-simple-minimap-viewport {
-  fill: none;
-  stroke: #111827;
-  stroke-width: 3;
+  fill: none !important;
+  stroke: #111827 !important;
+  stroke-width: 3 !important;
   vector-effect: non-scaling-stroke;
 }
