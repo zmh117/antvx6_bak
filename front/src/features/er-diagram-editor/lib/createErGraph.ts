@@ -31,6 +31,11 @@ export function createErGraph(opts: CreateErGraphOptions): Graph {
   const initialTheme = readErThemeVars()
   const graph = new Graph({
     container: opts.container,
+    async: true,
+    virtual: {
+      enabled: true,
+      margin: 800,
+    },
     autoResize: true,
     background: { color: initialTheme.canvasBg },
     grid: { visible: true, type: 'dot', args: { color: initialTheme.canvasGrid } },

@@ -71,7 +71,13 @@ export function setErTablePorts(node: Node, fields: TableField[]) {
 
 /** 字段行中心 → 节点本地坐标（与 X6 absolute 端口同一坐标系，含缩放） */
 function fieldRowCenterLocalY(graph: Graph, node: Node, row: HTMLElement): number | null {
-  const view = graph.findViewByCell(node)
+  const view = (() => {
+    try {
+      return graph.findViewByCell(node)
+    } catch {
+      return null
+    }
+  })()
   if (!view) return null
   const bbox = node.getBBox()
   const rect = row.getBoundingClientRect()
@@ -104,6 +110,12 @@ function alignErTablePortsFromDomInner(
   tableRoot: HTMLElement,
   fields: TableField[],
 ) {
+  try {
+    if (!graph.findViewByCell(node)) return
+  } catch {
+    return
+  }
+
   const expectedItems = buildFieldPortItems(fields)
   if (node.getPorts().length !== expectedItems.length) {
     setErTablePorts(node, fields)

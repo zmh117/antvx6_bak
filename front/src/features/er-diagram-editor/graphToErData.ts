@@ -163,7 +163,13 @@ export function applyErTablesToGraphNodes(graph: Graph, tables: TableNodeData[])
         setErTablePorts(cell, fields)
         cell.resize(ER_LAYOUT.nodeWidth, tableBodyHeight(fields.length))
         requestAnimationFrame(() => {
-          const view = graph.findViewByCell(cell)
+          const view = (() => {
+            try {
+              return graph.findViewByCell(cell)
+            } catch {
+              return null
+            }
+          })()
           const tableEl = view?.container.querySelector('.er-table') as HTMLElement | null
           if (tableEl) alignErTablePortsFromDom(cell, graph, tableEl, fields)
         })

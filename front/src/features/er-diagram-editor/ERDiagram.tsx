@@ -3,6 +3,8 @@ import {
   Graph,
   Edge,
   FunctionExt,
+  type Cell,
+  type CellView,
   type Node,
   type NodeMetadata,
   type EdgeMetadata,
@@ -444,6 +446,37 @@ function reflowMinimap(
   setState(buildSimpleMinimapState(graph))
 }
 
+function safeFindViewByCell(graph: Graph, cell: Cell): CellView | null {
+  try {
+    return graph.findViewByCell(cell) ?? null
+  } catch {
+    return null
+  }
+}
+
+function whenGraphRendered(graph: Graph, callback: () => void) {
+  let done = false
+  let fallbackTimer: ReturnType<typeof setTimeout> | undefined
+  const run = () => {
+    if (done) return
+    done = true
+    if (fallbackTimer) clearTimeout(fallbackTimer)
+    graph.off('render:done', run)
+    requestAnimationFrame(callback)
+  }
+  graph.once('render:done', run)
+  fallbackTimer = setTimeout(run, 1200)
+}
+
+function alignMountedErTableNode(graph: Graph, node: Node) {
+  if (node.shape !== 'er-table') return
+  const view = safeFindViewByCell(graph, node)
+  const tableEl = view?.container.querySelector('.er-table') as HTMLElement | null
+  if (!tableEl) return
+  const fields = node.getData<TableNodeData>()?.fields ?? []
+  alignErTablePortsFromDom(node, graph, tableEl, fields)
+}
+
 function applyGraphTheme(graph: Graph, mode: ErColorMode) {
   const theme = readErThemeVars(mode)
   graph.drawBackground({ color: theme.canvasBg })
@@ -532,7 +565,7 @@ export default function ERDiagram() {
       if (target.kind === 'table' || target.kind === 'field') {
         const node = graph.getCellById(target.tableId)
         if (!node?.isNode()) return null
-        const view = graph.findViewByCell(node)
+        const view = safeFindViewByCell(graph, node)
         const tableEl = view?.container.querySelector('.er-table') as HTMLElement | null
         if (!tableEl) return null
         if (target.kind === 'field') {
@@ -547,7 +580,7 @@ export default function ERDiagram() {
 
       const edge = graph.getCellById(target.edgeId)
       if (!edge?.isEdge()) return null
-      const view = graph.findViewByCell(edge)
+      const view = safeFindViewByCell(graph, edge)
       const line = view?.container.querySelector<SVGElement>('[selector="line"], path, polyline')
       const rect = (line || (view?.container as SVGElement | undefined))?.getBoundingClientRect()
       if (!rect) return null
@@ -761,6 +794,26 @@ export default function ERDiagram() {
         reflowMinimap(graph, setMinimapState)
       })
     }
+    const schedulePresenceReflow = () => {
+      requestAnimationFrame(() => {
+        recomputePresenceHighlights()
+      })
+    }
+    const onViewMounted = ({ view }: { view: CellView }) => {
+      const cell = view.cell
+      if (cell.isNode() && cell.shape === 'er-table') {
+        requestAnimationFrame(() => alignMountedErTableNode(graph, cell))
+      }
+      scheduleMinimapReflow()
+      schedulePresenceReflow()
+    }
+    const onViewUnmounted = () => {
+      schedulePresenceReflow()
+    }
+    const onRenderDone = () => {
+      scheduleMinimapReflow()
+      schedulePresenceReflow()
+    }
     const scheduleCollabPush = FunctionExt.debounce(() => {
       if (!collabRef.current?.isRealtimeEnabled()) return
       collabRef.current.pushGraph()
@@ -768,6 +821,9 @@ export default function ERDiagram() {
       setAutosaveErr(null)
     }, 80)
 
+    graph.on('view:mounted', onViewMounted)
+    graph.on('view:unmounted', onViewUnmounted)
+    graph.on('render:done', onRenderDone)
     graph.on('node:change:position', scheduleMinimapReflow)
     graph.on('node:change:size', scheduleMinimapReflow)
     graph.on('edge:change:vertices', scheduleMinimapReflow)
@@ -1094,6 +1150,7 @@ export default function ERDiagram() {
 
     const onEdgeMouseEnter = ({ edge }: { edge: Edge }) => {
       if (edge.shape !== 'er-relationship') return
+      if (!safeFindViewByCell(graph, edge)) return
       withHistoryPaused(graph, () => {
         edge.attr('line/stroke', readErThemeVars().edgeHover)
         edge.addTools([
@@ -1233,22 +1290,21 @@ export default function ERDiagram() {
     }
 
     const finishInitialLayout = () => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (cancelled) return
-          graph.zoomToFit({
-            padding: 20,
-            maxScale: 1.2,
-            minScale: 0.3,
-          })
-          reflowMinimap(graph, setMinimapState)
-          queueMicrotask(() => {
-            suppressPersist = false
-            if (metadataPersistPending) {
-              metadataPersistPending = false
-              void runPersist()
-            }
-          })
+      whenGraphRendered(graph, () => {
+        if (cancelled) return
+        graph.zoomToFit({
+          padding: 20,
+          maxScale: 1.2,
+          minScale: 0.3,
+        })
+        reflowMinimap(graph, setMinimapState)
+        graph.getNodes().forEach((node) => alignMountedErTableNode(graph, node))
+        queueMicrotask(() => {
+          suppressPersist = false
+          if (metadataPersistPending) {
+            metadataPersistPending = false
+            void runPersist()
+          }
         })
       })
     }
@@ -1300,6 +1356,9 @@ export default function ERDiagram() {
       unbindKeyboard()
       graph.off('history:undo', onHistoryUndo)
       graph.off('history:redo', onHistoryRedo)
+      graph.off('view:mounted', onViewMounted)
+      graph.off('view:unmounted', onViewUnmounted)
+      graph.off('render:done', onRenderDone)
       graph.off('node:change:position', onNodePositionChange)
       graph.off('node:change:position', scheduleMinimapReflow)
       graph.off('node:change:size', scheduleMinimapReflow)
@@ -1376,6 +1435,9 @@ export default function ERDiagram() {
       'scale',
       'translate',
       'resize',
+      'render:done',
+      'view:mounted',
+      'view:unmounted',
     ]
     events.forEach((event) => graph.on(event, schedule))
     window.addEventListener('resize', schedule)
