@@ -8,6 +8,7 @@ COMMENT ON COLUMN er_graph.description IS '图级业务说明';
 COMMENT ON COLUMN er_graph.business_domain IS '业务域标识，如 内容域、用户域';
 COMMENT ON COLUMN er_graph.status IS '状态：active 在用 / archived 归档';
 COMMENT ON COLUMN er_graph.version IS '图版本号，每次结构化同步 +1，用于乐观锁';
+COMMENT ON COLUMN er_graph.collab_revision IS '协同文档版本号；导入、历史恢复等重建图操作递增，用于隔离旧 Yjs 房间';
 COMMENT ON COLUMN er_graph.created_by IS '创建人标识';
 COMMENT ON COLUMN er_graph.updated_by IS '最后更新人标识';
 COMMENT ON COLUMN er_graph.created_at IS '创建时间';

@@ -46,7 +46,8 @@ def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header))
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT g.id, g.name, g.description, g.business_domain, g.version, g.status
+                SELECT g.id, g.name, g.description, g.business_domain,
+                       g.version, g.collab_revision, g.status
                 FROM er_graph g
                 JOIN er_graph_member m ON m.graph_id = g.id
                 WHERE m.user_id = %s
@@ -62,6 +63,7 @@ def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header))
             description=r["description"],
             business_domain=r["business_domain"],
             version=r["version"],
+            collab_revision=r["collab_revision"],
             status=r["status"],
         )
         for r in rows
@@ -80,6 +82,37 @@ def get_graph(
             return load_graph(conn, graph_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.get("/{graph_id}/meta", response_model=GraphMetaResponse)
+def get_graph_meta(
+    graph_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> GraphMetaResponse:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "viewer")
+            cur.execute(
+                """
+                SELECT id, name, description, business_domain,
+                       version, collab_revision, status
+                FROM er_graph
+                WHERE id = %s
+                """,
+                (graph_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
+            return GraphMetaResponse(
+                id=row["id"],
+                name=row["name"],
+                description=row["description"],
+                business_domain=row["business_domain"],
+                version=row["version"],
+                collab_revision=row["collab_revision"],
+                status=row["status"],
+            )
 
 
 @router.post("/{graph_id}/sync", response_model=SyncResponse)
@@ -312,6 +345,7 @@ def materialize_from_collab(
 ) -> SyncResponse:
     """Internal endpoint used by the Hocuspocus sidecar to materialize Y.Doc state."""
     ensure_internal_token(x_internal_token)
+    incoming_revision = body.get("collabRevision") or body.get("collab_revision")
     x6 = body.get("x6Json") or body.get("x6_json") or {}
     legacy = body.get("legacyTables") or body.get("legacy_tables") or []
     client_id = body.get("clientId") or body.get("client_id") or "collab-sidecar"
@@ -335,6 +369,35 @@ def materialize_from_collab(
     payload.operation_source = body.get("operationSource") or "collab_auto_save"
     try:
         with db_transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT collab_revision FROM er_graph WHERE id = %s",
+                    (graph_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
+                current_revision = int(row["collab_revision"])
+            try:
+                parsed_revision = int(incoming_revision)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "missing or invalid collab_revision",
+                        "expected": current_revision,
+                        "actual": incoming_revision,
+                    },
+                ) from e
+            if parsed_revision != current_revision:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "stale collab document",
+                        "expected": current_revision,
+                        "actual": parsed_revision,
+                    },
+                )
             return apply_full_sync(conn, payload, user_id=user_id)
     except VersionConflictError as e:
         raise HTTPException(

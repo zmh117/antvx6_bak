@@ -60,6 +60,7 @@ export type ErCollaborationController = {
 export type ErCollaborationOptions = {
   graph: Graph
   graphId: string
+  collabRevision: number
   token: string
   onStatus: (status: CollabStatus) => void
   onRemoteApply: () => void
@@ -116,7 +117,12 @@ function relationFromEdge(edge: import('@antv/x6').Edge): RelationBusinessData |
   }
 }
 
-function writeGraphToDoc(graph: Graph, doc: Y.Doc, origin = LOCAL_ORIGIN) {
+function writeGraphToDoc(
+  graph: Graph,
+  doc: Y.Doc,
+  origin = LOCAL_ORIGIN,
+  collabRevision?: number,
+) {
   const tablesMap = doc.getMap('tables')
   const columnsMap = doc.getMap('columns')
   const enumsMap = doc.getMap('enums')
@@ -133,6 +139,7 @@ function writeGraphToDoc(graph: Graph, doc: Y.Doc, origin = LOCAL_ORIGIN) {
     clearMap(layoutMap)
 
     metaMap.set('schemaVersion', 1)
+    if (collabRevision) metaMap.set('collabRevision', collabRevision)
     metaMap.set('updatedAt', new Date().toISOString())
 
     for (const table of tables) {
@@ -457,7 +464,7 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
   let disconnectTimer: ReturnType<typeof setTimeout> | undefined
   const provider = new HocuspocusProvider({
     url: COLLAB_WS_URL,
-    name: `graph:${options.graphId}`,
+    name: `graph:${options.graphId}:r${options.collabRevision}`,
     document: doc,
     token: options.token,
   })
@@ -503,7 +510,7 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
     connected = true
     options.onStatus('connected')
     if (doc.getMap('tables').size === 0 && options.graph.getNodes().length) {
-      writeGraphToDoc(options.graph, doc, LOCAL_ORIGIN)
+      writeGraphToDoc(options.graph, doc, LOCAL_ORIGIN, options.collabRevision)
       return
     }
     options.setApplyingRemote(true)
@@ -560,7 +567,7 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
     doc,
     provider,
     pushGraph(origin = LOCAL_ORIGIN) {
-      writeGraphToDoc(options.graph, doc, origin)
+      writeGraphToDoc(options.graph, doc, origin, options.collabRevision)
     },
     isRealtimeEnabled() {
       return connected

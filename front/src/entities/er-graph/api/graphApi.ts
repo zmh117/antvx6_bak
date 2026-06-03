@@ -45,7 +45,7 @@ export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<{
-    graph: { version: number }
+    graph: { version: number; collab_revision: number }
     snapshot: { nodes: unknown[]; edges: unknown[] }
     legacy_tables: TableNodeData[]
     tables?: Array<{
@@ -96,6 +96,24 @@ export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {
       sort_order?: number
     }>
   }>
+}
+
+export type GraphMeta = {
+  id: string
+  name: string
+  description?: string | null
+  business_domain?: string | null
+  version: number
+  collab_revision: number
+  status: string
+}
+
+export async function fetchGraphMeta(graphId = DEFAULT_GRAPH_ID): Promise<GraphMeta> {
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/meta`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<GraphMeta>
 }
 
 export async function fetchGraphHistory(

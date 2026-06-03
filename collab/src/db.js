@@ -5,11 +5,26 @@ import { seedDocFromRows } from './graphProjection.js'
 
 export const pool = new pg.Pool(config.database)
 
-export function parseGraphId(documentName) {
+export function parseGraphDocumentName(documentName) {
   const raw = String(documentName || '')
-  const graphId = raw.startsWith('graph:') ? raw.slice('graph:'.length) : raw
-  if (!/^[0-9a-fA-F-]{36}$/.test(graphId)) throw new Error(`invalid graph id: ${raw}`)
+  const value = raw.startsWith('graph:') ? raw.slice('graph:'.length) : raw
+  const match = value.match(/^([0-9a-fA-F-]{36})(?::r([0-9]+))?$/)
+  if (!match) throw new Error(`invalid graph document name: ${raw}`)
+  return {
+    graphId: match[1],
+    collabRevision: match[2] ? Number(match[2]) : null,
+  }
+}
+
+export function parseGraphId(documentName) {
+  const { graphId } = parseGraphDocumentName(documentName)
   return graphId
+}
+
+export async function isCurrentCollabRevision(graphId, collabRevision) {
+  if (!Number.isInteger(collabRevision) || collabRevision < 1) return false
+  const { rows } = await pool.query('SELECT collab_revision FROM er_graph WHERE id = $1', [graphId])
+  return Number(rows[0]?.collab_revision) === collabRevision
 }
 
 export async function getMembership(graphId, userId) {
@@ -23,7 +38,7 @@ export async function getMembership(graphId, userId) {
   return rows[0]?.role || null
 }
 
-export async function loadYDoc(graphId) {
+export async function loadYDoc(graphId, collabRevision = null) {
   const doc = new Y.Doc()
   const { rows } = await pool.query('SELECT state FROM er_yjs_doc WHERE graph_id = $1', [graphId])
   if (rows[0]?.state) {
@@ -31,7 +46,7 @@ export async function loadYDoc(graphId) {
     return doc
   }
   const seedRows = await loadSeedRows(graphId)
-  seedDocFromRows(doc, seedRows)
+  seedDocFromRows(doc, seedRows, collabRevision)
   await storeYDoc(graphId, doc)
   return doc
 }
@@ -123,6 +138,7 @@ export async function appendYUpdate(graphId, update, context = {}, origin = null
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    await client.query('SELECT 1 FROM er_graph WHERE id = $1 FOR UPDATE', [graphId])
     const seqResult = await client.query(
       'SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM er_yjs_update WHERE graph_id = $1',
       [graphId],

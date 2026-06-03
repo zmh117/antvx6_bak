@@ -148,6 +148,7 @@ class GraphMetaResponse(BaseModel):
     description: str | None = None
     business_domain: str | None = None
     version: int
+    collab_revision: int = 1
     status: str = "active"
 
 

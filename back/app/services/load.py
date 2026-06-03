@@ -144,7 +144,10 @@ def _apply_columns_enums_to_legacy(
 def load_graph(conn: psycopg.Connection, graph_id: UUID) -> GraphLoadResponse:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, name, description, business_domain, version, status FROM er_graph WHERE id = %s",
+            """
+            SELECT id, name, description, business_domain, version, collab_revision, status
+            FROM er_graph WHERE id = %s
+            """,
             (graph_id,),
         )
         g = cur.fetchone()
@@ -241,6 +244,7 @@ def load_graph(conn: psycopg.Connection, graph_id: UUID) -> GraphLoadResponse:
             description=g["description"],
             business_domain=g["business_domain"],
             version=g["version"],
+            collab_revision=g["collab_revision"],
             status=g["status"],
         ),
         snapshot=snapshot,

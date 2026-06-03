@@ -48,9 +48,17 @@ class ErImportService:
 
             if changes.is_empty():
                 cur.execute(
-                    "UPDATE er_graph SET source_connection_id = %s, updated_at = NOW() WHERE id = %s",
+                    """
+                    UPDATE er_graph
+                    SET source_connection_id = %s,
+                        collab_revision = collab_revision + 1,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
                     (connection_id, graph_id),
                 )
+                cur.execute("DELETE FROM er_yjs_update WHERE graph_id = %s", (graph_id,))
+                cur.execute("DELETE FROM er_yjs_doc WHERE graph_id = %s", (graph_id,))
                 return SyncResponse(ok=True, graph_id=graph_id, new_version=meta["version"], warnings=[])
 
             new_version, warnings = apply_changes(
@@ -70,7 +78,13 @@ class ErImportService:
                 graph_version_before=meta["version"],
             )
             cur.execute(
-                "UPDATE er_graph SET source_connection_id = %s, updated_at = NOW() WHERE id = %s",
+                """
+                UPDATE er_graph
+                SET source_connection_id = %s,
+                    collab_revision = collab_revision + 1,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
                 (connection_id, graph_id),
             )
             cur.execute("DELETE FROM er_yjs_update WHERE graph_id = %s", (graph_id,))

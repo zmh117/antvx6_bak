@@ -36,7 +36,7 @@ export function isDocEmpty(doc) {
   return doc.getMap('tables').size === 0
 }
 
-export function seedDocFromRows(doc, rows) {
+export function seedDocFromRows(doc, rows, collabRevision = null) {
   const tables = doc.getMap('tables')
   const columns = doc.getMap('columns')
   const enums = doc.getMap('enums')
@@ -52,6 +52,7 @@ export function seedDocFromRows(doc, rows) {
     clearYMap(layout)
     meta.set('schemaVersion', 1)
     meta.set('graphId', rows.graphId)
+    if (collabRevision) meta.set('collabRevision', collabRevision)
     meta.set('updatedAt', new Date().toISOString())
 
     for (const table of rows.tables) {

@@ -1,7 +1,7 @@
 import { config } from './config.js'
 import { projectionFromDoc } from './graphProjection.js'
 
-export async function materializeGraph(graphId, doc, context = {}) {
+export async function materializeGraph(graphId, doc, context = {}, collabRevision = null) {
   const projection = projectionFromDoc(doc)
   const response = await fetch(`${config.apiBase}/api/graphs/${graphId}/internal/materialize`, {
     method: 'POST',
@@ -13,6 +13,7 @@ export async function materializeGraph(graphId, doc, context = {}) {
       ...projection,
       clientId: context.clientId || 'collab-sidecar',
       userId: context.userId,
+      collabRevision,
       operationSource: 'collab_auto_save',
     }),
   })

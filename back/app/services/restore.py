@@ -54,6 +54,15 @@ def restore_from_change_log(
 
     result = graph_sync_service.sync_payload(conn, payload, user_id=user_id)
     with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE er_graph
+            SET collab_revision = collab_revision + 1,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (graph_id,),
+        )
         cur.execute("DELETE FROM er_yjs_update WHERE graph_id = %s", (graph_id,))
         cur.execute("DELETE FROM er_yjs_doc WHERE graph_id = %s", (graph_id,))
     return RestoreResponse(

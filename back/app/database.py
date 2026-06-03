@@ -33,6 +33,10 @@ def run_migrations() -> None:
             if fresh:
                 schema_sql = (migrations_dir / "001_schema.sql").read_text(encoding="utf-8")
                 cur.execute(schema_sql)
+            collab_revision_sql = (migrations_dir / "006_collab_revision.sql").read_text(
+                encoding="utf-8"
+            )
+            cur.execute(collab_revision_sql)
             comments_sql = (migrations_dir / "002_comments.sql").read_text(encoding="utf-8")
             cur.execute(comments_sql)
             business_flows_sql = (migrations_dir / "003_business_flows.sql").read_text(

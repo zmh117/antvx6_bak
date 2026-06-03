@@ -44,7 +44,13 @@ import {
   type TableBusinessPatch,
 } from './FieldEnumPanel'
 import { applyErTablesToGraphNodes, graphToErTables, normalizeRelationshipType } from './graphToErData'
-import { fetchGraphLoad, getDefaultGraphId, graphKeys, syncGraphCanvas } from '@/entities/er-graph/api'
+import {
+  fetchGraphLoad,
+  fetchGraphMeta,
+  getDefaultGraphId,
+  graphKeys,
+  syncGraphCanvas,
+} from '@/entities/er-graph/api'
 import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { HistoryPanel } from './HistoryPanel'
 import { DatabaseImportPanel } from './DatabaseImportPanel'
@@ -487,11 +493,14 @@ function applyGraphTheme(graph: Graph, mode: ErColorMode) {
 export default function ERDiagram() {
   const { resolvedTheme } = useTheme()
   const queryClient = useQueryClient()
+  const useApi = import.meta.env.VITE_USE_API !== 'false'
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
   const schedulePersistRef = useRef<(syncNodes?: boolean, immediate?: boolean) => void>(() => {})
   const flushPersistRef = useRef<() => void>(() => {})
   const graphVersionRef = useRef<number | undefined>(undefined)
+  const collabRevisionRef = useRef(1)
+  const revisionReloadingRef = useRef(false)
   const graphIdRef = useRef(getDefaultGraphId())
   const reloadGraphRef = useRef<(() => Promise<void>) | null>(null)
   const collabRef = useRef<ErCollaborationController | null>(null)
@@ -1243,6 +1252,7 @@ export default function ERDiagram() {
         if (useApi) {
           const loaded = await fetchGraphLoad(graphIdRef.current)
           graphVersionRef.current = loaded.graph.version
+          collabRevisionRef.current = loaded.graph.collab_revision || 1
           const tables = resolveTablesFromLoad(loaded)
           if (tables.length) {
             const { nodes, edges } = transformToGraphData(tables)
@@ -1309,42 +1319,62 @@ export default function ERDiagram() {
       })
     }
 
+    const startCollaboration = () => {
+      collabRef.current?.destroy()
+      collabRef.current = null
+      const token = getAccessToken()
+      if (!token) {
+        setCollabStatus('disconnected')
+        setOnlineUsers([])
+        return
+      }
+      collabRef.current = createErCollaboration({
+        graph,
+        graphId: graphIdRef.current,
+        collabRevision: collabRevisionRef.current,
+        token,
+        onStatus: setCollabStatus,
+        onRemoteApply: () => {
+          setGraphDataRevision((v) => v + 1)
+          reflowMinimap(graph, setMinimapState)
+        },
+        onAwareness: (states) => {
+          setRemoteAwareness(states)
+          setOnlineUsers(states.map((state) => state.user))
+        },
+        onError: setAutosaveErr,
+        setApplyingRemote: (value) => {
+          applyingRemote = value
+        },
+        currentUser: getCurrentUser(),
+      })
+    }
+
     reloadGraphRef.current = async () => {
+      if (revisionReloadingRef.current) return
+      revisionReloadingRef.current = true
       suppressPersist = true
-      selectErField(null)
-      selectErTable(null)
-      setSelectedRelation(null)
-      await applyLoadedToGraph({ fallbackErJson: false })
-      finishInitialLayout()
+      try {
+        selectErField(null)
+        selectErTable(null)
+        setSelectedRelation(null)
+        collabRef.current?.destroy()
+        collabRef.current = null
+        setCollabStatus('connecting')
+        await applyLoadedToGraph({ fallbackErJson: false })
+        if (cancelled) return
+        startCollaboration()
+        finishInitialLayout()
+      } finally {
+        revisionReloadingRef.current = false
+      }
     }
 
     let cancelled = false
     ;(async () => {
       await applyLoadedToGraph()
       if (cancelled) return
-      const token = getAccessToken()
-      if (token) {
-        collabRef.current?.destroy()
-        collabRef.current = createErCollaboration({
-          graph,
-          graphId: graphIdRef.current,
-          token,
-          onStatus: setCollabStatus,
-          onRemoteApply: () => {
-            setGraphDataRevision((v) => v + 1)
-            reflowMinimap(graph, setMinimapState)
-          },
-          onAwareness: (states) => {
-            setRemoteAwareness(states)
-            setOnlineUsers(states.map((state) => state.user))
-          },
-          onError: setAutosaveErr,
-          setApplyingRemote: (value) => {
-            applyingRemote = value
-          },
-          currentUser: getCurrentUser(),
-        })
-      }
+      startCollaboration()
       finishInitialLayout()
     })().catch((err: unknown) => {
       console.error('加载 ER 数据失败:', err)
@@ -1398,6 +1428,42 @@ export default function ERDiagram() {
     window.addEventListener('pagehide', onPageHide)
     return () => window.removeEventListener('pagehide', onPageHide)
   }, [])
+
+  useEffect(() => {
+    if (!useApi) return
+    let disposed = false
+    let checking = false
+
+    const checkCollabRevision = async () => {
+      if (checking || revisionReloadingRef.current) return
+      checking = true
+      try {
+        const meta = await fetchGraphMeta(graphIdRef.current)
+        if (disposed) return
+        if (
+          meta.collab_revision &&
+          meta.collab_revision !== collabRevisionRef.current &&
+          reloadGraphRef.current
+        ) {
+          await reloadGraphRef.current()
+        }
+      } catch (err) {
+        if (import.meta.env.DEV) {
+          console.warn('[ER] collab revision check failed', err)
+        }
+      } finally {
+        checking = false
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void checkCollabRevision()
+    }, 5000)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+    }
+  }, [useApi])
 
   useEffect(() => {
     const graph = graphRef.current
@@ -1467,8 +1533,6 @@ export default function ERDiagram() {
     }
     publishPresence(null)
   }, [publishPresence, selectedField, selectedTable, selectedRelation])
-
-  const useApi = import.meta.env.VITE_USE_API !== 'false'
 
   return (
     <section className="relative flex h-full min-h-0 min-w-0 flex-1">
@@ -1660,9 +1724,7 @@ export default function ERDiagram() {
             void queryClient.invalidateQueries({
               queryKey: graphKeys.agentContexts(graphIdRef.current),
             })
-            void reloadGraphRef.current?.().then(() => {
-              collabRef.current?.pushGraph('database-import')
-            })
+            void reloadGraphRef.current?.()
           }}
         />
       ) : null}
