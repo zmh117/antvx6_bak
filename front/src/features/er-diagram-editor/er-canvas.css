@@ -20,6 +20,17 @@
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.08);
 }
 
+.er-table.is-overview {
+  height: 54px;
+  min-height: 54px !important;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+
+.er-table.is-overview:hover {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+
 .er-table-header {
   flex-shrink: 0;
   height: var(--er-node-header-h);
@@ -80,6 +91,17 @@
   padding-bottom: var(--er-node-bottom-pad);
   box-sizing: border-box;
   border-radius: 0 0 6px 6px;
+}
+
+.er-table-overview-meta {
+  height: 18px;
+  padding: 0 10px;
+  color: var(--er-field-type-fg);
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 0 0 6px 6px;
+  background: var(--er-node-bg);
 }
 
 .er-table-empty {
@@ -194,6 +216,41 @@
   stroke: var(--er-primary);
   stroke-width: 2.5;
   r: 9;
+}
+
+.er-canvas-overview .x6-port,
+.er-canvas-overview .x6-port-body,
+.er-canvas-overview .x6-port-body circle,
+.er-canvas-overview .x6-node:hover .x6-port,
+.er-canvas-overview .x6-node:hover .x6-port-body,
+.er-canvas-overview .x6-node:hover .x6-port-body circle,
+.er-canvas-overview .x6-port:hover .x6-port-body,
+.er-canvas-overview .x6-port:hover .x6-port-body circle,
+.er-canvas-overview .x6-port-available .x6-port-body,
+.er-canvas-overview .x6-port-available .x6-port-body circle {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none;
+  visibility: hidden !important;
+}
+
+.x6-node:has(.er-table.is-overview) .x6-port,
+.x6-node:has(.er-table.is-overview) .x6-port-body,
+.x6-node:has(.er-table.is-overview):hover .x6-port,
+.x6-node:has(.er-table.is-overview):hover .x6-port-body {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none;
+  visibility: hidden !important;
+}
+
+.er-canvas-overview .er-table-edit,
+.er-canvas-overview .er-table-field {
+  pointer-events: none;
+}
+
+.er-canvas-overview .x6-edge:hover path:nth-child(2) {
+  stroke: var(--er-edge-stroke);
 }
 
 .x6-edge:hover path:nth-child(2) {

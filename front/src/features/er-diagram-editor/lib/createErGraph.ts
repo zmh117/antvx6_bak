@@ -25,6 +25,7 @@ function keyboardGuard(this: Graph, e: KeyboardEvent): boolean {
 export type CreateErGraphOptions = {
   container: HTMLElement
   validateConnection: (graph: Graph, args: ValidateConnectionArgs) => boolean
+  isPrecisionInteractionEnabled?: () => boolean
 }
 
 export function createErGraph(opts: CreateErGraphOptions): Graph {
@@ -62,8 +63,11 @@ export function createErGraph(opts: CreateErGraphOptions): Graph {
           data: { type: '1:1' } as RelationshipData,
           labels: [buildErRelationshipLabel('1:1')],
         }),
-      validateMagnet: ({ magnet }) => magnet.getAttribute('port-group') === 'fieldRight',
+      validateMagnet: ({ magnet }) =>
+        opts.isPrecisionInteractionEnabled?.() !== false &&
+        magnet.getAttribute('port-group') === 'fieldRight',
       validateConnection: (args: ValidateConnectionArgs): boolean =>
+        opts.isPrecisionInteractionEnabled?.() !== false &&
         opts.validateConnection(graph, args),
     },
   })

@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import {
   Graph,
   Edge,
@@ -83,6 +91,14 @@ import {
   type ErPresenceTarget,
   type ErRemoteAwareness,
 } from './lib/erCollaboration'
+import {
+  getErViewportModeSnapshot,
+  isErDetailMode,
+  resolveErViewportMode,
+  setErViewportMode,
+  subscribeErViewportMode,
+  updateErViewportModeFromScale,
+} from './erViewportMode'
 
 const PRESENCE_STALE_MS = 30_000
 const PRESENCE_LABELS: Record<ErPresenceActivity, string> = {
@@ -163,42 +179,64 @@ const ERTableNode = React.memo(
     const tableRef = useRef<HTMLDivElement>(null)
     const tableId = String(node.id)
     const [selection, setSelection] = useState<FieldSelection | null>(null)
+    const viewportMode = useSyncExternalStore(
+      subscribeErViewportMode,
+      getErViewportModeSnapshot,
+      getErViewportModeSnapshot,
+    )
+    const isOverview = viewportMode === 'overview'
 
-    useEffect(() => subscribeFieldSelection(setSelection), [])
+    useEffect(() => {
+      if (isOverview) {
+        setSelection(null)
+        return
+      }
+      return subscribeFieldSelection(setSelection)
+    }, [isOverview])
 
     useLayoutEffect(() => {
+      setMountedErTablePortsVisible(graph, node, !isOverview)
+    }, [graph, node, isOverview])
+
+    useLayoutEffect(() => {
+      if (isOverview) return
       const el = tableRef.current
       if (!el) return
       const sync = () => alignErTablePortsFromDom(node, graph, el, fields)
       sync()
       requestAnimationFrame(sync)
-    }, [node, graph, fields, name])
+    }, [node, graph, fields, name, isOverview])
 
     return (
       <div
         ref={tableRef}
-        className="er-table"
-        style={{ minHeight: tableBodyHeight(fields.length) }}
+        className={`er-table${isOverview ? ' is-overview' : ''}`}
+        style={{ minHeight: isOverview ? ER_LAYOUT.headerH : tableBodyHeight(fields.length) }}
       >
         <header className="er-table-header">
           <span className="table-code er-table-title" title={businessName || name}>
             {name}
           </span>
-          <button
-            type="button"
-            className="er-table-edit"
-            title="编辑表业务属性"
-            aria-label={`编辑表 ${name}`}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              selectErTable({ tableId })
-            }}
-          >
-            <Pencil className="size-3" />
-          </button>
+          {!isOverview ? (
+            <button
+              type="button"
+              className="er-table-edit"
+              title="编辑表业务属性"
+              aria-label={`编辑表 ${name}`}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                selectErTable({ tableId })
+              }}
+            >
+              <Pencil className="size-3" />
+            </button>
+          ) : null}
         </header>
-        <div className="er-table-fields">
+        {isOverview ? (
+          <div className="er-table-overview-meta">{fields.length} fields</div>
+        ) : (
+          <div className="er-table-fields">
           {fields.length === 0 ? (
             <div className="er-table-empty">No fields</div>
           ) : (
@@ -244,7 +282,8 @@ const ERTableNode = React.memo(
               )
             })
           )}
-        </div>
+          </div>
+        )}
       </div>
     )
   },
@@ -474,8 +513,41 @@ function whenGraphRendered(graph: Graph, callback: () => void) {
   fallbackTimer = setTimeout(run, 1200)
 }
 
+function readGraphScale(graph: Graph): number {
+  const scale = graph.zoom()
+  return typeof scale === 'number' && Number.isFinite(scale) ? scale : 1
+}
+
+function applyViewportModeClass(container: HTMLElement, scale: number) {
+  const mode = updateErViewportModeFromScale(scale)
+  container.classList.toggle('er-canvas-overview', mode === 'overview')
+  container.classList.toggle('er-canvas-detail', mode === 'detail')
+  return mode
+}
+
+function setMountedErTablePortsVisible(graph: Graph, node: Node, visible: boolean) {
+  if (node.shape !== 'er-table') return
+  const view = safeFindViewByCell(graph, node)
+  if (!view) return
+  view.container
+    .querySelectorAll<SVGElement>('.x6-port, .x6-port-body')
+    .forEach((portEl) => {
+      portEl.style.display = visible ? '' : 'none'
+      portEl.style.opacity = visible ? '' : '0'
+      portEl.style.pointerEvents = visible ? '' : 'none'
+      portEl.style.visibility = visible ? '' : 'hidden'
+    })
+}
+
+function syncMountedErTablePortsForMode(graph: Graph) {
+  const visible = isErDetailMode()
+  graph.getNodes().forEach((node) => setMountedErTablePortsVisible(graph, node, visible))
+}
+
 function alignMountedErTableNode(graph: Graph, node: Node) {
   if (node.shape !== 'er-table') return
+  setMountedErTablePortsVisible(graph, node, isErDetailMode())
+  if (!isErDetailMode()) return
   const view = safeFindViewByCell(graph, node)
   const tableEl = view?.container.querySelector('.er-table') as HTMLElement | null
   if (!tableEl) return
@@ -571,6 +643,8 @@ export default function ERDiagram() {
     })
 
     const rectForTarget = (target: ErPresenceTarget): PresenceHighlight['rect'] | null => {
+      const detailMode = isErDetailMode()
+      if (!detailMode && target.kind !== 'table') return null
       if (target.kind === 'table' || target.kind === 'field') {
         const node = graph.getCellById(target.tableId)
         if (!node?.isNode()) return null
@@ -776,7 +850,11 @@ export default function ERDiagram() {
     const graph = createErGraph({
       container: el,
       validateConnection: erPortValidateConnection,
+      isPrecisionInteractionEnabled: isErDetailMode,
     })
+    setErViewportMode(resolveErViewportMode(readGraphScale(graph), 'detail'))
+    el.classList.toggle('er-canvas-overview', getErViewportModeSnapshot() === 'overview')
+    el.classList.toggle('er-canvas-detail', getErViewportModeSnapshot() === 'detail')
 
     let persistTimer: ReturnType<typeof setTimeout> | undefined
     let historyPersistTimer: ReturnType<typeof setTimeout> | undefined
@@ -808,6 +886,22 @@ export default function ERDiagram() {
         recomputePresenceHighlights()
       })
     }
+    const syncViewportMode = () => {
+      const nextMode = applyViewportModeClass(el, readGraphScale(graph))
+      syncMountedErTablePortsForMode(graph)
+      if (nextMode === 'overview') {
+        selectErField(null)
+        selectErTable(null)
+        setSelectedRelation(null)
+        withHistoryPaused(graph, () => {
+          graph.getEdges().forEach((edge) => {
+            if (edge.shape !== 'er-relationship') return
+            edge.attr('line/stroke', readErThemeVars().edgeStroke)
+            edge.removeTools()
+          })
+        })
+      }
+    }
     const onViewMounted = ({ view }: { view: CellView }) => {
       const cell = view.cell
       if (cell.isNode() && cell.shape === 'er-table') {
@@ -820,6 +914,7 @@ export default function ERDiagram() {
       schedulePresenceReflow()
     }
     const onRenderDone = () => {
+      syncMountedErTablePortsForMode(graph)
       scheduleMinimapReflow()
       schedulePresenceReflow()
     }
@@ -837,6 +932,7 @@ export default function ERDiagram() {
     graph.on('node:change:size', scheduleMinimapReflow)
     graph.on('edge:change:vertices', scheduleMinimapReflow)
     graph.on('scale', scheduleMinimapReflow)
+    graph.on('scale', syncViewportMode)
     graph.on('translate', scheduleMinimapReflow)
     graph.on('resize', scheduleMinimapReflow)
     window.addEventListener('resize', scheduleMinimapReflow)
@@ -1039,6 +1135,7 @@ export default function ERDiagram() {
       node: Node
       e: { target: EventTarget | null; stopPropagation(): void }
     }) => {
+      if (!isErDetailMode()) return
       if (node.shape !== 'er-table') return
       const target = e.target as HTMLElement | null
       const row = target?.closest?.('.er-table-field')
@@ -1063,7 +1160,7 @@ export default function ERDiagram() {
       const row = target?.closest?.('.er-table-field')
       const tableId = String(node.id)
       const fieldName = row?.getAttribute('data-field-name')
-      if (fieldName) {
+      if (isErDetailMode() && fieldName) {
         publishPresence({ kind: 'field', tableId, fieldName }, 'editing')
         return
       }
@@ -1128,6 +1225,7 @@ export default function ERDiagram() {
       edge: Edge
       e: { stopPropagation(): void; detail?: number }
     }) => {
+      if (!isErDetailMode()) return
       if (edge.shape === 'er-relationship') {
         e.stopPropagation()
         if (e.detail && e.detail > 1) return
@@ -1152,12 +1250,14 @@ export default function ERDiagram() {
       edge: Edge
       e: { stopPropagation(): void }
     }) => {
+      if (!isErDetailMode()) return
       if (edge.shape !== 'er-relationship') return
       e.stopPropagation()
       openRelationPanel(edge)
     }
 
     const onEdgeMouseEnter = ({ edge }: { edge: Edge }) => {
+      if (!isErDetailMode()) return
       if (edge.shape !== 'er-relationship') return
       if (!safeFindViewByCell(graph, edge)) return
       withHistoryPaused(graph, () => {
@@ -1234,6 +1334,7 @@ export default function ERDiagram() {
     }
 
     const onEdgeMouseLeave = ({ edge }: { edge: Edge }) => {
+      if (!isErDetailMode()) return
       withHistoryPaused(graph, () => {
         edge.attr('line/stroke', readErThemeVars().edgeStroke)
         edge.removeTools()
@@ -1307,6 +1408,7 @@ export default function ERDiagram() {
           maxScale: 1.2,
           minScale: 0.3,
         })
+        syncViewportMode()
         reflowMinimap(graph, setMinimapState)
         graph.getNodes().forEach((node) => alignMountedErTableNode(graph, node))
         queueMicrotask(() => {
@@ -1394,6 +1496,7 @@ export default function ERDiagram() {
       graph.off('node:change:size', scheduleMinimapReflow)
       graph.off('edge:change:vertices', scheduleMinimapReflow)
       graph.off('scale', scheduleMinimapReflow)
+      graph.off('scale', syncViewportMode)
       graph.off('translate', scheduleMinimapReflow)
       graph.off('resize', scheduleMinimapReflow)
       window.removeEventListener('resize', scheduleMinimapReflow)
@@ -1418,6 +1521,8 @@ export default function ERDiagram() {
       reloadGraphRef.current = null
       collabRef.current?.destroy()
       collabRef.current = null
+      setErViewportMode('detail')
+      el.classList.remove('er-canvas-overview', 'er-canvas-detail')
       graph.dispose()
       graphRef.current = null
     }
