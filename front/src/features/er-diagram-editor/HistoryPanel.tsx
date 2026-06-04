@@ -248,13 +248,13 @@ export function HistoryPanel({
                           <span>本次快照的全部变更</span>
                           <span>{changeCount} 条</span>
                         </div>
-                        <ul className="max-h-56 space-y-1 overflow-auto pr-1">
+                        <ul className="max-h-56 min-w-0 space-y-1 overflow-auto pr-1">
                           {group.changes.map((change) => (
                             <li
                               key={change.id}
-                              className="rounded-md bg-muted/45 px-2 py-1.5"
+                              className="min-w-0 rounded-md bg-muted/45 px-2 py-1.5"
                             >
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                                 <span
                                   className={`inline-flex shrink-0 rounded px-1 py-0.5 text-[10px] font-medium ${changeBadgeClass(change)}`}
                                 >
@@ -265,11 +265,11 @@ export function HistoryPanel({
                                     v{change.graph_version}
                                   </span>
                                 ) : null}
-                                <span className="min-w-0 truncate text-xs">
-                                  {change.summary}
-                                </span>
                               </div>
-                              <p className="mt-0.5 text-[10px] text-muted-foreground">
+                              <p className="mt-1 min-w-0 whitespace-normal text-xs leading-snug [overflow-wrap:anywhere]">
+                                {change.summary}
+                              </p>
+                              <p className="mt-0.5 text-[10px] text-muted-foreground [overflow-wrap:anywhere]">
                                 {formatTime(change.created_at)}
                               </p>
                             </li>
@@ -297,7 +297,9 @@ export function HistoryPanel({
                           </span>
                         ) : null}
                       </div>
-                      <p className="mt-1 text-xs leading-snug">{entry.summary}</p>
+                      <p className="mt-1 min-w-0 whitespace-normal text-xs leading-snug [overflow-wrap:anywhere]">
+                        {entry.summary}
+                      </p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
                         {formatTime(entry.created_at)}
                       </p>
