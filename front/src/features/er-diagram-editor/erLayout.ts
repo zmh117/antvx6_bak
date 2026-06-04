@@ -62,43 +62,39 @@ export function buildFieldPortItems(fields: TableField[]) {
   })
 }
 
+function samePortItems(current: ReturnType<Node['getPorts']>, expected: ReturnType<typeof buildFieldPortItems>) {
+  if (current.length !== expected.length) return false
+  for (let i = 0; i < expected.length; i += 1) {
+    const a = current[i]
+    const b = expected[i]
+    if (a.id !== b.id || a.group !== b.group) return false
+    const ax = (a.args as { x?: number; y?: number } | undefined)?.x
+    const ay = (a.args as { x?: number; y?: number } | undefined)?.y
+    if (ax !== b.args.x || ay !== b.args.y) return false
+  }
+  return true
+}
+
 export function setErTablePorts(node: Node, fields: TableField[]) {
+  const items = buildFieldPortItems(fields)
+  if (samePortItems(node.getPorts(), items)) return
   node.setProp('ports', {
     groups: ER_PORT_GROUPS,
-    items: buildFieldPortItems(fields),
+    items,
   })
 }
 
-/** 字段行中心 → 节点本地坐标（与 X6 absolute 端口同一坐标系，含缩放） */
-function fieldRowCenterLocalY(graph: Graph, node: Node, row: HTMLElement): number | null {
-  const view = (() => {
-    try {
-      return graph.findViewByCell(node)
-    } catch {
-      return null
-    }
-  })()
-  if (!view) return null
-  const bbox = node.getBBox()
-  const rect = row.getBoundingClientRect()
-  const local = graph.clientToLocal({
-    x: rect.left + rect.width / 2,
-    y: rect.top + rect.height / 2,
-  })
-  return local.y - bbox.y
-}
-
-/** 按 DOM 实测每行垂直中心更新端口 Y，并同步节点高度 */
+/** 固定字段行高度下，按字段 index 计算端口 Y，避免大量 DOM 测量 */
 export function alignErTablePortsFromDom(
   node: Node,
   graph: Graph,
-  tableRoot: HTMLElement,
+  _tableRoot: HTMLElement,
   fields: TableField[],
 ) {
   const wasHistoryEnabled = graph.isHistoryEnabled()
   if (wasHistoryEnabled) graph.disableHistory()
   try {
-    alignErTablePortsFromDomInner(node, graph, tableRoot, fields)
+    alignErTablePortsFromDomInner(node, graph, fields)
   } finally {
     if (wasHistoryEnabled) graph.enableHistory()
   }
@@ -107,7 +103,6 @@ export function alignErTablePortsFromDom(
 function alignErTablePortsFromDomInner(
   node: Node,
   graph: Graph,
-  tableRoot: HTMLElement,
   fields: TableField[],
 ) {
   try {
@@ -116,42 +111,11 @@ function alignErTablePortsFromDomInner(
     return
   }
 
-  const expectedItems = buildFieldPortItems(fields)
-  if (node.getPorts().length !== expectedItems.length) {
-    setErTablePorts(node, fields)
-  }
+  setErTablePorts(node, fields)
 
-  if (fields.length === 0) {
-    const h = ER_LAYOUT.headerH + ER_LAYOUT.bottomPad
-    node.resize(ER_LAYOUT.nodeWidth, h)
-    return
-  }
-
-  let aligned = 0
-  for (const field of fields) {
-    const row = tableRoot.querySelector<HTMLElement>(
-      `[data-field-name="${CSS.escape(field.name)}"]`,
-    )
-    if (!row) continue
-    const y = fieldRowCenterLocalY(graph, node, row)
-    if (y == null || !Number.isFinite(y)) continue
-
-    node.setPortProp(fieldPortId(field.name, 'L'), 'args/y', y)
-    node.setPortProp(fieldPortId(field.name, 'R'), 'args/y', y)
-    aligned += 1
-  }
-
-  const totalH = Math.max(Math.ceil(tableRoot.offsetHeight), tableBodyHeight(fields.length))
+  const totalH = tableBodyHeight(fields.length)
   const size = node.getSize()
   if (size.width !== ER_LAYOUT.nodeWidth || Math.abs(size.height - totalH) > 0.5) {
     node.resize(ER_LAYOUT.nodeWidth, totalH)
-  }
-
-  if (aligned < fields.length) {
-    for (let i = 0; i < fields.length; i += 1) {
-      const y = fieldRowCenterY(i)
-      node.setPortProp(fieldPortId(fields[i].name, 'L'), 'args/y', y)
-      node.setPortProp(fieldPortId(fields[i].name, 'R'), 'args/y', y)
-    }
   }
 }

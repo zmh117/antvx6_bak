@@ -1,5 +1,5 @@
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import type { Graph, EdgeMetadata, NodeMetadata } from '@antv/x6'
+import type { Edge, Graph, EdgeMetadata, Node, NodeMetadata } from '@antv/x6'
 import * as Y from 'yjs'
 import { COLLAB_WS_URL } from '@/shared/api/config'
 import type {
@@ -24,6 +24,19 @@ import { withHistoryPaused } from './withHistoryPaused'
 
 const LOCAL_ORIGIN = 'x6-local'
 const FIELD_SEP = '::'
+
+function measureCollabPerf<T>(label: string, fn: () => T, minDurationMs = 0): T {
+  if (!import.meta.env.DEV) return fn()
+  const start = performance.now()
+  try {
+    return fn()
+  } finally {
+    const duration = performance.now() - start
+    if (duration >= minDurationMs) {
+      console.debug(`[ER perf] ${label}: ${duration.toFixed(1)}ms`)
+    }
+  }
+}
 
 type CollabStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
@@ -50,6 +63,10 @@ export type ErRemoteAwareness = {
 
 export type ErCollaborationController = {
   pushGraph: (origin?: string) => void
+  patchNodeLayout: (node: Node, origin?: string) => void
+  patchTable: (node: Node, origin?: string) => void
+  patchColumn: (tableId: string, field: TableField, sortOrder: number, origin?: string) => void
+  patchRelation: (edge: Edge, origin?: string) => void
   isRealtimeEnabled: () => boolean
   setLocalPresence: (target: ErPresenceTarget | null, activity?: ErPresenceActivity) => void
   destroy: () => void
@@ -86,6 +103,12 @@ function setMapObject(root: Y.Map<unknown>, key: string, value: Record<string, u
     if (v !== undefined) child.set(k, v)
   })
   root.set(key, child)
+}
+
+function deleteKeysByPrefix(map: Y.Map<unknown>, prefix: string) {
+  Array.from(map.keys()).forEach((key) => {
+    if (key.startsWith(prefix)) map.delete(key)
+  })
 }
 
 function enumKey(tableKey: string, columnKey: string, value: string) {
@@ -371,6 +394,51 @@ function edgeEndpointKey(endpoint: unknown) {
   return `${value?.cell || ''}:${value?.port || ''}`
 }
 
+function sameSize(a: { width?: number; height?: number } | null | undefined, b: { width?: number; height?: number }) {
+  return Math.abs(Number(a?.width ?? 0) - Number(b?.width ?? 0)) < 0.5 &&
+    Math.abs(Number(a?.height ?? 0) - Number(b?.height ?? 0)) < 0.5
+}
+
+function applyLayoutToGraph(graph: Graph, doc: Y.Doc) {
+  const layoutMap = doc.getMap('layout')
+  withHistoryPaused(graph, () => {
+    graph.batchUpdate(() => {
+      for (const [tableId, value] of layoutMap.entries()) {
+        const node = graph.getCellById(String(tableId))
+        if (!node?.isNode() || node.shape !== 'er-table') continue
+        const layout = mapObject(value)
+        const nextPosition = {
+          x: Number(layout.x ?? node.position().x),
+          y: Number(layout.y ?? node.position().y),
+        }
+        const nextSize = {
+          width: Number(layout.width ?? node.getSize().width),
+          height: Number(layout.height ?? node.getSize().height),
+        }
+        if (!samePoint(node.position(), nextPosition)) {
+          node.position(nextPosition.x, nextPosition.y)
+        }
+        if (!sameSize(node.getSize(), nextSize)) {
+          node.resize(nextSize.width, nextSize.height)
+        }
+      }
+    })
+  })
+  graph.cleanHistory()
+}
+
+function isLayoutOnlyTransaction(doc: Y.Doc, transaction: Y.Transaction) {
+  const changedParents = transaction.changedParentTypes as ReadonlySet<unknown>
+  const layoutMap = doc.getMap('layout')
+  const structuralMaps = [
+    doc.getMap('tables'),
+    doc.getMap('columns'),
+    doc.getMap('enums'),
+    doc.getMap('relations'),
+  ]
+  return changedParents.has(layoutMap) && structuralMaps.every((map) => !changedParents.has(map))
+}
+
 function applyDocToGraph(graph: Graph, doc: Y.Doc) {
   const tables = tablesFromDoc(doc)
   const { nodes, edges } = graphDataFromTables(tables)
@@ -480,7 +548,11 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
     applying = true
     options.setApplyingRemote(true)
     try {
-      applyDocToGraph(options.graph, doc)
+      if (isLayoutOnlyTransaction(doc, transaction)) {
+        measureCollabPerf('collab-apply:layout', () => applyLayoutToGraph(options.graph, doc), 4)
+      } else {
+        measureCollabPerf('collab-apply:full', () => applyDocToGraph(options.graph, doc), 8)
+      }
       options.onRemoteApply()
     } finally {
       options.setApplyingRemote(false)
@@ -569,6 +641,18 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
     pushGraph(origin = LOCAL_ORIGIN) {
       writeGraphToDoc(options.graph, doc, origin, options.collabRevision)
     },
+    patchNodeLayout(node, origin = LOCAL_ORIGIN) {
+      writeNodeLayoutToDoc(doc, node, origin)
+    },
+    patchTable(node, origin = LOCAL_ORIGIN) {
+      writeTableToDoc(doc, node, origin)
+    },
+    patchColumn(tableId, field, sortOrder, origin = LOCAL_ORIGIN) {
+      writeColumnToDoc(doc, tableId, field, sortOrder, origin)
+    },
+    patchRelation(edge, origin = LOCAL_ORIGIN) {
+      writeRelationToDoc(doc, edge, origin)
+    },
     isRealtimeEnabled() {
       return connected
     },
@@ -587,4 +671,100 @@ export function createErCollaboration(options: ErCollaborationOptions): ErCollab
       connected = false
     },
   }
+}
+
+function writeNodeLayoutToDoc(doc: Y.Doc, node: Node, origin = LOCAL_ORIGIN) {
+  const layoutMap = doc.getMap('layout')
+  const metaMap = doc.getMap('meta')
+  const position = node.position()
+  const size = node.getSize()
+  doc.transact(() => {
+    setMapObject(layoutMap, String(node.id), {
+      x: position.x,
+      y: position.y,
+      width: size.width,
+      height: size.height,
+    })
+    metaMap.set('updatedAt', new Date().toISOString())
+  }, origin)
+}
+
+function writeTableToDoc(doc: Y.Doc, node: Node, origin = LOCAL_ORIGIN) {
+  const data = node.getData<TableNodeData>()
+  const tablesMap = doc.getMap('tables')
+  const layoutMap = doc.getMap('layout')
+  const metaMap = doc.getMap('meta')
+  const position = node.position()
+  const size = node.getSize()
+  doc.transact(() => {
+    setMapObject(tablesMap, String(node.id), {
+      id: String(node.id),
+      name: data.name || String(node.id),
+      businessName: data.businessName,
+      description: data.description,
+      businessDomain: data.businessDomain,
+      tableType: data.tableType,
+      importance: data.importance,
+      tags: data.tags || [],
+      comment: data.comment,
+    })
+    setMapObject(layoutMap, String(node.id), {
+      x: position.x,
+      y: position.y,
+      width: size.width,
+      height: size.height,
+    })
+    metaMap.set('updatedAt', new Date().toISOString())
+  }, origin)
+}
+
+function writeColumnToDoc(
+  doc: Y.Doc,
+  tableId: string,
+  field: TableField,
+  sortOrder: number,
+  origin = LOCAL_ORIGIN,
+) {
+  const columnsMap = doc.getMap('columns')
+  const enumsMap = doc.getMap('enums')
+  const metaMap = doc.getMap('meta')
+  doc.transact(() => {
+    setMapObject(columnsMap, `${tableId}${FIELD_SEP}${field.name}`, {
+      tableKey: tableId,
+      name: field.name,
+      type: field.type,
+      businessName: field.businessName,
+      description: field.description,
+      comment: field.comment,
+      defaultValue: field.defaultValue,
+      keyType: field.keyType,
+      columnRole: field.columnRole,
+      tags: field.tags || [],
+      sortOrder,
+    })
+    deleteKeysByPrefix(enumsMap, `${tableId}${FIELD_SEP}${field.name}${FIELD_SEP}`)
+    ;(field.enumValues || []).forEach((entry, enumIndex) => {
+      if (!entry.value && !entry.label) return
+      setMapObject(enumsMap, enumKey(tableId, field.name, entry.value || entry.label), {
+        tableKey: tableId,
+        columnKey: field.name,
+        value: entry.value,
+        label: entry.label || entry.value,
+        description: entry.description,
+        sortOrder: entry.sortOrder ?? enumIndex,
+      })
+    })
+    metaMap.set('updatedAt', new Date().toISOString())
+  }, origin)
+}
+
+function writeRelationToDoc(doc: Y.Doc, edge: Edge, origin = LOCAL_ORIGIN) {
+  const relation = relationFromEdge(edge)
+  if (!relation?.relationKey) return
+  const relationsMap = doc.getMap('relations')
+  const metaMap = doc.getMap('meta')
+  doc.transact(() => {
+    setMapObject(relationsMap, relation.relationKey!, relation as unknown as Record<string, unknown>)
+    metaMap.set('updatedAt', new Date().toISOString())
+  }, origin)
 }

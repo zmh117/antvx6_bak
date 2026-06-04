@@ -29,19 +29,17 @@ import {
   type TableNodeData,
 } from '@/entities/er-graph/model/erSchema'
 import {
+  getCurrentFieldSelection,
   registerFieldPanelHandler,
   registerTablePanelHandler,
   selectErField,
   selectErTable,
   subscribeFieldSelection,
 } from './erFieldContext'
-import {
-  FieldEnumPanel,
-  RelationBusinessPanel,
-  TableBusinessPanel,
-  type FieldBusinessPatch,
-  type RelationBusinessPatch,
-  type TableBusinessPatch,
+import type {
+  FieldBusinessPatch,
+  RelationBusinessPatch,
+  TableBusinessPatch,
 } from './FieldEnumPanel'
 import { applyErTablesToGraphNodes, graphToErTables, normalizeRelationshipType } from './graphToErData'
 import {
@@ -52,8 +50,6 @@ import {
   syncGraphCanvas,
 } from '@/entities/er-graph/api'
 import { getAccessToken, getCurrentUser } from '@/entities/auth'
-import { HistoryPanel } from './HistoryPanel'
-import { DatabaseImportPanel } from './DatabaseImportPanel'
 import { resolveTablesFromLoad } from './resolveGraphTables'
 import { buildRelationEdgeData, resolveRelationEndpoints } from './relationUtils'
 import type { RelationBusinessData } from '@/entities/er-graph/model/erSchema'
@@ -84,12 +80,41 @@ import {
   type ErRemoteAwareness,
 } from './lib/erCollaboration'
 
+const FieldEnumPanel = React.lazy(() =>
+  import('./FieldEnumPanel').then((module) => ({ default: module.FieldEnumPanel })),
+)
+const TableBusinessPanel = React.lazy(() =>
+  import('./FieldEnumPanel').then((module) => ({ default: module.TableBusinessPanel })),
+)
+const RelationBusinessPanel = React.lazy(() =>
+  import('./FieldEnumPanel').then((module) => ({ default: module.RelationBusinessPanel })),
+)
+const HistoryPanel = React.lazy(() =>
+  import('./HistoryPanel').then((module) => ({ default: module.HistoryPanel })),
+)
+const DatabaseImportPanel = React.lazy(() =>
+  import('./DatabaseImportPanel').then((module) => ({ default: module.DatabaseImportPanel })),
+)
+
 const PRESENCE_STALE_MS = 30_000
 const PRESENCE_LABELS: Record<ErPresenceActivity, string> = {
   selecting: '正在查看',
   editing: '正在编辑',
   dragging: '正在移动',
   connecting: '已连接',
+}
+
+function measureErPerf<T>(label: string, fn: () => T, minDurationMs = 0): T {
+  if (!import.meta.env.DEV) return fn()
+  const start = performance.now()
+  try {
+    return fn()
+  } finally {
+    const duration = performance.now() - start
+    if (duration >= minDurationMs) {
+      console.debug(`[ER perf] ${label}: ${duration.toFixed(1)}ms`)
+    }
+  }
 }
 
 type PresenceHighlight = {
@@ -162,9 +187,6 @@ const ERTableNode = React.memo(
     const { name, fields = [], businessName } = node.getData<TableNodeData>()
     const tableRef = useRef<HTMLDivElement>(null)
     const tableId = String(node.id)
-    const [selection, setSelection] = useState<FieldSelection | null>(null)
-
-    useEffect(() => subscribeFieldSelection(setSelection), [])
 
     useLayoutEffect(() => {
       const el = tableRef.current
@@ -172,12 +194,14 @@ const ERTableNode = React.memo(
       const sync = () => alignErTablePortsFromDom(node, graph, el, fields)
       sync()
       requestAnimationFrame(sync)
+      requestAnimationFrame(() => applyFieldSelectionClass(graph, getCurrentFieldSelection()))
     }, [node, graph, fields, name])
 
     return (
       <div
         ref={tableRef}
         className="er-table"
+        data-table-id={tableId}
         style={{ minHeight: tableBodyHeight(fields.length) }}
       >
         <header className="er-table-header">
@@ -204,8 +228,6 @@ const ERTableNode = React.memo(
           ) : (
             fields.map((field, i) => {
               const hasEnum = fieldHasEnum(field)
-              const isSelected =
-                selection?.tableId === tableId && selection?.fieldName === field.name
               const metaTooltip = fieldMetaTooltip(field)
               const showMetaIcon = fieldHasMetaForTooltip(field)
               return (
@@ -216,7 +238,7 @@ const ERTableNode = React.memo(
                 tabIndex={0}
                 className={`er-table-field ${i % 2 === 0 ? 'even' : 'odd'} ${
                   field.keyType || ''
-                }${hasEnum ? ' has-enum' : ''}${isSelected ? ' is-selected' : ''}`}
+                }${hasEnum ? ' has-enum' : ''}`}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation()
@@ -381,6 +403,18 @@ function emptyMinimapState(): SimpleMinimapState {
   return { viewBox: '0 0 1 1', nodes: [], edges: [], viewport: null }
 }
 
+function buildSimpleMinimapViewport(graph: Graph): SimpleMinimapState['viewport'] {
+  const rect = graph.container.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const local = graph.clientToLocal(rect.left, rect.top, rect.width, rect.height)
+  return {
+    x: local.x,
+    y: local.y,
+    width: Math.max(1, local.width),
+    height: Math.max(1, local.height),
+  }
+}
+
 function buildSimpleMinimapState(graph: Graph): SimpleMinimapState {
   const nodes = graph
     .getNodes()
@@ -417,19 +451,7 @@ function buildSimpleMinimapState(graph: Graph): SimpleMinimapState {
     })
     .filter((edge): edge is SimpleMinimapEdge => edge != null)
 
-  const viewport = (() => {
-    const rect = graph.container.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) return null
-    const local = graph.clientToLocal(rect.left, rect.top, rect.width, rect.height)
-    return {
-      x: local.x,
-      y: local.y,
-      width: Math.max(1, local.width),
-      height: Math.max(1, local.height),
-    }
-  })()
-
-  const boxes = viewport ? [...nodes, viewport] : nodes
+  const boxes = nodes
   const minX = Math.min(...boxes.map((box) => box.x))
   const minY = Math.min(...boxes.map((box) => box.y))
   const maxX = Math.max(...boxes.map((box) => box.x + box.width))
@@ -441,7 +463,7 @@ function buildSimpleMinimapState(graph: Graph): SimpleMinimapState {
     viewBox: `${minX - padX} ${minY - padY} ${Math.max(1, maxX - minX + padX * 2)} ${Math.max(1, maxY - minY + padY * 2)}`,
     nodes,
     edges,
-    viewport,
+    viewport: buildSimpleMinimapViewport(graph),
   }
 }
 
@@ -449,7 +471,30 @@ function reflowMinimap(
   graph: Graph,
   setState: React.Dispatch<React.SetStateAction<SimpleMinimapState>>,
 ) {
-  setState(buildSimpleMinimapState(graph))
+  const next = measureErPerf('minimap:rebuild', () => buildSimpleMinimapState(graph), 4)
+  setState(next)
+}
+
+function updateMinimapViewport(
+  graph: Graph,
+  setState: React.Dispatch<React.SetStateAction<SimpleMinimapState>>,
+) {
+  const viewport = measureErPerf('minimap:viewport', () => buildSimpleMinimapViewport(graph), 8)
+  setState((prev) => {
+    const old = prev.viewport
+    if (
+      old &&
+      viewport &&
+      Math.abs(old.x - viewport.x) < 0.5 &&
+      Math.abs(old.y - viewport.y) < 0.5 &&
+      Math.abs(old.width - viewport.width) < 0.5 &&
+      Math.abs(old.height - viewport.height) < 0.5
+    ) {
+      return prev
+    }
+    if (!old && !viewport) return prev
+    return { ...prev, viewport }
+  })
 }
 
 function safeFindViewByCell(graph: Graph, cell: Cell): CellView | null {
@@ -458,6 +503,29 @@ function safeFindViewByCell(graph: Graph, cell: Cell): CellView | null {
   } catch {
     return null
   }
+}
+
+let selectedFieldRow: HTMLElement | null = null
+let selectedFieldKey: string | null = null
+
+function applyFieldSelectionClass(graph: Graph, selection: FieldSelection | null) {
+  const nextKey = selection ? `${selection.tableId}\0${selection.fieldName}` : null
+  if (selectedFieldKey === nextKey && selectedFieldRow?.isConnected) return
+
+  selectedFieldRow?.classList.remove('is-selected')
+  selectedFieldRow = null
+  selectedFieldKey = nextKey
+  if (!selection) return
+
+  const node = graph.getCellById(selection.tableId)
+  if (!node?.isNode()) return
+  const view = safeFindViewByCell(graph, node)
+  const row = view?.container.querySelector<HTMLElement>(
+    `.er-table-field[data-field-name="${CSS.escape(selection.fieldName)}"]`,
+  )
+  if (!row) return
+  row.classList.add('is-selected')
+  selectedFieldRow = row
 }
 
 function whenGraphRendered(graph: Graph, callback: () => void) {
@@ -657,6 +725,11 @@ export default function ERDiagram() {
         node.setData({ ...data, fields }, { overwrite: true, deep: true })
       })
       setGraphDataRevision((v) => v + 1)
+      if (collabRef.current?.isRealtimeEnabled()) {
+        collabRef.current.patchColumn(selectedField.tableId, next, idx)
+        setAutosaveErr(null)
+        return
+      }
       // 字段/枚举变更立即保存（避免 550ms 防抖 + 刷新前未落库）
       schedulePersistRef.current(false, true)
     },
@@ -702,6 +775,11 @@ export default function ERDiagram() {
         node.setData(next, { overwrite: true, deep: true })
       })
       setGraphDataRevision((v) => v + 1)
+      if (collabRef.current?.isRealtimeEnabled()) {
+        collabRef.current.patchTable(node)
+        setAutosaveErr(null)
+        return
+      }
       schedulePersistRef.current(false, true)
     },
     [selectedTable],
@@ -743,6 +821,11 @@ export default function ERDiagram() {
         }
       })
       setGraphDataRevision((v) => v + 1)
+      if (collabRef.current?.isRealtimeEnabled()) {
+        collabRef.current.patchRelation(edge)
+        setAutosaveErr(null)
+        return
+      }
       schedulePersistRef.current(false, false)
     },
     [selectedRelation],
@@ -803,15 +886,28 @@ export default function ERDiagram() {
         reflowMinimap(graph, setMinimapState)
       })
     }
+    let minimapViewportRaf = 0
+    const scheduleMinimapViewportUpdate = () => {
+      cancelAnimationFrame(minimapViewportRaf)
+      minimapViewportRaf = requestAnimationFrame(() => {
+        updateMinimapViewport(graph, setMinimapState)
+      })
+    }
     const schedulePresenceReflow = () => {
       requestAnimationFrame(() => {
         recomputePresenceHighlights()
+      })
+    }
+    const syncFieldSelectionClass = () => {
+      requestAnimationFrame(() => {
+        applyFieldSelectionClass(graph, getCurrentFieldSelection())
       })
     }
     const onViewMounted = ({ view }: { view: CellView }) => {
       const cell = view.cell
       if (cell.isNode() && cell.shape === 'er-table') {
         requestAnimationFrame(() => alignMountedErTableNode(graph, cell))
+        syncFieldSelectionClass()
       }
       scheduleMinimapReflow()
       schedulePresenceReflow()
@@ -820,8 +916,11 @@ export default function ERDiagram() {
       schedulePresenceReflow()
     }
     const onRenderDone = () => {
-      scheduleMinimapReflow()
-      schedulePresenceReflow()
+      measureErPerf('render:done', () => {
+        syncFieldSelectionClass()
+        scheduleMinimapReflow()
+        schedulePresenceReflow()
+      }, 4)
     }
     const scheduleCollabPush = FunctionExt.debounce(() => {
       if (!collabRef.current?.isRealtimeEnabled()) return
@@ -829,19 +928,40 @@ export default function ERDiagram() {
       setGraphDataRevision((v) => v + 1)
       setAutosaveErr(null)
     }, 80)
+    const collabLayoutPatchQueue = new Map<string, Node>()
+    let collabLayoutPatchRaf = 0
+    const scheduleCollabLayoutPatch = (node: Node) => {
+      collabLayoutPatchQueue.set(String(node.id), node)
+      if (collabLayoutPatchRaf) return
+      collabLayoutPatchRaf = requestAnimationFrame(() => {
+        collabLayoutPatchRaf = 0
+        const queued = [...collabLayoutPatchQueue.values()]
+        collabLayoutPatchQueue.clear()
+        if (!collabRef.current?.isRealtimeEnabled()) return
+        queued.forEach((item) => collabRef.current?.patchNodeLayout(item))
+        setAutosaveErr(null)
+      })
+    }
 
     graph.on('view:mounted', onViewMounted)
     graph.on('view:unmounted', onViewUnmounted)
     graph.on('render:done', onRenderDone)
     graph.on('node:change:position', scheduleMinimapReflow)
     graph.on('node:change:size', scheduleMinimapReflow)
+    graph.on('edge:change:source', scheduleMinimapReflow)
+    graph.on('edge:change:target', scheduleMinimapReflow)
     graph.on('edge:change:vertices', scheduleMinimapReflow)
-    graph.on('scale', scheduleMinimapReflow)
-    graph.on('translate', scheduleMinimapReflow)
-    graph.on('resize', scheduleMinimapReflow)
-    window.addEventListener('resize', scheduleMinimapReflow)
+    graph.on('edge:connected', scheduleMinimapReflow)
+    graph.on('edge:removed', scheduleMinimapReflow)
+    graph.on('scale', scheduleMinimapViewportUpdate)
+    graph.on('translate', scheduleMinimapViewportUpdate)
+    graph.on('resize', scheduleMinimapViewportUpdate)
+    window.addEventListener('resize', scheduleMinimapViewportUpdate)
 
     graphRef.current = graph
+    const unsubscribeFieldDomSelection = subscribeFieldSelection((sel) => {
+      applyFieldSelectionClass(graph, sel)
+    })
 
     const POSITION_DEBOUNCE_MS = 550
     const HISTORY_PERSIST_DEBOUNCE_MS = 800
@@ -908,7 +1028,7 @@ export default function ERDiagram() {
       const shouldSyncNodes = pendingSyncNodes
       pendingSyncNodes = false
       try {
-        const tables = graphToErTables(graph)
+        const tables = measureErPerf('persist:graphToErTables', () => graphToErTables(graph), 8)
         if (collabRef.current?.isRealtimeEnabled()) {
           collabRef.current.pushGraph()
           setAutosaveErr(null)
@@ -1075,6 +1195,10 @@ export default function ERDiagram() {
       if (applyingHistory || applyingRemote) return
       if (node.shape === 'er-table') {
         publishPresence({ kind: 'table', tableId: String(node.id) }, 'dragging')
+      }
+      if (collabRef.current?.isRealtimeEnabled() && node.shape === 'er-table') {
+        scheduleCollabLayoutPatch(node)
+        return
       }
       schedulePersist(true)
     }
@@ -1256,20 +1380,20 @@ export default function ERDiagram() {
           const tables = resolveTablesFromLoad(loaded)
           if (tables.length) {
             const { nodes, edges } = transformToGraphData(tables)
-            withHistoryPaused(graph, () => {
+            measureErPerf('fromJSON:loaded-tables', () => withHistoryPaused(graph, () => {
               graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
               applyErTablesToGraphNodes(graph, tables)
-            })
+            }), 8)
             setGraphDataRevision((v) => v + 1)
           } else if (loaded.snapshot?.nodes?.length || loaded.snapshot?.edges?.length) {
-            withHistoryPaused(graph, () => {
+            measureErPerf('fromJSON:loaded-snapshot', () => withHistoryPaused(graph, () => {
               graph.fromJSON({
                 cells: [
                   ...(loaded.snapshot.nodes as object[]),
                   ...(loaded.snapshot.edges as object[]),
                 ],
               })
-            })
+            }), 8)
             loadedFromSnapshot = true
           }
         }
@@ -1281,9 +1405,9 @@ export default function ERDiagram() {
           const response = await fetch('/data/er.json')
           const tables = normalizeErTables((await response.json()) as TableNodeData[])
           const { nodes, edges } = transformToGraphData(tables)
-          withHistoryPaused(graph, () => {
+          measureErPerf('fromJSON:fallback-er-json', () => withHistoryPaused(graph, () => {
             graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
-          })
+          }), 8)
         }
       } catch (err) {
         console.warn('API 加载失败，回退 er.json:', err)
@@ -1291,9 +1415,9 @@ export default function ERDiagram() {
           const response = await fetch('/data/er.json')
           const tables = normalizeErTables((await response.json()) as TableNodeData[])
           const { nodes, edges } = transformToGraphData(tables)
-          withHistoryPaused(graph, () => {
+          measureErPerf('fromJSON:fallback-after-error', () => withHistoryPaused(graph, () => {
             graph.fromJSON({ cells: [...nodes, ...edges] as object[] })
-          })
+          }), 8)
         }
       }
       graph.cleanHistory()
@@ -1384,6 +1508,7 @@ export default function ERDiagram() {
       cancelled = true
       cancelPendingPersist()
       unbindKeyboard()
+      unsubscribeFieldDomSelection()
       graph.off('history:undo', onHistoryUndo)
       graph.off('history:redo', onHistoryRedo)
       graph.off('view:mounted', onViewMounted)
@@ -1392,12 +1517,19 @@ export default function ERDiagram() {
       graph.off('node:change:position', onNodePositionChange)
       graph.off('node:change:position', scheduleMinimapReflow)
       graph.off('node:change:size', scheduleMinimapReflow)
+      graph.off('edge:change:source', scheduleMinimapReflow)
+      graph.off('edge:change:target', scheduleMinimapReflow)
       graph.off('edge:change:vertices', scheduleMinimapReflow)
-      graph.off('scale', scheduleMinimapReflow)
-      graph.off('translate', scheduleMinimapReflow)
-      graph.off('resize', scheduleMinimapReflow)
-      window.removeEventListener('resize', scheduleMinimapReflow)
+      graph.off('edge:connected', scheduleMinimapReflow)
+      graph.off('edge:removed', scheduleMinimapReflow)
+      graph.off('scale', scheduleMinimapViewportUpdate)
+      graph.off('translate', scheduleMinimapViewportUpdate)
+      graph.off('resize', scheduleMinimapViewportUpdate)
+      window.removeEventListener('resize', scheduleMinimapViewportUpdate)
       cancelAnimationFrame(minimapRaf)
+      cancelAnimationFrame(minimapViewportRaf)
+      cancelAnimationFrame(collabLayoutPatchRaf)
+      collabLayoutPatchQueue.clear()
       graph.off('edge:connected', onEdgeStructureChange)
       graph.off('edge:removed', onEdgeRemoved)
       graph.off('edge:change:data', onEdgeDataChange)
@@ -1672,62 +1804,66 @@ export default function ERDiagram() {
             ))}
           </div>
         </section>
-        {selectedField && selectedFieldMeta ? (
-          <FieldEnumPanel
-            tableId={selectedField.tableId}
-            tableName={selectedFieldMeta.table.name}
-            field={selectedFieldMeta.field}
-            onChange={patchSelectedField}
-            onClose={() => selectErField(null)}
-          />
-        ) : null}
-        {selectedTable && selectedTableMeta ? (
-          <TableBusinessPanel
-            table={selectedTableMeta}
-            onChange={patchSelectedTable}
-            onClose={() => selectErTable(null)}
-          />
-        ) : null}
-        {selectedRelation && selectedRelationMeta ? (
-          <RelationBusinessPanel
-            relation={selectedRelationMeta.relation}
-            onChange={patchSelectedRelation}
-            onClose={() => setSelectedRelation(null)}
-          />
-        ) : null}
+        <React.Suspense fallback={null}>
+          {selectedField && selectedFieldMeta ? (
+            <FieldEnumPanel
+              tableId={selectedField.tableId}
+              tableName={selectedFieldMeta.table.name}
+              field={selectedFieldMeta.field}
+              onChange={patchSelectedField}
+              onClose={() => selectErField(null)}
+            />
+          ) : null}
+          {selectedTable && selectedTableMeta ? (
+            <TableBusinessPanel
+              table={selectedTableMeta}
+              onChange={patchSelectedTable}
+              onClose={() => selectErTable(null)}
+            />
+          ) : null}
+          {selectedRelation && selectedRelationMeta ? (
+            <RelationBusinessPanel
+              relation={selectedRelationMeta.relation}
+              onChange={patchSelectedRelation}
+              onClose={() => setSelectedRelation(null)}
+            />
+          ) : null}
+        </React.Suspense>
       </section>
-      {useApi ? (
-        <HistoryPanel
-          open={historyOpen}
-          onOpenChange={setHistoryOpen}
-          graphId={graphIdRef.current}
-          refreshKey={graphDataRevision}
-          onRestored={(newVersion) => {
-            setOperationSource('restore')
-            graphVersionRef.current = newVersion
-            setGraphDataRevision((v) => v + 1)
-            void reloadGraphRef.current?.()
-          }}
-        />
-      ) : null}
-      {useApi ? (
-        <DatabaseImportPanel
-          open={databaseImportOpen}
-          graphId={graphIdRef.current}
-          onClose={() => setDatabaseImportOpen(false)}
-          onImported={(newVersion) => {
-            graphVersionRef.current = newVersion
-            setGraphDataRevision((v) => v + 1)
-            void queryClient.invalidateQueries({
-              queryKey: graphKeys.histories(graphIdRef.current),
-            })
-            void queryClient.invalidateQueries({
-              queryKey: graphKeys.agentContexts(graphIdRef.current),
-            })
-            void reloadGraphRef.current?.()
-          }}
-        />
-      ) : null}
+      <React.Suspense fallback={null}>
+        {useApi ? (
+          <HistoryPanel
+            open={historyOpen}
+            onOpenChange={setHistoryOpen}
+            graphId={graphIdRef.current}
+            refreshKey={graphDataRevision}
+            onRestored={(newVersion) => {
+              setOperationSource('restore')
+              graphVersionRef.current = newVersion
+              setGraphDataRevision((v) => v + 1)
+              void reloadGraphRef.current?.()
+            }}
+          />
+        ) : null}
+        {useApi ? (
+          <DatabaseImportPanel
+            open={databaseImportOpen}
+            graphId={graphIdRef.current}
+            onClose={() => setDatabaseImportOpen(false)}
+            onImported={(newVersion) => {
+              graphVersionRef.current = newVersion
+              setGraphDataRevision((v) => v + 1)
+              void queryClient.invalidateQueries({
+                queryKey: graphKeys.histories(graphIdRef.current),
+              })
+              void queryClient.invalidateQueries({
+                queryKey: graphKeys.agentContexts(graphIdRef.current),
+              })
+              void reloadGraphRef.current?.()
+            }}
+          />
+        ) : null}
+      </React.Suspense>
     </section>
   )
 }
