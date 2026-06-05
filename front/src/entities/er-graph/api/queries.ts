@@ -1,11 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  archiveGraph,
+  createGraph,
   fetchAgentContext,
+  fetchGraphMembers,
   fetchGraphs,
   fetchGraphHistory,
   fetchGraphLoad,
   getDefaultGraphId,
+  removeGraphMember,
   restoreGraphCheckpoint,
+  type GraphMeta,
+  type GraphMemberUpsertBody,
+  type UpdateGraphBody,
+  updateGraphMeta,
+  upsertGraphMember,
 } from './graphApi'
 import { graphKeys } from './queryKeys'
 
@@ -13,6 +22,85 @@ export function useGraphsQuery() {
   return useQuery({
     queryKey: graphKeys.list(),
     queryFn: fetchGraphs,
+  })
+}
+
+export function useCreateGraphMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: createGraph,
+    onSuccess: async (created) => {
+      queryClient.setQueryData<GraphMeta[]>(graphKeys.list(), (current) => {
+        if (!current) return [created]
+        if (current.some((graph) => graph.id === created.id)) return current
+        return [...current, created].sort((a, b) => a.name.localeCompare(b.name))
+      })
+      await queryClient.invalidateQueries({ queryKey: graphKeys.lists() })
+    },
+  })
+}
+
+export function useUpdateGraphMetaMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ graphId, body }: { graphId: string; body: UpdateGraphBody }) =>
+      updateGraphMeta(graphId, body),
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: graphKeys.lists() }),
+        queryClient.invalidateQueries({ queryKey: graphKeys.detail(variables.graphId) }),
+      ])
+    },
+  })
+}
+
+export function useArchiveGraphMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: archiveGraph,
+    onSuccess: async (_data, graphId) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: graphKeys.lists() }),
+        queryClient.invalidateQueries({ queryKey: graphKeys.detail(graphId) }),
+      ])
+    },
+  })
+}
+
+export function useGraphMembersQuery(graphId: string | null, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: graphKeys.members(graphId ?? getDefaultGraphId()),
+    queryFn: () => fetchGraphMembers(graphId ?? getDefaultGraphId()),
+    enabled: Boolean(graphId) && (opts.enabled ?? true),
+    retry: false,
+  })
+}
+
+export function useUpsertGraphMemberMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ graphId, body }: { graphId: string; body: GraphMemberUpsertBody }) =>
+      upsertGraphMember(graphId, body),
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: graphKeys.members(variables.graphId) }),
+        queryClient.invalidateQueries({ queryKey: graphKeys.lists() }),
+      ])
+    },
+  })
+}
+
+export function useRemoveGraphMemberMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ graphId, userId }: { graphId: string; userId: string }) =>
+      removeGraphMember(graphId, userId),
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: graphKeys.members(variables.graphId) }),
+        queryClient.invalidateQueries({ queryKey: graphKeys.lists() }),
+      ])
+    },
   })
 }
 

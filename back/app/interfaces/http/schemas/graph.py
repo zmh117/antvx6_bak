@@ -143,6 +143,21 @@ class SyncFullRequest(BaseModel):
     payload: NormalizedGraphPayload
 
 
+class GraphCreateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    business_domain: str | None = None
+
+
+class GraphUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    business_domain: str | None = None
+
+
+GraphRole = Literal["owner", "editor", "viewer"]
+
+
 class GraphMetaResponse(BaseModel):
     id: UUID
     name: str
@@ -154,6 +169,20 @@ class GraphMetaResponse(BaseModel):
     updated_at: datetime | None = None
     table_count: int = 0
     relation_count: int = 0
+    current_user_role: GraphRole | None = None
+
+
+class GraphMemberUpsertRequest(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    role: GraphRole
+
+
+class GraphMemberResponse(BaseModel):
+    user_id: UUID
+    email: str
+    display_name: str
+    role: GraphRole
+    created_at: datetime
 
 
 class SyncResponse(BaseModel):

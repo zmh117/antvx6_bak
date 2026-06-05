@@ -1,6 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from psycopg.types.json import Jsonb
 
 from app.application.graph_sync import graph_sync_service
 from app.application.er_import_service import er_import_service
@@ -14,8 +15,13 @@ from app.interfaces.http.schemas.database_connection import (
 from app.interfaces.http.schemas.graph import (
     AgentContextResponse,
     CanvasSnapshotPayload,
+    GraphCreateRequest,
     GraphLoadResponse,
+    GraphMemberResponse,
+    GraphMemberUpsertRequest,
     GraphMetaResponse,
+    GraphRole,
+    GraphUpdateRequest,
     HistoryResponse,
     NormalizedGraphPayload,
     RestoreRequest,
@@ -40,6 +46,93 @@ from app.services.sync import VersionConflictError, apply_full_sync
 router = APIRouter(prefix="/graphs", tags=["graphs"])
 
 
+def _graph_meta_response(row: dict, current_user_role: GraphRole | None = None) -> GraphMetaResponse:
+    return GraphMetaResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row["description"],
+        business_domain=row["business_domain"],
+        version=row["version"],
+        collab_revision=row["collab_revision"],
+        status=row["status"],
+        updated_at=row.get("updated_at"),
+        table_count=row.get("table_count") or 0,
+        relation_count=row.get("relation_count") or 0,
+        current_user_role=current_user_role or row.get("current_user_role"),
+    )
+
+
+GRAPH_META_SELECT = """
+SELECT g.id, g.name, g.description, g.business_domain,
+       g.version, g.collab_revision, g.status, g.updated_at,
+       COUNT(DISTINCT t.table_key) AS table_count,
+       COUNT(DISTINCT r.relation_key) AS relation_count
+FROM er_graph g
+LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
+LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
+WHERE g.id = %s
+GROUP BY g.id, g.name, g.description, g.business_domain,
+         g.version, g.collab_revision, g.status, g.updated_at
+"""
+
+
+def _fetch_graph_meta(
+    cur,
+    graph_id: UUID,
+    current_user_role: GraphRole | None = None,
+) -> GraphMetaResponse:
+    cur.execute(GRAPH_META_SELECT, (graph_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
+    return _graph_meta_response(row, current_user_role=current_user_role)
+
+
+def _ensure_active_graph(cur, graph_id: UUID) -> None:
+    cur.execute("SELECT status FROM er_graph WHERE id = %s", (graph_id,))
+    row = cur.fetchone()
+    if not row or row["status"] == "archived":
+        raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
+
+
+def _owner_count(cur, graph_id: UUID) -> int:
+    cur.execute(
+        """
+        SELECT COUNT(*) AS n
+        FROM er_graph_member
+        WHERE graph_id = %s AND role = 'owner'
+        """,
+        (graph_id,),
+    )
+    return int(cur.fetchone()["n"])
+
+
+def _member_response(row: dict) -> GraphMemberResponse:
+    return GraphMemberResponse(
+        user_id=row["user_id"],
+        email=row["email"],
+        display_name=row["display_name"],
+        role=row["role"],
+        created_at=row["created_at"],
+    )
+
+
+def _fetch_graph_member(cur, graph_id: UUID, user_id: UUID) -> GraphMemberResponse:
+    cur.execute(
+        """
+        SELECT m.user_id, u.email, u.display_name, m.role, m.created_at
+        FROM er_graph_member m
+        JOIN app_user u ON u.id = m.user_id
+        WHERE m.graph_id = %s AND m.user_id = %s
+        """,
+        (graph_id, user_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="graph member not found")
+    return _member_response(row)
+
+
 @router.get("", response_model=list[GraphMetaResponse])
 def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header)) -> list[GraphMetaResponse]:
     with get_connection() as conn:
@@ -48,35 +141,239 @@ def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header))
                 """
                 SELECT g.id, g.name, g.description, g.business_domain,
                        g.version, g.collab_revision, g.status, g.updated_at,
+                       m.role AS current_user_role,
                        COUNT(DISTINCT t.table_key) AS table_count,
                        COUNT(DISTINCT r.relation_key) AS relation_count
                 FROM er_graph g
                 JOIN er_graph_member m ON m.graph_id = g.id
                 LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
                 LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
-                WHERE m.user_id = %s
+                WHERE m.user_id = %s AND g.status <> 'archived'
                 GROUP BY g.id, g.name, g.description, g.business_domain,
-                         g.version, g.collab_revision, g.status, g.updated_at
+                         g.version, g.collab_revision, g.status, g.updated_at, m.role
                 ORDER BY g.name
                 """,
                 (user.id,),
             )
             rows = cur.fetchall()
-    return [
-        GraphMetaResponse(
-            id=r["id"],
-            name=r["name"],
-            description=r["description"],
-            business_domain=r["business_domain"],
-            version=r["version"],
-            collab_revision=r["collab_revision"],
-            status=r["status"],
-            updated_at=r["updated_at"],
-            table_count=r["table_count"] or 0,
-            relation_count=r["relation_count"] or 0,
-        )
-        for r in rows
-    ]
+    return [_graph_meta_response(r) for r in rows]
+
+
+@router.post("", response_model=GraphMetaResponse)
+def create_graph(
+    body: GraphCreateRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> GraphMetaResponse:
+    name = (body.name or "").strip() or "新建 ER 图"
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO er_graph (
+                    name, description, business_domain, created_by, updated_by
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, name, description, business_domain,
+                          version, collab_revision, status, updated_at
+                """,
+                (
+                    name,
+                    body.description,
+                    body.business_domain,
+                    str(user.id),
+                    str(user.id),
+                ),
+            )
+            graph = cur.fetchone()
+            cur.execute(
+                """
+                INSERT INTO er_graph_snapshot (graph_id, x6_json, business_json)
+                VALUES (%s, %s, %s)
+                """,
+                (
+                    graph["id"],
+                    Jsonb({"nodes": [], "edges": []}),
+                    Jsonb([]),
+                ),
+            )
+            cur.execute(
+                """
+                INSERT INTO er_graph_member (graph_id, user_id, role)
+                VALUES (%s, %s, 'owner')
+                ON CONFLICT (graph_id, user_id) DO UPDATE SET role = 'owner'
+                """,
+                (graph["id"], user.id),
+            )
+    return _graph_meta_response(
+        {**graph, "table_count": 0, "relation_count": 0},
+        current_user_role="owner",
+    )
+
+
+@router.patch("/{graph_id}/meta", response_model=GraphMetaResponse)
+def update_graph_meta(
+    graph_id: UUID,
+    body: GraphUpdateRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> GraphMetaResponse:
+    fields_set = body.model_fields_set
+    updates: dict[str, str | None] = {}
+    if "name" in fields_set:
+        name = (body.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="graph name cannot be empty")
+        updates["name"] = name
+    if "description" in fields_set:
+        updates["description"] = (body.description or "").strip() or None
+    if "business_domain" in fields_set:
+        updates["business_domain"] = (body.business_domain or "").strip() or None
+
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            role = ensure_graph_role(cur, graph_id, user.id, "editor")
+            if updates:
+                assignments = [f"{field} = %s" for field in updates]
+                values = [*updates.values(), str(user.id), graph_id]
+                cur.execute(
+                    f"""
+                    UPDATE er_graph
+                    SET {", ".join(assignments)}, updated_by = %s, updated_at = NOW()
+                    WHERE id = %s AND status <> 'archived'
+                    """,
+                    values,
+                )
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
+            return _fetch_graph_meta(cur, graph_id, current_user_role=role)
+
+
+@router.delete("/{graph_id}", response_model=GraphMetaResponse)
+def archive_graph(
+    graph_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> GraphMetaResponse:
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            role = ensure_graph_role(cur, graph_id, user.id, "owner")
+            cur.execute(
+                """
+                UPDATE er_graph
+                SET status = 'archived', updated_by = %s, updated_at = NOW()
+                WHERE id = %s AND status <> 'archived'
+                """,
+                (str(user.id), graph_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
+            return _fetch_graph_meta(cur, graph_id, current_user_role=role)
+
+
+@router.get("/{graph_id}/members", response_model=list[GraphMemberResponse])
+def list_graph_members(
+    graph_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> list[GraphMemberResponse]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "owner")
+            _ensure_active_graph(cur, graph_id)
+            cur.execute(
+                """
+                SELECT m.user_id, u.email, u.display_name, m.role, m.created_at
+                FROM er_graph_member m
+                JOIN app_user u ON u.id = m.user_id
+                WHERE m.graph_id = %s
+                ORDER BY
+                    CASE m.role
+                        WHEN 'owner' THEN 1
+                        WHEN 'editor' THEN 2
+                        ELSE 3
+                    END,
+                    lower(u.email)
+                """,
+                (graph_id,),
+            )
+            return [_member_response(row) for row in cur.fetchall()]
+
+
+@router.put("/{graph_id}/members", response_model=GraphMemberResponse)
+def upsert_graph_member(
+    graph_id: UUID,
+    body: GraphMemberUpsertRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> GraphMemberResponse:
+    email = body.email.strip().lower()
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "owner")
+            _ensure_active_graph(cur, graph_id)
+            cur.execute(
+                """
+                SELECT id
+                FROM app_user
+                WHERE lower(email) = %s AND status = 'active'
+                """,
+                (email,),
+            )
+            target = cur.fetchone()
+            if not target:
+                raise HTTPException(status_code=404, detail="active user not found")
+            target_user_id = target["id"]
+            cur.execute(
+                """
+                SELECT role
+                FROM er_graph_member
+                WHERE graph_id = %s AND user_id = %s
+                """,
+                (graph_id, target_user_id),
+            )
+            existing = cur.fetchone()
+            if (
+                existing
+                and existing["role"] == "owner"
+                and body.role != "owner"
+                and _owner_count(cur, graph_id) <= 1
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="cannot demote the last owner",
+                )
+            cur.execute(
+                """
+                INSERT INTO er_graph_member (graph_id, user_id, role)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (graph_id, user_id)
+                DO UPDATE SET role = EXCLUDED.role
+                """,
+                (graph_id, target_user_id, body.role),
+            )
+            return _fetch_graph_member(cur, graph_id, target_user_id)
+
+
+@router.delete("/{graph_id}/members/{member_user_id}", response_model=GraphMemberResponse)
+def remove_graph_member(
+    graph_id: UUID,
+    member_user_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> GraphMemberResponse:
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "owner")
+            _ensure_active_graph(cur, graph_id)
+            member = _fetch_graph_member(cur, graph_id, member_user_id)
+            if member.role == "owner" and _owner_count(cur, graph_id) <= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="cannot remove the last owner",
+                )
+            cur.execute(
+                """
+                DELETE FROM er_graph_member
+                WHERE graph_id = %s AND user_id = %s
+                """,
+                (graph_id, member_user_id),
+            )
+            return member
 
 
 @router.get("/{graph_id}", response_model=GraphLoadResponse)
@@ -87,8 +384,10 @@ def get_graph(
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                ensure_graph_role(cur, graph_id, user.id, "viewer")
-            return load_graph(conn, graph_id)
+                role = ensure_graph_role(cur, graph_id, user.id, "viewer")
+            loaded = load_graph(conn, graph_id)
+            loaded.graph.current_user_role = role
+            return loaded
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -100,37 +399,8 @@ def get_graph_meta(
 ) -> GraphMetaResponse:
     with get_connection() as conn:
         with conn.cursor() as cur:
-            ensure_graph_role(cur, graph_id, user.id, "viewer")
-            cur.execute(
-                """
-                SELECT g.id, g.name, g.description, g.business_domain,
-                       g.version, g.collab_revision, g.status, g.updated_at,
-                       COUNT(DISTINCT t.table_key) AS table_count,
-                       COUNT(DISTINCT r.relation_key) AS relation_count
-                FROM er_graph g
-                LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
-                LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
-                WHERE g.id = %s
-                GROUP BY g.id, g.name, g.description, g.business_domain,
-                         g.version, g.collab_revision, g.status, g.updated_at
-                """,
-                (graph_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
-            return GraphMetaResponse(
-                id=row["id"],
-                name=row["name"],
-                description=row["description"],
-                business_domain=row["business_domain"],
-                version=row["version"],
-                collab_revision=row["collab_revision"],
-                status=row["status"],
-                updated_at=row["updated_at"],
-                table_count=row["table_count"] or 0,
-                relation_count=row["relation_count"] or 0,
-            )
+            role = ensure_graph_role(cur, graph_id, user.id, "viewer")
+            return _fetch_graph_meta(cur, graph_id, current_user_role=role)
 
 
 @router.post("/{graph_id}/sync", response_model=SyncResponse)

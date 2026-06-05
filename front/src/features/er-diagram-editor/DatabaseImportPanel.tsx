@@ -218,8 +218,8 @@ export function DatabaseImportPanel({ open, graphId, onClose, onImported }: Prop
   if (!open) return null
 
   return (
-    <div className="absolute inset-0 z-[60] flex items-start justify-center bg-background/55 p-4 backdrop-blur-sm">
-      <section className="mt-6 flex max-h-[calc(100vh-72px)] w-[min(1120px,96vw)] flex-col rounded-lg border border-border bg-card shadow-xl">
+    <div className="fixed inset-0 z-[80] flex items-start justify-center bg-background/55 p-4 backdrop-blur-sm">
+      <section className="flex h-[calc(100vh-32px)] w-[min(1120px,96vw)] flex-col rounded-lg border border-border bg-card shadow-xl md:mt-2 md:h-[calc(100vh-48px)]">
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
             <Database className="size-4" />
@@ -230,8 +230,8 @@ export function DatabaseImportPanel({ open, graphId, onClose, onImported }: Prop
           </Button>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] gap-0 overflow-hidden">
-          <aside className="overflow-y-auto border-r border-border p-4">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden md:grid-cols-[360px_minmax(0,1fr)]">
+          <aside className="min-h-0 overflow-y-auto border-b border-border p-4 md:border-b-0 md:border-r">
             <div className="space-y-3">
               <div className="space-y-1.5">
                 <Label>选择连接</Label>
@@ -343,8 +343,8 @@ export function DatabaseImportPanel({ open, graphId, onClose, onImported }: Prop
             </div>
           </aside>
 
-          <main className="flex min-h-0 flex-col p-4">
-            <div className="flex flex-wrap items-center gap-2">
+          <main className="flex min-h-0 flex-col overflow-hidden p-4">
+            <div className="shrink-0 flex flex-wrap items-center gap-2">
               <Button type="button" onClick={runPreview} disabled={!selectedConnectionId || loading}>
                 <RefreshCw className="size-4" />
                 读取表
@@ -448,7 +448,7 @@ export function DatabaseImportPanel({ open, graphId, onClose, onImported }: Prop
               </table>
             </div>
 
-            <footer className="mt-3 flex items-center justify-end gap-2">
+            <footer className="sticky bottom-0 z-10 mt-3 flex shrink-0 items-center justify-end gap-2 border-t border-border bg-card pt-3">
               <Button type="button" variant="outline" onClick={onClose}>
                 取消
               </Button>

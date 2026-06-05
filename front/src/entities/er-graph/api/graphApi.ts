@@ -109,6 +109,48 @@ export type GraphMeta = {
   updated_at?: string | null
   table_count?: number
   relation_count?: number
+  current_user_role?: GraphRole | null
+}
+
+export type GraphRole = 'owner' | 'editor' | 'viewer'
+
+export type GraphMember = {
+  user_id: string
+  email: string
+  display_name: string
+  role: GraphRole
+  created_at: string
+}
+
+export type GraphMemberUpsertBody = {
+  email: string
+  role: GraphRole
+}
+
+export type CreateGraphBody = {
+  name?: string
+  description?: string | null
+  business_domain?: string | null
+}
+
+export type UpdateGraphBody = CreateGraphBody
+
+function withFallbackRole(graph: GraphMeta, role: GraphRole): GraphMeta {
+  return {
+    ...graph,
+    current_user_role: graph.current_user_role ?? role,
+  }
+}
+
+async function apiErrorMessage(res: Response) {
+  const text = await res.text()
+  try {
+    const data = JSON.parse(text) as { detail?: unknown }
+    if (typeof data.detail === 'string') return data.detail
+  } catch {
+    // keep raw text fallback
+  }
+  return text || `${res.status} ${res.statusText}`
 }
 
 export async function fetchGraphs(): Promise<GraphMeta[]> {
@@ -119,12 +161,78 @@ export async function fetchGraphs(): Promise<GraphMeta[]> {
   return res.json() as Promise<GraphMeta[]>
 }
 
+export async function createGraph(body: CreateGraphBody = {}): Promise<GraphMeta> {
+  const res = await fetch(`${API_BASE}/api/graphs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  const graph = (await res.json()) as GraphMeta
+  return withFallbackRole(graph, 'owner')
+}
+
+export async function updateGraphMeta(graphId: string, body: UpdateGraphBody): Promise<GraphMeta> {
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/meta`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<GraphMeta>
+}
+
+export async function archiveGraph(graphId: string): Promise<GraphMeta> {
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<GraphMeta>
+}
+
 export async function fetchGraphMeta(graphId = DEFAULT_GRAPH_ID): Promise<GraphMeta> {
   const res = await fetch(`${API_BASE}/api/graphs/${graphId}/meta`, {
     headers: { ...authHeaders() },
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<GraphMeta>
+}
+
+export async function fetchGraphMembers(graphId: string): Promise<GraphMember[]> {
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/members`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) {
+    const message = await apiErrorMessage(res)
+    if (res.status === 404) {
+      throw new Error(`成员接口不可用或图不存在：${message}`)
+    }
+    throw new Error(message)
+  }
+  return res.json() as Promise<GraphMember[]>
+}
+
+export async function upsertGraphMember(
+  graphId: string,
+  body: GraphMemberUpsertBody,
+): Promise<GraphMember> {
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/members`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return res.json() as Promise<GraphMember>
+}
+
+export async function removeGraphMember(graphId: string, userId: string): Promise<GraphMember> {
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/members/${userId}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return res.json() as Promise<GraphMember>
 }
 
 export async function fetchGraphHistory(

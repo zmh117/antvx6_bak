@@ -5,6 +5,7 @@ export const graphKeys = {
   lists: () => [...graphKeys.all, 'list'] as const,
   list: () => [...graphKeys.lists()] as const,
   detail: (graphId = DEFAULT_GRAPH_ID) => [...graphKeys.all, graphId, 'detail'] as const,
+  members: (graphId = DEFAULT_GRAPH_ID) => [...graphKeys.all, graphId, 'members'] as const,
   histories: (graphId = DEFAULT_GRAPH_ID) => [...graphKeys.all, graphId, 'history'] as const,
   history: (graphId = DEFAULT_GRAPH_ID, limit = 100) =>
     [...graphKeys.histories(graphId), limit] as const,
