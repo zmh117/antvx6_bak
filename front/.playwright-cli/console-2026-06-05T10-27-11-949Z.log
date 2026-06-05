@@ -1,6 +1,0 @@
-[     126ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-wkNwFUcV.js?v=7eceeded:14337
-[     193ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/favicon.ico:0
-[   76432ms] [ERROR] [vite] SyntaxError: The requested module '/src/components/ui/combobox.tsx?t=1780655307234' does not provide an export named 'isComboboxPortalElement' @ http://localhost:5173/@vite/client:904
-[   76432ms] [ERROR] [vite] Failed to reload /src/features/er-diagram-list/ErDiagramListPage.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:904
-[ 1448180ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/src/components/ui/combobox.tsx?t=1780656680125:0
-[ 1448180ms] [ERROR] [vite] Failed to reload /src/components/ui/combobox.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:904
