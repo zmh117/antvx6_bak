@@ -183,6 +183,7 @@ class GraphMemberResponse(BaseModel):
     display_name: str
     role: GraphRole
     created_at: datetime
+    is_creator: bool = False
 
 
 class SyncResponse(BaseModel):

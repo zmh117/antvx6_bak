@@ -114,15 +114,18 @@ def _member_response(row: dict) -> GraphMemberResponse:
         display_name=row["display_name"],
         role=row["role"],
         created_at=row["created_at"],
+        is_creator=bool(row.get("is_creator")),
     )
 
 
 def _fetch_graph_member(cur, graph_id: UUID, user_id: UUID) -> GraphMemberResponse:
     cur.execute(
         """
-        SELECT m.user_id, u.email, u.display_name, m.role, m.created_at
+        SELECT m.user_id, u.email, u.display_name, m.role, m.created_at,
+               (g.created_by = m.user_id::text) AS is_creator
         FROM er_graph_member m
         JOIN app_user u ON u.id = m.user_id
+        JOIN er_graph g ON g.id = m.graph_id
         WHERE m.graph_id = %s AND m.user_id = %s
         """,
         (graph_id, user_id),
@@ -279,17 +282,13 @@ def list_graph_members(
             _ensure_active_graph(cur, graph_id)
             cur.execute(
                 """
-                SELECT m.user_id, u.email, u.display_name, m.role, m.created_at
+                SELECT m.user_id, u.email, u.display_name, m.role, m.created_at,
+                       (g.created_by = m.user_id::text) AS is_creator
                 FROM er_graph_member m
                 JOIN app_user u ON u.id = m.user_id
+                JOIN er_graph g ON g.id = m.graph_id
                 WHERE m.graph_id = %s
-                ORDER BY
-                    CASE m.role
-                        WHEN 'owner' THEN 1
-                        WHEN 'editor' THEN 2
-                        ELSE 3
-                    END,
-                    lower(u.email)
+                ORDER BY m.created_at ASC, lower(u.email)
                 """,
                 (graph_id,),
             )
@@ -319,6 +318,22 @@ def upsert_graph_member(
             if not target:
                 raise HTTPException(status_code=404, detail="active user not found")
             target_user_id = target["id"]
+            cur.execute(
+                """
+                SELECT created_by
+                FROM er_graph
+                WHERE id = %s AND status <> 'archived'
+                """,
+                (graph_id,),
+            )
+            graph_row = cur.fetchone()
+            if not graph_row:
+                raise HTTPException(status_code=404, detail=f"graph not found: {graph_id}")
+            if graph_row["created_by"] == str(target_user_id) and body.role != "owner":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="graph creator must remain owner",
+                )
             cur.execute(
                 """
                 SELECT role
@@ -361,6 +376,11 @@ def remove_graph_member(
             ensure_graph_role(cur, graph_id, user.id, "owner")
             _ensure_active_graph(cur, graph_id)
             member = _fetch_graph_member(cur, graph_id, member_user_id)
+            if member.is_creator:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="graph creator cannot be removed",
+                )
             if member.role == "owner" and _owner_count(cur, graph_id) <= 1:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,

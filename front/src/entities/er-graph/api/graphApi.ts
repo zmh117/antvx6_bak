@@ -120,6 +120,7 @@ export type GraphMember = {
   display_name: string
   role: GraphRole
   created_at: string
+  is_creator?: boolean
 }
 
 export type GraphMemberUpsertBody = {

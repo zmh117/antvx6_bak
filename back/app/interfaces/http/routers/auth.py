@@ -81,3 +81,41 @@ def login(body: LoginRequest) -> AuthResponse:
 @router.get("/me", response_model=UserResponse)
 def me(user: AuthenticatedUser = Depends(get_current_user_from_header)) -> UserResponse:
     return _user_response(user)
+
+
+@router.get("/users", response_model=list[UserResponse])
+def list_active_users(
+    q: str = "",
+    _user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> list[UserResponse]:
+    query = q.strip().lower()
+    like = f"%{query}%"
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if query:
+                cur.execute(
+                    """
+                    SELECT id, email, display_name
+                    FROM app_user
+                    WHERE status = 'active'
+                      AND (lower(email) LIKE %s OR lower(display_name) LIKE %s)
+                    ORDER BY lower(email)
+                    LIMIT 30
+                    """,
+                    (like, like),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, email, display_name
+                    FROM app_user
+                    WHERE status = 'active'
+                    ORDER BY lower(email)
+                    LIMIT 30
+                    """,
+                )
+            rows = cur.fetchall()
+    return [
+        UserResponse(id=row["id"], email=row["email"], display_name=row["display_name"])
+        for row in rows
+    ]

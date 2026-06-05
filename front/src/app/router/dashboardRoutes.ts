@@ -34,6 +34,12 @@ export function erDiagramEditPath(graphId: string) {
   return `/dashboard/er-diagrams/${encodeURIComponent(graphId)}/edit`
 }
 
+export function dashboardPathWithSearch(path: string, search?: URLSearchParams | string) {
+  if (!search) return path
+  const query = typeof search === 'string' ? search.replace(/^\?/, '') : search.toString()
+  return query ? `${path}?${query}` : path
+}
+
 export function useDashboardRoute() {
   const getRoute = useCallback(() => parseDashboardRoute(window.location.pathname), [])
   const [route, setRoute] = useState<DashboardRoute>(() => getRoute())
@@ -52,9 +58,10 @@ export function useDashboardRoute() {
     }
   }, [getRoute])
 
-  const navigate = useCallback((path: string) => {
-    if (window.location.pathname === path) return
-    window.history.pushState(null, '', path)
+  const navigate = useCallback((path: string, search?: URLSearchParams | string) => {
+    const nextPath = dashboardPathWithSearch(path, search)
+    if (`${window.location.pathname}${window.location.search}` === nextPath) return
+    window.history.pushState(null, '', nextPath)
     window.dispatchEvent(new Event(NAVIGATION_EVENT))
   }, [])
 

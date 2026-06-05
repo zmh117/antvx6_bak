@@ -1,16 +1,30 @@
-import type { FormEvent } from 'react'
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  createColumnHelper,
+  getCoreRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  type PaginationState,
+  type SortingState,
+  useReactTable,
+} from '@tanstack/react-table'
+import { useForm } from '@tanstack/react-form'
+import { useQuery } from '@tanstack/react-query'
 import {
   AlertCircle,
+  ArrowUpDown,
   Database,
   Edit3,
   ExternalLink,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Trash2,
   UserPlus,
   Users,
 } from 'lucide-react'
+import * as z from 'zod'
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,10 +35,52 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
+} from '@/components/ui/combobox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { fetchActiveUsers, type CurrentUser } from '@/entities/auth'
 import {
   useArchiveGraphMutation,
   useCreateGraphMutation,
@@ -38,6 +94,8 @@ import {
   type GraphRole,
 } from '@/entities/er-graph/api'
 import { formatDateTime } from '@/shared/lib/date'
+import { useUrlSearchState } from '@/shared/lib/useUrlSearchState'
+import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
 
 const statusText: Record<string, string> = {
   active: '使用中',
@@ -58,16 +116,35 @@ const roleOptions: Array<{ value: GraphRole; label: string }> = [
   { value: 'owner', label: 'Owner 可管理' },
 ]
 
-const selectClassName =
-  'h-8 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50'
+const graphPageSizes = [10, 20, 50]
+const graphColumnHelper = createColumnHelper<GraphMeta>()
+const memberColumnHelper = createColumnHelper<GraphMember>()
+
+export type GraphListFilters = {
+  q?: string
+  domain?: string
+  role?: GraphRole | 'all'
+  status?: string
+  page?: number
+  pageSize?: number
+  sort?: string
+}
 
 type GraphFormMode = 'create' | 'edit'
+type GraphMetaFormValues = z.input<typeof graphMetaFormSchema>
+type GraphMetaFormSubmitValues = z.output<typeof graphMetaFormSchema>
+type GraphMemberFormSubmitValues = z.output<typeof graphMemberFormSchema>
 
-type GraphFormValues = {
-  name: string
-  businessDomain: string
-  description: string
-}
+const graphMetaFormSchema = z.object({
+  name: z.string().trim().min(1, '请输入名称').max(120, '名称不能超过 120 个字符'),
+  businessDomain: z.string().trim().max(80, '业务域不能超过 80 个字符').optional(),
+  description: z.string().trim().max(500, '描述不能超过 500 个字符').optional(),
+})
+
+const graphMemberFormSchema = z.object({
+  email: z.string().trim().toLowerCase().email('请输入有效邮箱'),
+  role: z.enum(['owner', 'editor', 'viewer']),
+})
 
 function statusLabel(status: string) {
   return statusText[status] ?? status
@@ -75,10 +152,6 @@ function statusLabel(status: string) {
 
 function effectiveGraphRole(graph: GraphMeta): GraphRole {
   return graph.current_user_role ?? 'owner'
-}
-
-function roleLabel(graph: GraphMeta) {
-  return roleText[effectiveGraphRole(graph)]
 }
 
 function canEditGraph(graph: GraphMeta) {
@@ -90,7 +163,7 @@ function canManageGraph(graph: GraphMeta) {
   return effectiveGraphRole(graph) === 'owner'
 }
 
-function defaultCreateValues(): GraphFormValues {
+function defaultCreateValues(): GraphMetaFormValues {
   return {
     name: `新建 ER 图 ${formatDateTime(new Date().toISOString())}`,
     businessDomain: '默认域',
@@ -98,7 +171,7 @@ function defaultCreateValues(): GraphFormValues {
   }
 }
 
-function valuesFromGraph(graph: GraphMeta): GraphFormValues {
+function valuesFromGraph(graph: GraphMeta): GraphMetaFormValues {
   return {
     name: graph.name,
     businessDomain: graph.business_domain ?? '',
@@ -106,92 +179,202 @@ function valuesFromGraph(graph: GraphMeta): GraphFormValues {
   }
 }
 
-function graphBodyFromValues(values: GraphFormValues) {
+function graphBodyFromValues(values: GraphMetaFormSubmitValues) {
   return {
-    name: values.name.trim(),
-    business_domain: values.businessDomain.trim() || null,
-    description: values.description.trim() || null,
+    name: values.name,
+    business_domain: values.businessDomain || null,
+    description: values.description || null,
   }
 }
 
-function GraphFormDialog({
+function parsePositiveInteger(value: string | null, fallback: number) {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parseGraphFilters(params: URLSearchParams): GraphListFilters {
+  const role = params.get('role')
+  return {
+    q: params.get('q') ?? '',
+    domain: params.get('domain') ?? 'all',
+    role: role === 'owner' || role === 'editor' || role === 'viewer' ? role : 'all',
+    status: params.get('status') ?? 'all',
+    page: parsePositiveInteger(params.get('page'), 1),
+    pageSize: graphPageSizes.includes(parsePositiveInteger(params.get('pageSize'), 10))
+      ? parsePositiveInteger(params.get('pageSize'), 10)
+      : 10,
+    sort: params.get('sort') ?? 'updated_at.desc',
+  }
+}
+
+function serializeGraphFilters(filters: GraphListFilters) {
+  const params = new URLSearchParams()
+  if (filters.q?.trim()) params.set('q', filters.q.trim())
+  if (filters.domain && filters.domain !== 'all') params.set('domain', filters.domain)
+  if (filters.role && filters.role !== 'all') params.set('role', filters.role)
+  if (filters.status && filters.status !== 'all') params.set('status', filters.status)
+  if ((filters.page ?? 1) > 1) params.set('page', String(filters.page))
+  if ((filters.pageSize ?? 10) !== 10) params.set('pageSize', String(filters.pageSize))
+  if (filters.sort && filters.sort !== 'updated_at.desc') params.set('sort', filters.sort)
+  return params
+}
+
+function sortingFromParam(sort?: string): SortingState {
+  const [id, direction] = (sort ?? 'updated_at.desc').split('.')
+  if (!id) return [{ id: 'updated_at', desc: true }]
+  return [{ id, desc: direction !== 'asc' }]
+}
+
+function sortingToParam(sorting: SortingState) {
+  const first = sorting[0]
+  return first ? `${first.id}.${first.desc ? 'desc' : 'asc'}` : 'updated_at.desc'
+}
+
+function getSearchText(graph: GraphMeta) {
+  return [
+    graph.name,
+    graph.description,
+    graph.id,
+    graph.business_domain,
+    graph.status,
+    effectiveGraphRole(graph),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase()
+}
+
+function HeaderSortButton({
+  label,
+  onClick,
+}: {
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <Button type="button" variant="ghost" size="xs" className="-ml-2" onClick={onClick}>
+      {label}
+      <ArrowUpDown className="size-3.5" />
+    </Button>
+  )
+}
+
+function GraphMetaDialog({
+  initialValues,
   mode,
   onClose,
   onSubmit,
   pending,
-  values,
-  setValues,
 }: {
+  initialValues: GraphMetaFormValues
   mode: GraphFormMode
   onClose: () => void
-  onSubmit: () => Promise<void>
+  onSubmit: (values: GraphMetaFormSubmitValues) => Promise<void>
   pending: boolean
-  values: GraphFormValues
-  setValues: (values: GraphFormValues) => void
 }) {
+  const form = useForm({
+    defaultValues: initialValues,
+    validators: {
+      onSubmit: graphMetaFormSchema,
+    },
+    onSubmit: async ({ value }) => {
+      await onSubmit(graphMetaFormSchema.parse(value))
+    },
+  })
   const title = mode === 'create' ? '新增画布' : '编辑画布信息'
   const submitText = mode === 'create' ? '创建并打开' : '保存'
-  const disabled = pending || !values.name.trim()
-
-  const onFormSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (disabled) return
-    await onSubmit()
-  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-      <form
-        className="grid w-full max-w-lg gap-4 rounded-lg border border-border bg-background p-5 shadow-lg"
-        onSubmit={onFormSubmit}
-      >
-        <div className="space-y-1">
-          <h3 className="text-base font-semibold">{title}</h3>
-          <p className="text-sm text-muted-foreground">维护 ER 图的业务元数据。</p>
-        </div>
-
-        <div className="grid gap-2">
-          <Label htmlFor="graph-name">名称</Label>
-          <Input
-            id="graph-name"
-            value={values.name}
-            onChange={(event) => setValues({ ...values, name: event.target.value })}
-            autoFocus
-            required
-          />
-        </div>
-
-        <div className="grid gap-2">
-          <Label htmlFor="graph-domain">业务域</Label>
-          <Input
-            id="graph-domain"
-            value={values.businessDomain}
-            onChange={(event) => setValues({ ...values, businessDomain: event.target.value })}
-            placeholder="例如：订单域"
-          />
-        </div>
-
-        <div className="grid gap-2">
-          <Label htmlFor="graph-description">描述</Label>
-          <Textarea
-            id="graph-description"
-            className="min-h-24 resize-none"
-            value={values.description}
-            onChange={(event) => setValues({ ...values, description: event.target.value })}
-            placeholder="说明这张 ER 图覆盖的业务范围"
-          />
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
-            取消
-          </Button>
-          <Button type="submit" disabled={disabled}>
-            {pending ? '处理中...' : submitText}
-          </Button>
-        </div>
-      </form>
-    </div>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>维护 ER 图的业务元数据。</DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
+          <FieldGroup>
+            <form.Field
+              name="name"
+              children={(field) => {
+                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={isInvalid}>
+                    <FieldLabel htmlFor={field.name}>名称</FieldLabel>
+                    <Input
+                      id={field.name}
+                      name={field.name}
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      aria-invalid={isInvalid}
+                      autoFocus
+                    />
+                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                  </Field>
+                )
+              }}
+            />
+            <form.Field
+              name="businessDomain"
+              children={(field) => {
+                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={isInvalid}>
+                    <FieldLabel htmlFor={field.name}>业务域</FieldLabel>
+                    <Input
+                      id={field.name}
+                      name={field.name}
+                      value={field.state.value ?? ''}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      aria-invalid={isInvalid}
+                      placeholder="例如：订单域"
+                    />
+                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                  </Field>
+                )
+              }}
+            />
+            <form.Field
+              name="description"
+              children={(field) => {
+                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={isInvalid}>
+                    <FieldLabel htmlFor={field.name}>描述</FieldLabel>
+                    <Textarea
+                      id={field.name}
+                      name={field.name}
+                      className="min-h-24 resize-none"
+                      value={field.state.value ?? ''}
+                      onBlur={field.handleBlur}
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      aria-invalid={isInvalid}
+                      placeholder="说明这张 ER 图覆盖的业务范围"
+                    />
+                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                  </Field>
+                )
+              }}
+            />
+          </FieldGroup>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+              取消
+            </Button>
+            <Button type="submit" disabled={pending}>
+              {pending ? '处理中...' : submitText}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -211,211 +394,258 @@ function GraphMembersDialog({
   loading: boolean
   pending: boolean
   onClose: () => void
-  onUpsertMember: (email: string, role: GraphRole) => Promise<void>
+  onUpsertMember: (values: GraphMemberFormSubmitValues) => Promise<void>
   onRemoveMember: (member: GraphMember) => Promise<void>
 }) {
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState<GraphRole>('viewer')
-  const ownerCount = members.filter((member) => member.role === 'owner').length
-  const disabled = pending || !email.trim()
-
-  const submitMember = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (disabled) return
-    await onUpsertMember(email, role)
-    setEmail('')
-    setRole('viewer')
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-black/50 px-4 py-8">
-      <div className="grid w-full max-w-3xl gap-4 rounded-lg border border-border bg-background p-5 shadow-lg">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0 space-y-1">
-            <h3 className="text-base font-semibold">图成员 / 分享</h3>
-            <p className="truncate text-sm text-muted-foreground">{graph.name}</p>
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>
-            关闭
-          </Button>
-        </div>
-
-        {error ? (
-          <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            <AlertCircle className="size-4" />
-            {error instanceof Error ? error.message : '成员操作失败'}
-          </div>
-        ) : null}
-
-        <form
-          className="grid grid-cols-1 items-end gap-2 md:grid-cols-[minmax(220px,1fr)_150px_auto]"
-          onSubmit={submitMember}
-        >
-          <div className="grid gap-2">
-            <Label htmlFor="member-email">用户邮箱</Label>
-            <Input
-              id="member-email"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="name@example.com"
-              disabled={pending}
-              required
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="member-role">角色</Label>
-            <select
-              id="member-role"
-              className={selectClassName}
-              value={role}
-              disabled={pending}
-              onChange={(event) => setRole(event.target.value as GraphRole)}
-            >
-              {roleOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button type="submit" disabled={disabled}>
-            <UserPlus className="size-4" />
-            添加/更新
-          </Button>
-        </form>
-
-        <div className="overflow-x-auto rounded-md border border-border">
-          <div className="min-w-[560px]">
-            <div className="grid h-9 grid-cols-[minmax(220px,1fr)_150px_170px] items-center gap-3 border-b border-border bg-muted/50 px-3 text-xs font-medium text-muted-foreground">
-              <div>成员</div>
-              <div>角色</div>
-              <div className="text-right">操作</div>
-            </div>
-            {loading ? (
-              <div className="px-3 py-6 text-sm text-muted-foreground">加载成员中...</div>
-            ) : members.length ? (
-              members.map((member) => {
-                const isLastOwner = member.role === 'owner' && ownerCount <= 1
-                return (
-                  <div
-                    key={member.user_id}
-                    className="grid min-h-12 grid-cols-[minmax(220px,1fr)_150px_170px] items-center gap-3 border-b border-border px-3 py-2 text-sm last:border-b-0"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{member.display_name}</div>
-                      <div className="truncate text-xs text-muted-foreground">{member.email}</div>
-                    </div>
-                    <select
-                      className={selectClassName}
-                      value={member.role}
-                      disabled={pending || isLastOwner}
-                      onChange={(event) => {
-                        void onUpsertMember(member.email, event.target.value as GraphRole)
-                      }}
-                    >
-                      {roleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        disabled={pending || isLastOwner}
-                        onClick={() => {
-                          void onRemoveMember(member)
-                        }}
-                      >
-                        <Trash2 className="size-3.5" />
-                        移除
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })
-            ) : (
-              <div className="px-3 py-6 text-sm text-muted-foreground">暂无成员</div>
-            )}
-          </div>
-        </div>
-
-        <p className="text-xs text-muted-foreground">
-          最后一个 Owner 不能被降级或移除；只有已注册且启用的用户可以加入。
-        </p>
-      </div>
-    </div>
+  const [userQuery, setUserQuery] = useState('')
+  const activeUsersQuery = useQuery({
+    queryKey: ['auth', 'active-users', userQuery.trim()],
+    queryFn: () => fetchActiveUsers(userQuery),
+  })
+  const form = useForm({
+    defaultValues: {
+      email: '',
+      role: 'viewer' as GraphRole,
+    },
+    validators: {
+      onSubmit: graphMemberFormSchema,
+    },
+    onSubmit: async ({ value }) => {
+      await onUpsertMember(graphMemberFormSchema.parse(value))
+      form.reset()
+    },
+  })
+  const sortedMembers = useMemo(
+    () =>
+      [...members].sort((a, b) => {
+        const byCreatedAt = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        return byCreatedAt || a.email.localeCompare(b.email)
+      }),
+    [members],
   )
-}
-
-function GraphRow({
-  graph,
-  onArchiveGraph,
-  onEditGraphMeta,
-  onOpenGraph,
-  onShareGraph,
-}: {
-  graph: GraphMeta
-  onArchiveGraph: (graph: GraphMeta) => void
-  onEditGraphMeta: (graph: GraphMeta) => void
-  onOpenGraph: (graphId: string) => void
-  onShareGraph: (graph: GraphMeta) => void
-}) {
-  const editable = canEditGraph(graph)
-  const manageable = canManageGraph(graph)
+  const ownerCount = sortedMembers.filter((member) => member.role === 'owner').length
+  const selectedUser = useMemo(() => {
+    const email = form.state.values.email
+    return (
+      (activeUsersQuery.data ?? []).find((activeUser) => activeUser.email === email) ??
+      (email
+        ? ({
+            id: email,
+            email,
+            display_name: email,
+          } satisfies CurrentUser)
+        : null)
+    )
+  }, [activeUsersQuery.data, form.state.values.email])
+  const columns = useMemo(
+    () => [
+      memberColumnHelper.accessor('display_name', {
+        header: '成员',
+        size: 260,
+        cell: ({ row }) => (
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-medium">{row.original.display_name}</span>
+              {row.original.is_creator ? <Badge variant="secondary">创建者</Badge> : null}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">{row.original.email}</div>
+          </div>
+        ),
+      }),
+      memberColumnHelper.accessor('role', {
+        header: '角色',
+        size: 180,
+        cell: ({ row }) => {
+          const member = row.original
+          const isLastOwner = member.role === 'owner' && ownerCount <= 1
+          const locked = member.is_creator || isLastOwner
+          return (
+            <Select
+              value={member.role}
+              disabled={pending || locked}
+              onValueChange={(role) => {
+                void onUpsertMember({ email: member.email, role: role as GraphRole })
+              }}
+            >
+              <SelectTrigger aria-label="成员角色">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {roleOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          )
+        },
+      }),
+      memberColumnHelper.display({
+        id: 'actions',
+        header: () => <div className="text-right">操作</div>,
+        size: 120,
+        cell: ({ row }) => {
+          const member = row.original
+          const isLastOwner = member.role === 'owner' && ownerCount <= 1
+          const locked = member.is_creator || isLastOwner
+          return (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                disabled={pending || locked}
+                onClick={() => {
+                  void onRemoveMember(member)
+                }}
+              >
+                <Trash2 className="size-3.5" />
+                移除
+              </Button>
+            </div>
+          )
+        },
+      }),
+    ],
+    [onRemoveMember, onUpsertMember, ownerCount, pending],
+  )
+  const table = useReactTable({
+    data: sortedMembers,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  })
 
   return (
-    <div className="grid min-h-14 grid-cols-[minmax(220px,1.5fr)_minmax(120px,0.8fr)_90px_90px_130px_120px_260px] items-center gap-3 border-b border-border px-4 py-2 text-sm last:border-b-0">
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
-          <Database className="size-4" />
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] overflow-hidden sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>图成员 / 分享</DialogTitle>
+          <DialogDescription className="truncate">{graph.name}</DialogDescription>
+        </DialogHeader>
+
+        <div className="grid min-h-0 gap-4 overflow-auto pr-1">
+          {error ? (
+            <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="size-4" />
+              {error instanceof Error ? error.message : '成员操作失败'}
+            </div>
+          ) : null}
+
+          <form
+            className="grid grid-cols-1 items-end gap-3 md:grid-cols-[minmax(220px,1fr)_170px_auto]"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void form.handleSubmit()
+            }}
+          >
+            <form.Field
+              name="email"
+              children={(field) => {
+                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={isInvalid}>
+                    <FieldLabel htmlFor={field.name}>用户邮箱</FieldLabel>
+                    <Combobox
+                      items={activeUsersQuery.data ?? []}
+                      value={selectedUser}
+                      queryValue={userQuery}
+                      onQueryChange={setUserQuery}
+                      getItemLabel={(user) => user.email}
+                      getItemValue={(user) => user.id}
+                      onValueChange={(user) => field.handleChange(user.email)}
+                    >
+                      <ComboboxTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-between font-normal"
+                            disabled={pending}
+                            aria-invalid={isInvalid}
+                          >
+                            <ComboboxValue placeholder="选择启用用户" />
+                          </Button>
+                        }
+                      />
+                      <ComboboxContent side="bottom">
+                        <ComboboxInput
+                          showTrigger={false}
+                          placeholder="搜索邮箱或昵称"
+                          onBlur={field.handleBlur}
+                        />
+                        <ComboboxList<CurrentUser>
+                          empty="未找到启用用户"
+                          getSearchText={(user) => `${user.email} ${user.display_name}`}
+                          isLoading={activeUsersQuery.isFetching}
+                          loading="搜索中..."
+                        >
+                          {(user) => (
+                            <ComboboxItem key={user.id} value={user}>
+                              <span className="grid min-w-0">
+                                <span className="truncate">{user.email}</span>
+                                <span className="truncate text-xs text-muted-foreground">
+                                  {user.display_name}
+                                </span>
+                              </span>
+                            </ComboboxItem>
+                          )}
+                        </ComboboxList>
+                      </ComboboxContent>
+                    </Combobox>
+                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                  </Field>
+                )
+              }}
+            />
+            <form.Field
+              name="role"
+              children={(field) => (
+                <Field>
+                  <FieldLabel htmlFor={field.name}>角色</FieldLabel>
+                  <Select
+                    value={field.state.value}
+                    disabled={pending}
+                    onValueChange={(value) => field.handleChange(value as GraphRole)}
+                  >
+                    <SelectTrigger id={field.name}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {roleOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            />
+            <Button type="submit" disabled={pending}>
+              <UserPlus className="size-4" />
+              添加/更新
+            </Button>
+          </form>
+
+          <DataTable
+            table={table}
+            columnsLength={columns.length}
+            loading={loading}
+            minWidth={560}
+            emptyTitle="暂无成员"
+          />
+
+          <FieldDescription>
+            图创建者固定保留 Owner，不能降级或移除；成员按加入时间从早到晚排列。
+          </FieldDescription>
         </div>
-        <div className="min-w-0">
-          <div className="truncate font-medium">{graph.name}</div>
-          <div className="truncate text-xs text-muted-foreground">{graph.description || graph.id}</div>
-        </div>
-      </div>
-      <div className="truncate text-muted-foreground">{graph.business_domain || '默认域'}</div>
-      <div className="tabular-nums">{graph.table_count ?? 0}</div>
-      <div className="tabular-nums">{graph.relation_count ?? 0}</div>
-      <div>
-        <div className="flex flex-wrap gap-1">
-          <span className="inline-flex h-6 items-center rounded-md border border-border px-2 text-xs">
-            {statusLabel(graph.status)}
-          </span>
-          <span className="inline-flex h-6 items-center rounded-md border border-border bg-muted/60 px-2 text-xs">
-            {roleLabel(graph)}
-          </span>
-        </div>
-      </div>
-      <div className="text-xs text-muted-foreground">{formatDateTime(graph.updated_at)}</div>
-      <div className="flex justify-end gap-1">
-        <Button size="xs" onClick={() => onOpenGraph(graph.id)}>
-          <ExternalLink className="size-3.5" />
-          打开
-        </Button>
-        {editable ? (
-          <Button size="xs" variant="outline" onClick={() => onEditGraphMeta(graph)}>
-            <Edit3 className="size-3.5" />
-            编辑
-          </Button>
-        ) : null}
-        {manageable ? (
-          <Button size="xs" variant="outline" onClick={() => onShareGraph(graph)}>
-            <Users className="size-3.5" />
-            分享
-          </Button>
-        ) : null}
-        {manageable ? (
-          <Button size="xs" variant="ghost" onClick={() => onArchiveGraph(graph)}>
-            <Trash2 className="size-3.5" />
-            删除
-          </Button>
-        ) : null}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -426,8 +656,11 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
   const archiveGraphMutation = useArchiveGraphMutation()
   const upsertMemberMutation = useUpsertGraphMemberMutation()
   const removeMemberMutation = useRemoveGraphMemberMutation()
+  const [filters, setFilters] = useUrlSearchState(parseGraphFilters, serializeGraphFilters)
+  const [sorting, setSorting] = useState<SortingState>(() => sortingFromParam(filters.sort))
   const [formMode, setFormMode] = useState<GraphFormMode | null>(null)
-  const [formValues, setFormValues] = useState<GraphFormValues>(() => defaultCreateValues())
+  const [formInitialValues, setFormInitialValues] =
+    useState<GraphMetaFormValues>(() => defaultCreateValues())
   const [editingGraph, setEditingGraph] = useState<GraphMeta | null>(null)
   const [archiveTarget, setArchiveTarget] = useState<GraphMeta | null>(null)
   const [sharingGraph, setSharingGraph] = useState<GraphMeta | null>(null)
@@ -441,26 +674,229 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
     archiveGraphMutation.error
   const memberError = membersQuery.error ?? upsertMemberMutation.error ?? removeMemberMutation.error
 
-  const openCreateDialog = () => {
+  useEffect(() => {
+    setSorting(sortingFromParam(filters.sort))
+  }, [filters.sort])
+
+  const graphs = graphsQuery.data ?? []
+  const domainOptions = useMemo(() => {
+    const domains = new Set<string>()
+    graphs.forEach((graph) => {
+      if (graph.business_domain?.trim()) domains.add(graph.business_domain.trim())
+    })
+    return Array.from(domains).sort((a, b) => a.localeCompare(b))
+  }, [graphs])
+  const statusOptions = useMemo(() => {
+    const statuses = new Set<string>()
+    graphs.forEach((graph) => statuses.add(graph.status))
+    return Array.from(statuses).sort((a, b) => a.localeCompare(b))
+  }, [graphs])
+  const filteredGraphs = useMemo(() => {
+    const query = filters.q?.trim().toLocaleLowerCase() ?? ''
+    return graphs.filter((graph) => {
+      if (query && !getSearchText(graph).includes(query)) return false
+      if (filters.domain && filters.domain !== 'all') {
+        if ((graph.business_domain || '默认域') !== filters.domain) return false
+      }
+      if (filters.role && filters.role !== 'all' && effectiveGraphRole(graph) !== filters.role) {
+        return false
+      }
+      if (filters.status && filters.status !== 'all' && graph.status !== filters.status) return false
+      return true
+    })
+  }, [filters.domain, filters.q, filters.role, filters.status, graphs])
+  const pagination = useMemo<PaginationState>(
+    () => ({
+      pageIndex: Math.max((filters.page ?? 1) - 1, 0),
+      pageSize: filters.pageSize ?? 10,
+    }),
+    [filters.page, filters.pageSize],
+  )
+  const columns = useMemo(
+    () => [
+      graphColumnHelper.accessor('name', {
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="图名称"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 300,
+        cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
+              <Database className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate font-medium">{row.original.name}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {row.original.description || row.original.id}
+              </div>
+            </div>
+          </div>
+        ),
+      }),
+      graphColumnHelper.accessor((graph) => graph.business_domain || '默认域', {
+        id: 'business_domain',
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="业务域"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 160,
+        cell: ({ getValue }) => (
+          <span className="block truncate text-muted-foreground">{getValue()}</span>
+        ),
+      }),
+      graphColumnHelper.accessor((graph) => graph.table_count ?? 0, {
+        id: 'table_count',
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="表"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 90,
+        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+      }),
+      graphColumnHelper.accessor((graph) => graph.relation_count ?? 0, {
+        id: 'relation_count',
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="关系"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 90,
+        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+      }),
+      graphColumnHelper.accessor('status', {
+        header: '状态',
+        size: 160,
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            <Badge variant="outline">{statusLabel(row.original.status)}</Badge>
+            <Badge variant="secondary">{roleText[effectiveGraphRole(row.original)]}</Badge>
+          </div>
+        ),
+      }),
+      graphColumnHelper.accessor((graph) => graph.updated_at ?? '', {
+        id: 'updated_at',
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="更新时间"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 140,
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground">
+            {row.original.updated_at ? formatDateTime(row.original.updated_at) : '-'}
+          </span>
+        ),
+      }),
+      graphColumnHelper.display({
+        id: 'actions',
+        header: () => <div className="text-right">操作</div>,
+        size: 150,
+        cell: ({ row }) => {
+          const graph = row.original
+          const editable = canEditGraph(graph)
+          const manageable = canManageGraph(graph)
+          return (
+            <div className="flex justify-end gap-1">
+              <Button type="button" size="xs" onClick={() => onEditGraph(graph.id)}>
+                <ExternalLink className="size-3.5" />
+                打开
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" size="icon-xs" aria-label="更多操作">
+                    <MoreHorizontal className="size-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>操作</DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    {editable ? (
+                      <DropdownMenuItem onClick={() => openEditDialog(graph)}>
+                        <Edit3 className="size-4" />
+                        编辑信息
+                      </DropdownMenuItem>
+                    ) : null}
+                    {manageable ? (
+                      <DropdownMenuItem onClick={() => setSharingGraph(graph)}>
+                        <Users className="size-4" />
+                        分享/成员
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuGroup>
+                  {manageable ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => setArchiveTarget(graph)}
+                      >
+                        <Trash2 className="size-4" />
+                        删除
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )
+        },
+      }),
+    ],
+    [onEditGraph],
+  )
+  const table = useReactTable({
+    data: filteredGraphs,
+    columns,
+    state: {
+      sorting,
+      pagination,
+    },
+    onSortingChange: (updater) => {
+      const nextSorting = typeof updater === 'function' ? updater(sorting) : updater
+      setSorting(nextSorting)
+      setFilters({ sort: sortingToParam(nextSorting), page: 1 })
+    },
+    onPaginationChange: (updater) => {
+      const nextPagination = typeof updater === 'function' ? updater(pagination) : updater
+      setFilters({ page: nextPagination.pageIndex + 1, pageSize: nextPagination.pageSize })
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+  })
+
+  const formPending = createGraphMutation.isPending || updateGraphMutation.isPending
+  const memberPending = upsertMemberMutation.isPending || removeMemberMutation.isPending
+
+  function openCreateDialog() {
     setEditingGraph(null)
-    setFormValues(defaultCreateValues())
+    setFormInitialValues(defaultCreateValues())
     setFormMode('create')
   }
 
-  const openEditDialog = (graph: GraphMeta) => {
+  function openEditDialog(graph: GraphMeta) {
     setEditingGraph(graph)
-    setFormValues(valuesFromGraph(graph))
+    setFormInitialValues(valuesFromGraph(graph))
     setFormMode('edit')
   }
 
-  const closeFormDialog = () => {
-    if (createGraphMutation.isPending || updateGraphMutation.isPending) return
+  function closeFormDialog() {
+    if (formPending) return
     setFormMode(null)
     setEditingGraph(null)
   }
 
-  const submitForm = async () => {
-    const body = graphBodyFromValues(formValues)
+  async function submitForm(values: GraphMetaFormSubmitValues) {
+    const body = graphBodyFromValues(values)
     if (formMode === 'create') {
       const created = await createGraphMutation.mutateAsync(body)
       setFormMode(null)
@@ -474,34 +910,37 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
     }
   }
 
-  const confirmArchive = async () => {
+  async function confirmArchive() {
     if (!archiveTarget) return
     await archiveGraphMutation.mutateAsync(archiveTarget.id)
     setArchiveTarget(null)
   }
 
-  const upsertMember = async (email: string, role: GraphRole) => {
-    if (!sharingGraph) return
-    await upsertMemberMutation.mutateAsync({
-      graphId: sharingGraph.id,
-      body: { email: email.trim().toLowerCase(), role },
-    })
-  }
+  const upsertMember = useCallback(
+    async (values: GraphMemberFormSubmitValues) => {
+      if (!sharingGraph) return
+      await upsertMemberMutation.mutateAsync({
+        graphId: sharingGraph.id,
+        body: values,
+      })
+    },
+    [sharingGraph, upsertMemberMutation],
+  )
 
-  const removeMember = async (member: GraphMember) => {
-    if (!sharingGraph) return
-    await removeMemberMutation.mutateAsync({
-      graphId: sharingGraph.id,
-      userId: member.user_id,
-    })
-  }
-
-  const formPending = createGraphMutation.isPending || updateGraphMutation.isPending
-  const memberPending = upsertMemberMutation.isPending || removeMemberMutation.isPending
+  const removeMember = useCallback(
+    async (member: GraphMember) => {
+      if (!sharingGraph) return
+      await removeMemberMutation.mutateAsync({
+        graphId: sharingGraph.id,
+        userId: member.user_id,
+      })
+    },
+    [removeMemberMutation, sharingGraph],
+  )
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">ER 图列表</h3>
           <p className="text-xs text-muted-foreground">按业务域管理数据结构关系</p>
@@ -530,46 +969,107 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
             {pageError instanceof Error ? pageError.message : '操作失败'}
           </div>
         ) : null}
-        <div className="min-w-[1160px] overflow-hidden rounded-md border border-border bg-card">
-          <div className="grid h-9 grid-cols-[minmax(220px,1.5fr)_minmax(120px,0.8fr)_90px_90px_130px_120px_260px] items-center gap-3 border-b border-border bg-muted/50 px-4 text-xs font-medium text-muted-foreground">
-            <div>图名称</div>
-            <div>业务域</div>
-            <div>表</div>
-            <div>关系</div>
-            <div>状态</div>
-            <div>更新时间</div>
-            <div className="text-right">操作</div>
-          </div>
-
-          {graphsQuery.isLoading ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground">加载中...</div>
-          ) : graphsQuery.error ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground">加载失败</div>
-          ) : graphsQuery.data?.length ? (
-            graphsQuery.data.map((graph) => (
-              <GraphRow
-                key={graph.id}
-                graph={graph}
-                onArchiveGraph={setArchiveTarget}
-                onEditGraphMeta={openEditDialog}
-                onOpenGraph={onEditGraph}
-                onShareGraph={setSharingGraph}
-              />
-            ))
-          ) : (
-            <div className="px-4 py-8 text-sm text-muted-foreground">暂无 ER 图</div>
-          )}
+        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(220px,1fr)_180px_150px_150px_120px]">
+          <Input
+            value={filters.q ?? ''}
+            onChange={(event) => setFilters({ q: event.target.value, page: 1 })}
+            placeholder="搜索名称、描述、ID、业务域"
+          />
+          <Select
+            value={filters.domain ?? 'all'}
+            onValueChange={(value) => setFilters({ domain: value, page: 1 })}
+          >
+            <SelectTrigger aria-label="业务域筛选">
+              <SelectValue placeholder="业务域" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部业务域</SelectItem>
+                {domainOptions.map((domain) => (
+                  <SelectItem key={domain} value={domain}>
+                    {domain}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Select
+            value={filters.role ?? 'all'}
+            onValueChange={(value) => setFilters({ role: value as GraphRole | 'all', page: 1 })}
+          >
+            <SelectTrigger aria-label="角色筛选">
+              <SelectValue placeholder="角色" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部角色</SelectItem>
+                {roleOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Select
+            value={filters.status ?? 'all'}
+            onValueChange={(value) => setFilters({ status: value, page: 1 })}
+          >
+            <SelectTrigger aria-label="状态筛选">
+              <SelectValue placeholder="状态" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部状态</SelectItem>
+                {statusOptions.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {statusLabel(status)}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Select
+            value={String(filters.pageSize ?? 10)}
+            onValueChange={(value) => setFilters({ pageSize: Number(value), page: 1 })}
+          >
+            <SelectTrigger aria-label="分页大小">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {graphPageSizes.map((pageSize) => (
+                  <SelectItem key={pageSize} value={String(pageSize)}>
+                    {pageSize} / 页
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </div>
+        <DataTable
+          table={table}
+          columnsLength={columns.length}
+          loading={graphsQuery.isLoading}
+          error={graphsQuery.error}
+          minWidth={1090}
+          emptyTitle="暂无 ER 图"
+          emptyDescription="可以新建画布，或调整筛选条件。"
+        />
+        <DataTablePagination
+          table={table}
+          label={`共 ${filteredGraphs.length} 张 ER 图，当前显示 ${table.getRowModel().rows.length} 张`}
+        />
       </div>
 
       {formMode ? (
-        <GraphFormDialog
+        <GraphMetaDialog
+          key={`${formMode}-${editingGraph?.id ?? 'new'}`}
           mode={formMode}
+          initialValues={formInitialValues}
           onClose={closeFormDialog}
           onSubmit={submitForm}
           pending={formPending}
-          values={formValues}
-          setValues={setFormValues}
         />
       ) : null}
 

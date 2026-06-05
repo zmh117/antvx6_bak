@@ -37,3 +37,14 @@ export async function fetchMe() {
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<CurrentUser>
 }
+
+export async function fetchActiveUsers(query = '') {
+  const params = new URLSearchParams()
+  if (query.trim()) params.set('q', query.trim())
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/api/auth/users${qs ? `?${qs}` : ''}`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<CurrentUser[]>
+}
