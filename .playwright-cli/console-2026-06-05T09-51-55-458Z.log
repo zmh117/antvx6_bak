@@ -1,0 +1,39 @@
+[     155ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:14337
+[     218ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/favicon.ico:0
+[  308156ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[  516928ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:14337
+[ 1006416ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:14337
+[ 1123970ms] [ERROR] Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem. @ http://localhost:5173/node_modules/.vite/deps/react.js?v=7eceeded:296
+[ 1123972ms] [ERROR] Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://react.dev/link/invalid-hook-call for tips about how to debug and fix this problem. @ http://localhost:5173/node_modules/.vite/deps/react.js?v=7eceeded:296
+[ 1124010ms] TypeError: Cannot read properties of null (reading 'useState')
+    at exports.useState (http://localhost:5173/node_modules/.vite/deps/react.js?v=7eceeded:748:30)
+    at ErDiagramListPage (http://localhost:5173/src/features/er-diagram-list/ErDiagramListPage.tsx?t=1780654238822:852:32)
+    at Object.react_stack_bottom_frame (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:12868:12)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:4213:19)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:5569:16)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:6140:20)
+    at runWithFiberInDEV (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:851:66)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:8429:92)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:8325:37)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:8309:6)
+[ 1123973ms] [WARNING] %s
+
+%s
+ An error occurred in the <ErDiagramListPage> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5173/node_modules/.vite/deps/client-D3tH5_xU.js?v=fc2eb86f:5257
+[ 1124280ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-wkNwFUcV.js?v=7eceeded:14337
+[ 1162289ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:968
+[ 1162818ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-wkNwFUcV.js?v=7eceeded:14337
+[ 1712493ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5173/src/features/er-diagram-list/ErDiagramListPage.tsx?t=1780654827943:0
+[ 1712494ms] [ERROR] [vite] Failed to reload /src/features/er-diagram-list/ErDiagramListPage.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5173/@vite/client:904
+[ 1742118ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-wkNwFUcV.js?v=7eceeded:14337
+[ 1754784ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-wkNwFUcV.js?v=7eceeded:14337
+[ 1755040ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/client-wkNwFUcV.js?v=7eceeded:14337

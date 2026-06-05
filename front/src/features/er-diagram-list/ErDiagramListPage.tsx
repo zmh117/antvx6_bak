@@ -9,7 +9,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { useForm } from '@tanstack/react-form'
-import { useQuery } from '@tanstack/react-query'
 import {
   AlertCircle,
   ArrowUpDown,
@@ -37,15 +36,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxTrigger,
-  ComboboxValue,
-} from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -80,7 +70,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { fetchActiveUsers, type CurrentUser } from '@/entities/auth'
 import {
   useArchiveGraphMutation,
   useCreateGraphMutation,
@@ -136,8 +125,16 @@ type GraphMetaFormSubmitValues = z.output<typeof graphMetaFormSchema>
 type GraphMemberFormSubmitValues = z.output<typeof graphMemberFormSchema>
 
 const graphMetaFormSchema = z.object({
-  name: z.string().trim().min(1, '请输入名称').max(120, '名称不能超过 120 个字符'),
-  businessDomain: z.string().trim().max(80, '业务域不能超过 80 个字符').optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1, '请输入名称')
+    .max(120, '名称不能超过 120 个字符'),
+  businessDomain: z
+    .string()
+    .trim()
+    .max(80, '业务域不能超过 80 个字符')
+    .optional(),
   description: z.string().trim().max(500, '描述不能超过 500 个字符').optional(),
 })
 
@@ -197,10 +194,13 @@ function parseGraphFilters(params: URLSearchParams): GraphListFilters {
   return {
     q: params.get('q') ?? '',
     domain: params.get('domain') ?? 'all',
-    role: role === 'owner' || role === 'editor' || role === 'viewer' ? role : 'all',
+    role:
+      role === 'owner' || role === 'editor' || role === 'viewer' ? role : 'all',
     status: params.get('status') ?? 'all',
     page: parsePositiveInteger(params.get('page'), 1),
-    pageSize: graphPageSizes.includes(parsePositiveInteger(params.get('pageSize'), 10))
+    pageSize: graphPageSizes.includes(
+      parsePositiveInteger(params.get('pageSize'), 10),
+    )
       ? parsePositiveInteger(params.get('pageSize'), 10)
       : 10,
     sort: params.get('sort') ?? 'updated_at.desc',
@@ -210,12 +210,16 @@ function parseGraphFilters(params: URLSearchParams): GraphListFilters {
 function serializeGraphFilters(filters: GraphListFilters) {
   const params = new URLSearchParams()
   if (filters.q?.trim()) params.set('q', filters.q.trim())
-  if (filters.domain && filters.domain !== 'all') params.set('domain', filters.domain)
+  if (filters.domain && filters.domain !== 'all')
+    params.set('domain', filters.domain)
   if (filters.role && filters.role !== 'all') params.set('role', filters.role)
-  if (filters.status && filters.status !== 'all') params.set('status', filters.status)
+  if (filters.status && filters.status !== 'all')
+    params.set('status', filters.status)
   if ((filters.page ?? 1) > 1) params.set('page', String(filters.page))
-  if ((filters.pageSize ?? 10) !== 10) params.set('pageSize', String(filters.pageSize))
-  if (filters.sort && filters.sort !== 'updated_at.desc') params.set('sort', filters.sort)
+  if ((filters.pageSize ?? 10) !== 10)
+    params.set('pageSize', String(filters.pageSize))
+  if (filters.sort && filters.sort !== 'updated_at.desc')
+    params.set('sort', filters.sort)
   return params
 }
 
@@ -227,7 +231,9 @@ function sortingFromParam(sort?: string): SortingState {
 
 function sortingToParam(sorting: SortingState) {
   const first = sorting[0]
-  return first ? `${first.id}.${first.desc ? 'desc' : 'asc'}` : 'updated_at.desc'
+  return first
+    ? `${first.id}.${first.desc ? 'desc' : 'asc'}`
+    : 'updated_at.desc'
 }
 
 function getSearchText(graph: GraphMeta) {
@@ -252,7 +258,13 @@ function HeaderSortButton({
   onClick: () => void
 }) {
   return (
-    <Button type="button" variant="ghost" size="xs" className="-ml-2" onClick={onClick}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      className="-ml-2"
+      onClick={onClick}
+    >
       {label}
       <ArrowUpDown className="size-3.5" />
     </Button>
@@ -302,7 +314,8 @@ function GraphMetaDialog({
             <form.Field
               name="name"
               children={(field) => {
-                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>名称</FieldLabel>
@@ -311,11 +324,15 @@ function GraphMetaDialog({
                       name={field.name}
                       value={field.state.value}
                       onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
                       aria-invalid={isInvalid}
                       autoFocus
                     />
-                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                    {isInvalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
                   </Field>
                 )
               }}
@@ -323,7 +340,8 @@ function GraphMetaDialog({
             <form.Field
               name="businessDomain"
               children={(field) => {
-                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>业务域</FieldLabel>
@@ -332,11 +350,15 @@ function GraphMetaDialog({
                       name={field.name}
                       value={field.state.value ?? ''}
                       onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
                       aria-invalid={isInvalid}
                       placeholder="例如：订单域"
                     />
-                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                    {isInvalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
                   </Field>
                 )
               }}
@@ -344,7 +366,8 @@ function GraphMetaDialog({
             <form.Field
               name="description"
               children={(field) => {
-                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>描述</FieldLabel>
@@ -354,18 +377,27 @@ function GraphMetaDialog({
                       className="min-h-24 resize-none"
                       value={field.state.value ?? ''}
                       onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
                       aria-invalid={isInvalid}
                       placeholder="说明这张 ER 图覆盖的业务范围"
                     />
-                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                    {isInvalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
                   </Field>
                 )
               }}
             />
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={pending}
+            >
               取消
             </Button>
             <Button type="submit" disabled={pending}>
@@ -397,11 +429,6 @@ function GraphMembersDialog({
   onUpsertMember: (values: GraphMemberFormSubmitValues) => Promise<void>
   onRemoveMember: (member: GraphMember) => Promise<void>
 }) {
-  const [userQuery, setUserQuery] = useState('')
-  const activeUsersQuery = useQuery({
-    queryKey: ['auth', 'active-users', userQuery.trim()],
-    queryFn: () => fetchActiveUsers(userQuery),
-  })
   const form = useForm({
     defaultValues: {
       email: '',
@@ -418,25 +445,15 @@ function GraphMembersDialog({
   const sortedMembers = useMemo(
     () =>
       [...members].sort((a, b) => {
-        const byCreatedAt = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        const byCreatedAt =
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
         return byCreatedAt || a.email.localeCompare(b.email)
       }),
     [members],
   )
-  const ownerCount = sortedMembers.filter((member) => member.role === 'owner').length
-  const selectedUser = useMemo(() => {
-    const email = form.state.values.email
-    return (
-      (activeUsersQuery.data ?? []).find((activeUser) => activeUser.email === email) ??
-      (email
-        ? ({
-            id: email,
-            email,
-            display_name: email,
-          } satisfies CurrentUser)
-        : null)
-    )
-  }, [activeUsersQuery.data, form.state.values.email])
+  const ownerCount = sortedMembers.filter(
+    (member) => member.role === 'owner',
+  ).length
   const columns = useMemo(
     () => [
       memberColumnHelper.accessor('display_name', {
@@ -445,10 +462,16 @@ function GraphMembersDialog({
         cell: ({ row }) => (
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-medium">{row.original.display_name}</span>
-              {row.original.is_creator ? <Badge variant="secondary">创建者</Badge> : null}
+              <span className="truncate font-medium">
+                {row.original.display_name}
+              </span>
+              {row.original.is_creator ? (
+                <Badge variant="secondary">创建者</Badge>
+              ) : null}
             </div>
-            <div className="truncate text-xs text-muted-foreground">{row.original.email}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {row.original.email}
+            </div>
           </div>
         ),
       }),
@@ -464,7 +487,10 @@ function GraphMembersDialog({
               value={member.role}
               disabled={pending || locked}
               onValueChange={(role) => {
-                void onUpsertMember({ email: member.email, role: role as GraphRole })
+                void onUpsertMember({
+                  email: member.email,
+                  role: role as GraphRole,
+                })
               }}
             >
               <SelectTrigger aria-label="成员角色">
@@ -523,7 +549,9 @@ function GraphMembersDialog({
       <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>图成员 / 分享</DialogTitle>
-          <DialogDescription className="truncate">{graph.name}</DialogDescription>
+          <DialogDescription className="truncate">
+            {graph.name}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid min-h-0 gap-4 overflow-auto pr-1">
@@ -544,58 +572,29 @@ function GraphMembersDialog({
             <form.Field
               name="email"
               children={(field) => {
-                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>用户邮箱</FieldLabel>
-                    <Combobox
-                      items={activeUsersQuery.data ?? []}
-                      value={selectedUser}
-                      queryValue={userQuery}
-                      onQueryChange={setUserQuery}
-                      getItemLabel={(user) => user.email}
-                      getItemValue={(user) => user.id}
-                      onValueChange={(user) => field.handleChange(user.email)}
-                    >
-                      <ComboboxTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="w-full justify-between font-normal"
-                            disabled={pending}
-                            aria-invalid={isInvalid}
-                          >
-                            <ComboboxValue placeholder="选择启用用户" />
-                          </Button>
-                        }
-                      />
-                      <ComboboxContent side="bottom">
-                        <ComboboxInput
-                          showTrigger={false}
-                          placeholder="搜索邮箱或昵称"
-                          onBlur={field.handleBlur}
-                        />
-                        <ComboboxList<CurrentUser>
-                          empty="未找到启用用户"
-                          getSearchText={(user) => `${user.email} ${user.display_name}`}
-                          isLoading={activeUsersQuery.isFetching}
-                          loading="搜索中..."
-                        >
-                          {(user) => (
-                            <ComboboxItem key={user.id} value={user}>
-                              <span className="grid min-w-0">
-                                <span className="truncate">{user.email}</span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  {user.display_name}
-                                </span>
-                              </span>
-                            </ComboboxItem>
-                          )}
-                        </ComboboxList>
-                      </ComboboxContent>
-                    </Combobox>
-                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                    <Input
+                      id={field.name}
+                      name={field.name}
+                      type="email"
+                      autoComplete="email"
+                      inputMode="email"
+                      placeholder="user@example.com"
+                      value={field.state.value}
+                      disabled={pending}
+                      aria-invalid={isInvalid}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                    />
+                    {isInvalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
                   </Field>
                 )
               }}
@@ -608,7 +607,9 @@ function GraphMembersDialog({
                   <Select
                     value={field.state.value}
                     disabled={pending}
-                    onValueChange={(value) => field.handleChange(value as GraphRole)}
+                    onValueChange={(value) =>
+                      field.handleChange(value as GraphRole)
+                    }
                   >
                     <SelectTrigger id={field.name}>
                       <SelectValue />
@@ -649,15 +650,24 @@ function GraphMembersDialog({
   )
 }
 
-export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: string) => void }) {
+export function ErDiagramListPage({
+  onEditGraph,
+}: {
+  onEditGraph: (graphId: string) => void
+}) {
   const graphsQuery = useGraphsQuery()
   const createGraphMutation = useCreateGraphMutation()
   const updateGraphMutation = useUpdateGraphMetaMutation()
   const archiveGraphMutation = useArchiveGraphMutation()
   const upsertMemberMutation = useUpsertGraphMemberMutation()
   const removeMemberMutation = useRemoveGraphMemberMutation()
-  const [filters, setFilters] = useUrlSearchState(parseGraphFilters, serializeGraphFilters)
-  const [sorting, setSorting] = useState<SortingState>(() => sortingFromParam(filters.sort))
+  const [filters, setFilters] = useUrlSearchState(
+    parseGraphFilters,
+    serializeGraphFilters,
+  )
+  const [sorting, setSorting] = useState<SortingState>(() =>
+    sortingFromParam(filters.sort),
+  )
   const [formMode, setFormMode] = useState<GraphFormMode | null>(null)
   const [formInitialValues, setFormInitialValues] =
     useState<GraphMetaFormValues>(() => defaultCreateValues())
@@ -672,7 +682,10 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
     createGraphMutation.error ??
     updateGraphMutation.error ??
     archiveGraphMutation.error
-  const memberError = membersQuery.error ?? upsertMemberMutation.error ?? removeMemberMutation.error
+  const memberError =
+    membersQuery.error ??
+    upsertMemberMutation.error ??
+    removeMemberMutation.error
 
   useEffect(() => {
     setSorting(sortingFromParam(filters.sort))
@@ -682,7 +695,8 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
   const domainOptions = useMemo(() => {
     const domains = new Set<string>()
     graphs.forEach((graph) => {
-      if (graph.business_domain?.trim()) domains.add(graph.business_domain.trim())
+      if (graph.business_domain?.trim())
+        domains.add(graph.business_domain.trim())
     })
     return Array.from(domains).sort((a, b) => a.localeCompare(b))
   }, [graphs])
@@ -698,10 +712,19 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
       if (filters.domain && filters.domain !== 'all') {
         if ((graph.business_domain || '默认域') !== filters.domain) return false
       }
-      if (filters.role && filters.role !== 'all' && effectiveGraphRole(graph) !== filters.role) {
+      if (
+        filters.role &&
+        filters.role !== 'all' &&
+        effectiveGraphRole(graph) !== filters.role
+      ) {
         return false
       }
-      if (filters.status && filters.status !== 'all' && graph.status !== filters.status) return false
+      if (
+        filters.status &&
+        filters.status !== 'all' &&
+        graph.status !== filters.status
+      )
+        return false
       return true
     })
   }, [filters.domain, filters.q, filters.role, filters.status, graphs])
@@ -746,7 +769,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
         ),
         size: 160,
         cell: ({ getValue }) => (
-          <span className="block truncate text-muted-foreground">{getValue()}</span>
+          <span className="block truncate text-muted-foreground">
+            {getValue()}
+          </span>
         ),
       }),
       graphColumnHelper.accessor((graph) => graph.table_count ?? 0, {
@@ -758,7 +783,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
           />
         ),
         size: 90,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       graphColumnHelper.accessor((graph) => graph.relation_count ?? 0, {
         id: 'relation_count',
@@ -769,7 +796,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
           />
         ),
         size: 90,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       graphColumnHelper.accessor('status', {
         header: '状态',
@@ -777,7 +806,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
             <Badge variant="outline">{statusLabel(row.original.status)}</Badge>
-            <Badge variant="secondary">{roleText[effectiveGraphRole(row.original)]}</Badge>
+            <Badge variant="secondary">
+              {roleText[effectiveGraphRole(row.original)]}
+            </Badge>
           </div>
         ),
       }),
@@ -792,7 +823,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
         size: 140,
         cell: ({ row }) => (
           <span className="text-xs text-muted-foreground">
-            {row.original.updated_at ? formatDateTime(row.original.updated_at) : '-'}
+            {row.original.updated_at
+              ? formatDateTime(row.original.updated_at)
+              : '-'}
           </span>
         ),
       }),
@@ -806,13 +839,22 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
           const manageable = canManageGraph(graph)
           return (
             <div className="flex justify-end gap-1">
-              <Button type="button" size="xs" onClick={() => onEditGraph(graph.id)}>
+              <Button
+                type="button"
+                size="xs"
+                onClick={() => onEditGraph(graph.id)}
+              >
                 <ExternalLink className="size-3.5" />
                 打开
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="outline" size="icon-xs" aria-label="更多操作">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-xs"
+                    aria-label="更多操作"
+                  >
                     <MoreHorizontal className="size-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -861,21 +903,28 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
       pagination,
     },
     onSortingChange: (updater) => {
-      const nextSorting = typeof updater === 'function' ? updater(sorting) : updater
+      const nextSorting =
+        typeof updater === 'function' ? updater(sorting) : updater
       setSorting(nextSorting)
       setFilters({ sort: sortingToParam(nextSorting), page: 1 })
     },
     onPaginationChange: (updater) => {
-      const nextPagination = typeof updater === 'function' ? updater(pagination) : updater
-      setFilters({ page: nextPagination.pageIndex + 1, pageSize: nextPagination.pageSize })
+      const nextPagination =
+        typeof updater === 'function' ? updater(pagination) : updater
+      setFilters({
+        page: nextPagination.pageIndex + 1,
+        pageSize: nextPagination.pageSize,
+      })
     },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
   })
 
-  const formPending = createGraphMutation.isPending || updateGraphMutation.isPending
-  const memberPending = upsertMemberMutation.isPending || removeMemberMutation.isPending
+  const formPending =
+    createGraphMutation.isPending || updateGraphMutation.isPending
+  const memberPending =
+    upsertMemberMutation.isPending || removeMemberMutation.isPending
 
   function openCreateDialog() {
     setEditingGraph(null)
@@ -943,14 +992,20 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">ER 图列表</h3>
-          <p className="text-xs text-muted-foreground">按业务域管理数据结构关系</p>
+          <p className="text-xs text-muted-foreground">
+            按业务域管理数据结构关系
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={() => graphsQuery.refetch()}
-            disabled={graphsQuery.isFetching || formPending || archiveGraphMutation.isPending}
+            disabled={
+              graphsQuery.isFetching ||
+              formPending ||
+              archiveGraphMutation.isPending
+            }
           >
             <RefreshCw className="size-4" />
             刷新
@@ -995,7 +1050,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
           </Select>
           <Select
             value={filters.role ?? 'all'}
-            onValueChange={(value) => setFilters({ role: value as GraphRole | 'all', page: 1 })}
+            onValueChange={(value) =>
+              setFilters({ role: value as GraphRole | 'all', page: 1 })
+            }
           >
             <SelectTrigger aria-label="角色筛选">
               <SelectValue placeholder="角色" />
@@ -1031,7 +1088,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
           </Select>
           <Select
             value={String(filters.pageSize ?? 10)}
-            onValueChange={(value) => setFilters({ pageSize: Number(value), page: 1 })}
+            onValueChange={(value) =>
+              setFilters({ pageSize: Number(value), page: 1 })
+            }
           >
             <SelectTrigger aria-label="分页大小">
               <SelectValue />
@@ -1088,7 +1147,10 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
         />
       ) : null}
 
-      <AlertDialog open={archiveTarget != null} onOpenChange={(open) => !open && setArchiveTarget(null)}>
+      <AlertDialog
+        open={archiveTarget != null}
+        onOpenChange={(open) => !open && setArchiveTarget(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>删除 ER 图</AlertDialogTitle>
@@ -1099,7 +1161,9 @@ export function ErDiagramListPage({ onEditGraph }: { onEditGraph: (graphId: stri
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={archiveGraphMutation.isPending}>取消</AlertDialogCancel>
+            <AlertDialogCancel disabled={archiveGraphMutation.isPending}>
+              取消
+            </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               disabled={archiveGraphMutation.isPending}
