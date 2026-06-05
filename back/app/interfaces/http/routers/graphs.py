@@ -47,10 +47,16 @@ def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header))
             cur.execute(
                 """
                 SELECT g.id, g.name, g.description, g.business_domain,
-                       g.version, g.collab_revision, g.status
+                       g.version, g.collab_revision, g.status, g.updated_at,
+                       COUNT(DISTINCT t.table_key) AS table_count,
+                       COUNT(DISTINCT r.relation_key) AS relation_count
                 FROM er_graph g
                 JOIN er_graph_member m ON m.graph_id = g.id
+                LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
+                LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
                 WHERE m.user_id = %s
+                GROUP BY g.id, g.name, g.description, g.business_domain,
+                         g.version, g.collab_revision, g.status, g.updated_at
                 ORDER BY g.name
                 """,
                 (user.id,),
@@ -65,6 +71,9 @@ def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header))
             version=r["version"],
             collab_revision=r["collab_revision"],
             status=r["status"],
+            updated_at=r["updated_at"],
+            table_count=r["table_count"] or 0,
+            relation_count=r["relation_count"] or 0,
         )
         for r in rows
     ]
@@ -94,10 +103,16 @@ def get_graph_meta(
             ensure_graph_role(cur, graph_id, user.id, "viewer")
             cur.execute(
                 """
-                SELECT id, name, description, business_domain,
-                       version, collab_revision, status
-                FROM er_graph
-                WHERE id = %s
+                SELECT g.id, g.name, g.description, g.business_domain,
+                       g.version, g.collab_revision, g.status, g.updated_at,
+                       COUNT(DISTINCT t.table_key) AS table_count,
+                       COUNT(DISTINCT r.relation_key) AS relation_count
+                FROM er_graph g
+                LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
+                LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
+                WHERE g.id = %s
+                GROUP BY g.id, g.name, g.description, g.business_domain,
+                         g.version, g.collab_revision, g.status, g.updated_at
                 """,
                 (graph_id,),
             )
@@ -112,6 +127,9 @@ def get_graph_meta(
                 version=row["version"],
                 collab_revision=row["collab_revision"],
                 status=row["status"],
+                updated_at=row["updated_at"],
+                table_count=row["table_count"] or 0,
+                relation_count=row["relation_count"] or 0,
             )
 
 

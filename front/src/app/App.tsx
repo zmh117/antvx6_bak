@@ -1,16 +1,13 @@
-import { AppShell } from '@/components/app-shell'
+import { DashboardApp } from '@/app/DashboardApp'
 import { AuthGate } from '@/features/auth/AuthGate'
-import { ErDiagramEditor } from '@/features/er-diagram-editor'
 import { AppProviders } from './providers'
 
 export default function App() {
   return (
     <AppProviders>
-      <AppShell>
-        <AuthGate>
-          <ErDiagramEditor />
-        </AuthGate>
-      </AppShell>
+      <AuthGate>
+        <DashboardApp />
+      </AuthGate>
     </AppProviders>
   )
 }

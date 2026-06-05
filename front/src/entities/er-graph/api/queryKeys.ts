@@ -2,6 +2,8 @@ import { DEFAULT_GRAPH_ID } from '@/shared/api/config'
 
 export const graphKeys = {
   all: ['graphs'] as const,
+  lists: () => [...graphKeys.all, 'list'] as const,
+  list: () => [...graphKeys.lists()] as const,
   detail: (graphId = DEFAULT_GRAPH_ID) => [...graphKeys.all, graphId, 'detail'] as const,
   histories: (graphId = DEFAULT_GRAPH_ID) => [...graphKeys.all, graphId, 'history'] as const,
   history: (graphId = DEFAULT_GRAPH_ID, limit = 100) =>

@@ -1,12 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   fetchAgentContext,
+  fetchGraphs,
   fetchGraphHistory,
   fetchGraphLoad,
   getDefaultGraphId,
   restoreGraphCheckpoint,
 } from './graphApi'
 import { graphKeys } from './queryKeys'
+
+export function useGraphsQuery() {
+  return useQuery({
+    queryKey: graphKeys.list(),
+    queryFn: fetchGraphs,
+  })
+}
 
 export function useGraphQuery(graphId = getDefaultGraphId()) {
   return useQuery({

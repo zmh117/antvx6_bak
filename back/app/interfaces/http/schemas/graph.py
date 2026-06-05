@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -150,6 +151,9 @@ class GraphMetaResponse(BaseModel):
     version: int
     collab_revision: int = 1
     status: str = "active"
+    updated_at: datetime | None = None
+    table_count: int = 0
+    relation_count: int = 0
 
 
 class SyncResponse(BaseModel):

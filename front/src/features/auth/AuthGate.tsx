@@ -57,23 +57,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (user) {
-    return (
-      <>
-        <div className="absolute right-28 top-3 z-40 flex items-center gap-2 rounded-md border border-border bg-card/95 px-3 py-1.5 text-xs shadow-sm backdrop-blur">
-          <span className="max-w-40 truncate">{user.display_name || user.email}</span>
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground"
-            onClick={clearAuthSession}
-          >
-            退出
-          </button>
-        </div>
-        {children}
-      </>
-    )
-  }
+  if (user) return <>{children}</>
 
   return (
     <section className="flex h-full min-h-0 flex-1 items-center justify-center bg-background px-4">

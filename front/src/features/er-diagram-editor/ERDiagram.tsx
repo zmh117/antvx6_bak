@@ -558,7 +558,7 @@ function applyGraphTheme(graph: Graph, mode: ErColorMode) {
   applyErEdgesTheme(graph, mode)
 }
 
-export default function ERDiagram() {
+export default function ERDiagram({ graphId }: { graphId?: string }) {
   const { resolvedTheme } = useTheme()
   const queryClient = useQueryClient()
   const useApi = import.meta.env.VITE_USE_API !== 'false'
@@ -569,7 +569,7 @@ export default function ERDiagram() {
   const graphVersionRef = useRef<number | undefined>(undefined)
   const collabRevisionRef = useRef(1)
   const revisionReloadingRef = useRef(false)
-  const graphIdRef = useRef(getDefaultGraphId())
+  const graphIdRef = useRef(graphId ?? getDefaultGraphId())
   const reloadGraphRef = useRef<(() => Promise<void>) | null>(null)
   const collabRef = useRef<ErCollaborationController | null>(null)
   const [autosaveErr, setAutosaveErr] = useState<string | null>(null)

@@ -106,6 +106,17 @@ export type GraphMeta = {
   version: number
   collab_revision: number
   status: string
+  updated_at?: string | null
+  table_count?: number
+  relation_count?: number
+}
+
+export async function fetchGraphs(): Promise<GraphMeta[]> {
+  const res = await fetch(`${API_BASE}/api/graphs`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<GraphMeta[]>
 }
 
 export async function fetchGraphMeta(graphId = DEFAULT_GRAPH_ID): Promise<GraphMeta> {
