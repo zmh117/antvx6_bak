@@ -354,12 +354,6 @@ export function BusinessFlowListPage() {
     }
   }, [filters.graphId, graphs, setFilters])
 
-  const selectedGraphName = useMemo(
-    () =>
-      graphs.find((graph) => graph.id === filters.graphId)?.name ??
-      filters.graphId,
-    [filters.graphId, graphs],
-  )
   const flowsQuery = useBusinessFlowsQuery(filters.graphId)
   const saveFlowMutation = useSaveBusinessFlowMutation(filters.graphId)
   const flows = flowsQuery.data ?? []

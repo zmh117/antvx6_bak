@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 const ComboboxPortalContainerContext =
-  React.createContext<React.RefObject<HTMLDivElement | null> | null>(null)
+  React.createContext<React.RefObject<HTMLElement | null> | null>(null)
 const ComboboxOpenContext = React.createContext<{
   open: boolean
   setOpen: React.Dispatch<React.SetStateAction<boolean>>
@@ -32,15 +32,18 @@ type ComboboxRootProps<T> = {
   onInputValueChange?: (inputValue: string) => void
   onOpenChange?: (open: boolean) => void
   onValueChange?: (value: T | null) => void
+  portalContainer?: React.RefObject<HTMLElement | null>
 }
 
 function Combobox<T>({
   autoHighlight = true,
+  portalContainer,
   ...props
 }: ComboboxRootProps<T> & {
   autoHighlight?: boolean
 }) {
-  const portalContainerRef = React.useRef<HTMLDivElement | null>(null)
+  const defaultPortalContainerRef = React.useRef<HTMLDivElement | null>(null)
+  const portalContainerRef = portalContainer ?? defaultPortalContainerRef
   const [open, setOpen] = React.useState(false)
   const { onOpenChange, onValueChange, ...rootProps } = props
 
@@ -61,7 +64,9 @@ function Combobox<T>({
           }}
           {...rootProps}
         />
-        <div ref={portalContainerRef} data-slot="combobox-portal-container" />
+        {portalContainer ? null : (
+          <div ref={defaultPortalContainerRef} data-slot="combobox-portal-container" />
+        )}
       </ComboboxOpenContext.Provider>
     </ComboboxPortalContainerContext.Provider>
   )

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createColumnHelper,
   getCoreRowModel,
@@ -45,7 +45,6 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxTrigger,
-  ComboboxValue,
 } from '@/components/ui/combobox'
 import {
   Dialog,
@@ -442,6 +441,7 @@ function GraphMembersDialog({
   onRemoveMember: (member: GraphMember) => Promise<void>
 }) {
   const [userQuery, setUserQuery] = useState('')
+  const userComboboxPortalRef = useRef<HTMLDivElement | null>(null)
   const activeUsersQuery = useQuery({
     queryKey: ['auth', 'active-users', userQuery.trim()],
     queryFn: () => fetchActiveUsers(userQuery),
@@ -472,19 +472,6 @@ function GraphMembersDialog({
   const ownerCount = sortedMembers.filter(
     (member) => member.role === 'owner',
   ).length
-  const selectedUser = useMemo(() => {
-    const email = form.state.values.email
-    return (
-      (activeUsersQuery.data ?? []).find((activeUser) => activeUser.email === email) ??
-      (email
-        ? ({
-            id: email,
-            email,
-            display_name: email,
-          } satisfies CurrentUser)
-        : null)
-    )
-  }, [activeUsersQuery.data, form.state.values.email])
   const columns = useMemo(
     () => [
       memberColumnHelper.accessor('display_name', {
@@ -577,7 +564,7 @@ function GraphMembersDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-      <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] overflow-hidden sm:max-w-3xl">
+      <DialogContent className="max-h-[min(760px,calc(100vh-2rem))] overflow-visible sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>图成员 / 分享</DialogTitle>
           <DialogDescription className="truncate">
@@ -605,18 +592,33 @@ function GraphMembersDialog({
               children={(field) => {
                 const isInvalid =
                   field.state.meta.isTouched && !field.state.meta.isValid
+                const selectedUser =
+                  (activeUsersQuery.data ?? []).find(
+                    (activeUser) => activeUser.email === field.state.value,
+                  ) ??
+                  (field.state.value
+                    ? ({
+                        id: field.state.value,
+                        email: field.state.value,
+                        display_name: field.state.value,
+                      } satisfies CurrentUser)
+                    : null)
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>用户邮箱</FieldLabel>
                     <Combobox<CurrentUser>
-                      key={field.state.value || 'empty-member-email'}
                       items={activeUsersQuery.data ?? []}
                       value={selectedUser}
+                      inputValue={userQuery}
+                      portalContainer={userComboboxPortalRef}
                       filter={null}
                       itemToStringLabel={(user) => user.email}
                       itemToStringValue={(user) => user.email}
                       isItemEqualToValue={(item, value) => item.id === value.id}
                       onInputValueChange={setUserQuery}
+                      onOpenChange={(open) => {
+                        if (open) setUserQuery('')
+                      }}
                       onValueChange={(user) => {
                         field.handleChange(user?.email ?? '')
                         setUserQuery('')
@@ -631,11 +633,16 @@ function GraphMembersDialog({
                             className="w-full justify-between font-normal"
                             aria-invalid={isInvalid}
                           >
-                            <ComboboxValue placeholder="选择启用用户" />
+                            <span className="min-w-0 flex-1 truncate text-left">
+                              {field.state.value || '选择启用用户'}
+                            </span>
                           </Button>
                         }
                       />
-                      <ComboboxContent side="bottom">
+                      <ComboboxContent
+                        side="bottom"
+                        className="z-[70] max-w-[calc(100vw-2rem)]"
+                      >
                         <ComboboxInput
                           id={field.name}
                           showTrigger={false}
@@ -699,6 +706,7 @@ function GraphMembersDialog({
               添加/更新
             </Button>
           </form>
+          <div ref={userComboboxPortalRef} data-slot="member-user-combobox-portal" />
 
           <DataTable
             table={table}
