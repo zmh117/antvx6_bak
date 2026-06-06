@@ -117,6 +117,19 @@ function measureErPerf<T>(label: string, fn: () => T, minDurationMs = 0): T {
   }
 }
 
+function disposeGraphAfterReactCommit(graph: Graph) {
+  window.setTimeout(() => {
+    if (graph.disposed) return
+    try {
+      graph.dispose()
+    } catch (err) {
+      if (import.meta.env.DEV) {
+        console.warn('[ER] dispose graph failed', err)
+      }
+    }
+  }, 0)
+}
+
 type PresenceHighlight = {
   key: string
   label: string
@@ -856,8 +869,12 @@ export default function ERDiagram({ graphId }: { graphId?: string }) {
     const el = containerRef.current
     if (!el) return
 
+    const graphHost = document.createElement('div')
+    graphHost.className = 'h-full w-full'
+    el.replaceChildren(graphHost)
+
     const graph = createErGraph({
-      container: el,
+      container: graphHost,
       validateConnection: erPortValidateConnection,
     })
 
@@ -1550,7 +1567,8 @@ export default function ERDiagram({ graphId }: { graphId?: string }) {
       reloadGraphRef.current = null
       collabRef.current?.destroy()
       collabRef.current = null
-      graph.dispose()
+      graphHost.remove()
+      disposeGraphAfterReactCommit(graph)
       graphRef.current = null
     }
   }, [])
