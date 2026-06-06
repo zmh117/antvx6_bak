@@ -9,6 +9,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { useForm } from '@tanstack/react-form'
+import { useQuery } from '@tanstack/react-query'
 import {
   AlertCircle,
   ArrowUpDown,
@@ -36,6 +37,16 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
+} from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -70,6 +81,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { fetchActiveUsers, type CurrentUser } from '@/entities/auth'
 import {
   useArchiveGraphMutation,
   useCreateGraphMutation,
@@ -429,6 +441,11 @@ function GraphMembersDialog({
   onUpsertMember: (values: GraphMemberFormSubmitValues) => Promise<void>
   onRemoveMember: (member: GraphMember) => Promise<void>
 }) {
+  const [userQuery, setUserQuery] = useState('')
+  const activeUsersQuery = useQuery({
+    queryKey: ['auth', 'active-users', userQuery.trim()],
+    queryFn: () => fetchActiveUsers(userQuery),
+  })
   const form = useForm({
     defaultValues: {
       email: '',
@@ -440,6 +457,7 @@ function GraphMembersDialog({
     onSubmit: async ({ value }) => {
       await onUpsertMember(graphMemberFormSchema.parse(value))
       form.reset()
+      setUserQuery('')
     },
   })
   const sortedMembers = useMemo(
@@ -454,6 +472,19 @@ function GraphMembersDialog({
   const ownerCount = sortedMembers.filter(
     (member) => member.role === 'owner',
   ).length
+  const selectedUser = useMemo(() => {
+    const email = form.state.values.email
+    return (
+      (activeUsersQuery.data ?? []).find((activeUser) => activeUser.email === email) ??
+      (email
+        ? ({
+            id: email,
+            email,
+            display_name: email,
+          } satisfies CurrentUser)
+        : null)
+    )
+  }, [activeUsersQuery.data, form.state.values.email])
   const columns = useMemo(
     () => [
       memberColumnHelper.accessor('display_name', {
@@ -577,21 +608,57 @@ function GraphMembersDialog({
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>用户邮箱</FieldLabel>
-                    <Input
-                      id={field.name}
-                      name={field.name}
-                      type="email"
-                      autoComplete="email"
-                      inputMode="email"
-                      placeholder="user@example.com"
-                      value={field.state.value}
-                      disabled={pending}
-                      aria-invalid={isInvalid}
-                      onBlur={field.handleBlur}
-                      onChange={(event) =>
-                        field.handleChange(event.target.value)
-                      }
-                    />
+                    <Combobox<CurrentUser>
+                      key={field.state.value || 'empty-member-email'}
+                      items={activeUsersQuery.data ?? []}
+                      value={selectedUser}
+                      filter={null}
+                      itemToStringLabel={(user) => user.email}
+                      itemToStringValue={(user) => user.email}
+                      isItemEqualToValue={(item, value) => item.id === value.id}
+                      onInputValueChange={setUserQuery}
+                      onValueChange={(user) => {
+                        field.handleChange(user?.email ?? '')
+                        setUserQuery('')
+                      }}
+                    >
+                      <ComboboxTrigger
+                        disabled={pending}
+                        render={
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-between font-normal"
+                            aria-invalid={isInvalid}
+                          >
+                            <ComboboxValue placeholder="选择启用用户" />
+                          </Button>
+                        }
+                      />
+                      <ComboboxContent side="bottom">
+                        <ComboboxInput
+                          id={field.name}
+                          showTrigger={false}
+                          placeholder="搜索邮箱或昵称"
+                          onBlur={field.handleBlur}
+                        />
+                        <ComboboxEmpty>
+                          {activeUsersQuery.isFetching ? '搜索中...' : '未找到启用用户'}
+                        </ComboboxEmpty>
+                        <ComboboxList<CurrentUser>>
+                          {(user) => (
+                            <ComboboxItem key={user.id} value={user}>
+                              <span className="grid min-w-0">
+                                <span className="truncate">{user.email}</span>
+                                <span className="truncate text-xs text-muted-foreground">
+                                  {user.display_name}
+                                </span>
+                              </span>
+                            </ComboboxItem>
+                          )}
+                        </ComboboxList>
+                      </ComboboxContent>
+                    </Combobox>
                     {isInvalid ? (
                       <FieldError errors={field.state.meta.errors} />
                     ) : null}

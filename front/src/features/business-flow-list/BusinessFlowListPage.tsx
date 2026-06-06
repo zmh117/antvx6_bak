@@ -36,7 +36,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -78,7 +83,11 @@ const businessFlowMetaFormSchema = z.object({
     .min(1, '请输入业务图标识')
     .max(120, '标识不能超过 120 个字符')
     .regex(/^[a-zA-Z0-9_-]+$/, '标识只能包含字母、数字、下划线和短横线'),
-  name: z.string().trim().min(1, '请输入名称').max(120, '名称不能超过 120 个字符'),
+  name: z
+    .string()
+    .trim()
+    .min(1, '请输入名称')
+    .max(120, '名称不能超过 120 个字符'),
   description: z.string().trim().max(500, '描述不能超过 500 个字符').optional(),
 })
 
@@ -87,7 +96,9 @@ function parsePositiveInteger(value: string | null, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-function parseBusinessFlowFilters(params: URLSearchParams): BusinessFlowListFilters {
+function parseBusinessFlowFilters(
+  params: URLSearchParams,
+): BusinessFlowListFilters {
   const pageSize = parsePositiveInteger(params.get('pageSize'), 10)
   return {
     graphId: params.get('graphId') || getDefaultGraphId(),
@@ -105,8 +116,10 @@ function serializeBusinessFlowFilters(filters: BusinessFlowListFilters) {
   }
   if (filters.q?.trim()) params.set('q', filters.q.trim())
   if ((filters.page ?? 1) > 1) params.set('page', String(filters.page))
-  if ((filters.pageSize ?? 10) !== 10) params.set('pageSize', String(filters.pageSize))
-  if (filters.sort && filters.sort !== 'version.desc') params.set('sort', filters.sort)
+  if ((filters.pageSize ?? 10) !== 10)
+    params.set('pageSize', String(filters.pageSize))
+  if (filters.sort && filters.sort !== 'version.desc')
+    params.set('sort', filters.sort)
   return params
 }
 
@@ -156,7 +169,13 @@ function HeaderSortButton({
   onClick: () => void
 }) {
   return (
-    <Button type="button" variant="ghost" size="xs" className="-ml-2" onClick={onClick}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      className="-ml-2"
+      onClick={onClick}
+    >
       {label}
       <ArrowUpDown className="size-3.5" />
     </Button>
@@ -190,8 +209,12 @@ function BusinessFlowMetaDialog({
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{mode === 'create' ? '新增业务图' : '编辑业务图信息'}</DialogTitle>
-          <DialogDescription>维护业务图元数据；完整流程编辑器后续接入。</DialogDescription>
+          <DialogTitle>
+            {mode === 'create' ? '新增业务图' : '编辑业务图信息'}
+          </DialogTitle>
+          <DialogDescription>
+            维护业务图元数据；完整流程编辑器后续接入。
+          </DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"
@@ -204,7 +227,8 @@ function BusinessFlowMetaDialog({
             <form.Field
               name="flowKey"
               children={(field) => {
-                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>标识</FieldLabel>
@@ -213,11 +237,15 @@ function BusinessFlowMetaDialog({
                       name={field.name}
                       value={field.state.value}
                       onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
                       aria-invalid={isInvalid}
                       disabled={mode === 'edit' || pending}
                     />
-                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                    {isInvalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
                   </Field>
                 )
               }}
@@ -225,7 +253,8 @@ function BusinessFlowMetaDialog({
             <form.Field
               name="name"
               children={(field) => {
-                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>名称</FieldLabel>
@@ -234,12 +263,16 @@ function BusinessFlowMetaDialog({
                       name={field.name}
                       value={field.state.value}
                       onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
                       aria-invalid={isInvalid}
                       autoFocus
                       disabled={pending}
                     />
-                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                    {isInvalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
                   </Field>
                 )
               }}
@@ -247,7 +280,8 @@ function BusinessFlowMetaDialog({
             <form.Field
               name="description"
               children={(field) => {
-                const isInvalid = field.state.meta.isTouched && !field.state.meta.isValid
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={isInvalid}>
                     <FieldLabel htmlFor={field.name}>描述</FieldLabel>
@@ -257,18 +291,27 @@ function BusinessFlowMetaDialog({
                       className="min-h-24 resize-none"
                       value={field.state.value ?? ''}
                       onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
                       aria-invalid={isInvalid}
                       disabled={pending}
                     />
-                    {isInvalid ? <FieldError errors={field.state.meta.errors} /> : null}
+                    {isInvalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
                   </Field>
                 )
               }}
             />
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={pending}
+            >
               取消
             </Button>
             <Button type="submit" disabled={pending}>
@@ -287,9 +330,13 @@ export function BusinessFlowListPage() {
     parseBusinessFlowFilters,
     serializeBusinessFlowFilters,
   )
-  const [sorting, setSorting] = useState<SortingState>(() => sortingFromParam(filters.sort))
+  const [sorting, setSorting] = useState<SortingState>(() =>
+    sortingFromParam(filters.sort),
+  )
   const [formMode, setFormMode] = useState<BusinessFlowFormMode | null>(null)
-  const [editingFlow, setEditingFlow] = useState<BusinessFlowRecord | null>(null)
+  const [editingFlow, setEditingFlow] = useState<BusinessFlowRecord | null>(
+    null,
+  )
   const [formInitialValues, setFormInitialValues] =
     useState<BusinessFlowFormValues>(() => defaultCreateValues())
   const graphs = graphsQuery.data ?? []
@@ -299,13 +346,18 @@ export function BusinessFlowListPage() {
   }, [filters.sort])
 
   useEffect(() => {
-    if (graphs.length && !graphs.some((graph) => graph.id === filters.graphId)) {
+    if (
+      graphs.length &&
+      !graphs.some((graph) => graph.id === filters.graphId)
+    ) {
       setFilters({ graphId: graphs[0].id, page: 1 })
     }
   }, [filters.graphId, graphs, setFilters])
 
   const selectedGraphName = useMemo(
-    () => graphs.find((graph) => graph.id === filters.graphId)?.name ?? filters.graphId,
+    () =>
+      graphs.find((graph) => graph.id === filters.graphId)?.name ??
+      filters.graphId,
     [filters.graphId, graphs],
   )
   const flowsQuery = useBusinessFlowsQuery(filters.graphId)
@@ -356,7 +408,9 @@ export function BusinessFlowListPage() {
           />
         ),
         size: 100,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       flowColumnHelper.accessor((flow) => flow.edges.length, {
         id: 'edges',
@@ -367,7 +421,9 @@ export function BusinessFlowListPage() {
           />
         ),
         size: 100,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       flowColumnHelper.accessor((flow) => flow.bindings.length, {
         id: 'bindings',
@@ -378,7 +434,9 @@ export function BusinessFlowListPage() {
           />
         ),
         size: 100,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       flowColumnHelper.accessor('version', {
         header: ({ column }) => (
@@ -389,7 +447,9 @@ export function BusinessFlowListPage() {
         ),
         size: 100,
         cell: ({ getValue }) => (
-          <span className="text-muted-foreground tabular-nums">v{getValue()}</span>
+          <span className="text-muted-foreground tabular-nums">
+            v{getValue()}
+          </span>
         ),
       }),
       flowColumnHelper.display({
@@ -400,7 +460,12 @@ export function BusinessFlowListPage() {
           <div className="flex justify-end">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="icon-xs" aria-label="更多操作">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-xs"
+                  aria-label="更多操作"
+                >
                   <MoreHorizontal className="size-3.5" />
                 </Button>
               </DropdownMenuTrigger>
@@ -426,13 +491,18 @@ export function BusinessFlowListPage() {
       pagination,
     },
     onSortingChange: (updater) => {
-      const nextSorting = typeof updater === 'function' ? updater(sorting) : updater
+      const nextSorting =
+        typeof updater === 'function' ? updater(sorting) : updater
       setSorting(nextSorting)
       setFilters({ sort: sortingToParam(nextSorting), page: 1 })
     },
     onPaginationChange: (updater) => {
-      const nextPagination = typeof updater === 'function' ? updater(pagination) : updater
-      setFilters({ page: nextPagination.pageIndex + 1, pageSize: nextPagination.pageSize })
+      const nextPagination =
+        typeof updater === 'function' ? updater(pagination) : updater
+      setFilters({
+        page: nextPagination.pageIndex + 1,
+        pageSize: nextPagination.pageSize,
+      })
     },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -487,30 +557,8 @@ export function BusinessFlowListPage() {
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">业务图列表</h3>
-          <p className="truncate text-xs text-muted-foreground">当前 ER 图：{selectedGraphName}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Select
-            value={filters.graphId}
-            onValueChange={(graphId) => setFilters({ graphId, page: 1 })}
-          >
-            <SelectTrigger className="w-64 max-w-[50vw]" aria-label="选择 ER 图">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {graphs.length ? (
-                  graphs.map((graph) => (
-                    <SelectItem key={graph.id} value={graph.id}>
-                      {graph.name}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <SelectItem value={filters.graphId}>{filters.graphId}</SelectItem>
-                )}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
           <Button
             variant="outline"
             size="sm"
@@ -520,7 +568,11 @@ export function BusinessFlowListPage() {
             <RefreshCw className="size-4" />
             刷新
           </Button>
-          <Button size="sm" onClick={openCreateDialog} disabled={saveFlowMutation.isPending}>
+          <Button
+            size="sm"
+            onClick={openCreateDialog}
+            disabled={saveFlowMutation.isPending}
+          >
             <Plus className="size-4" />
             新增业务图
           </Button>
@@ -531,7 +583,9 @@ export function BusinessFlowListPage() {
         {saveFlowMutation.error ? (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             <AlertCircle className="size-4" />
-            {saveFlowMutation.error instanceof Error ? saveFlowMutation.error.message : '保存失败'}
+            {saveFlowMutation.error instanceof Error
+              ? saveFlowMutation.error.message
+              : '保存失败'}
           </div>
         ) : null}
         <div className="mb-3 grid gap-2 md:grid-cols-[minmax(220px,1fr)_120px]">
@@ -542,7 +596,9 @@ export function BusinessFlowListPage() {
           />
           <Select
             value={String(filters.pageSize ?? 10)}
-            onValueChange={(value) => setFilters({ pageSize: Number(value), page: 1 })}
+            onValueChange={(value) =>
+              setFilters({ pageSize: Number(value), page: 1 })
+            }
           >
             <SelectTrigger aria-label="分页大小">
               <SelectValue />
