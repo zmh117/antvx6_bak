@@ -114,6 +114,7 @@ CREATE TABLE er_relation (
     target_table_key TEXT NOT NULL,
     target_column_key TEXT NOT NULL,
     relation_type TEXT NOT NULL DEFAULT 'logical_relation',
+    match_operator TEXT NOT NULL DEFAULT 'eq',
     relationship TEXT,
     cardinality TEXT,
     relation_name TEXT,
@@ -328,9 +329,10 @@ COMMENT ON COLUMN er_relation.source_table_key IS '源表键';
 COMMENT ON COLUMN er_relation.source_column_key IS '源字段键';
 COMMENT ON COLUMN er_relation.target_table_key IS '目标表键';
 COMMENT ON COLUMN er_relation.target_column_key IS '目标字段键';
-COMMENT ON COLUMN er_relation.relation_type IS '关系类型：foreign_key/logical_relation/business_relation/lookup_relation/derived_relation/same_meaning/unknown';
-COMMENT ON COLUMN er_relation.relationship IS '基数文案：1:1、1:N、N:1、N:M';
-COMMENT ON COLUMN er_relation.cardinality IS '标准化基数：one_to_one/one_to_many/many_to_one/many_to_many';
+COMMENT ON COLUMN er_relation.relation_type IS '业务关系角色：identifier_match/ownership/lookup/same_meaning/hierarchy/derived/business_process/semantic_related/unknown；兼容旧值 foreign_key/logical_relation/business_relation/lookup_relation/derived_relation';
+COMMENT ON COLUMN er_relation.match_operator IS '字段匹配方式：eq/contains/included_in/prefix_match/pattern_match/range_match/mapping/semantic_match；替代 UI 中的基数选择';
+COMMENT ON COLUMN er_relation.relationship IS '兼容旧版基数文案：1:1、1:N、N:1、N:M；新 UI 不再作为主要业务属性';
+COMMENT ON COLUMN er_relation.cardinality IS '兼容旧版标准化基数：one_to_one/one_to_many/many_to_one/many_to_many；新 UI 不再作为主要业务属性';
 COMMENT ON COLUMN er_relation.relation_name IS '关系业务名称';
 COMMENT ON COLUMN er_relation.description IS '关系说明';
 COMMENT ON COLUMN er_relation.join_condition IS 'JOIN 条件 SQL 片段';

@@ -9,6 +9,7 @@ import type {
   TableField,
   TableNodeData,
 } from '@/entities/er-graph/model/erSchema'
+import { matchOperatorShortLabel, normalizeMatchOperator } from '@/entities/er-graph/model/erSchema'
 import { graphToErTables, normalizeRelationshipType } from '../graphToErData'
 import { buildRelationKey } from '../relationUtils'
 import {
@@ -19,7 +20,7 @@ import {
   setErTablePorts,
   tableBodyHeight,
 } from '../erLayout'
-import { buildErRelationshipLabel } from '../erTheme'
+import { buildErMatchOperatorLabel } from '../erTheme'
 import { withHistoryPaused } from './withHistoryPaused'
 
 const LOCAL_ORIGIN = 'x6-local'
@@ -134,6 +135,7 @@ function relationFromEdge(edge: import('@antv/x6').Edge): RelationBusinessData |
     targetColumn,
     relationship,
     type: relationship,
+    matchOperator: normalizeMatchOperator(data.matchOperator),
     relationType: data.relationType || 'logical_relation',
     verified: Boolean(data.verified),
     tags: data.tags || [],
@@ -280,6 +282,7 @@ function tablesFromDoc(doc: Y.Doc): TableNodeData[] {
     refs.push({
       table: targetTable,
       field: targetColumn,
+      matchOperator: normalizeMatchOperator(rel.matchOperator as string | undefined),
       relationship: normalizeRelationshipType((rel.relationship || rel.type) as never),
       relationKey: rel.relationKey as string | undefined,
       relationType: rel.relationType as RelationRef['relationType'],
@@ -355,6 +358,7 @@ function graphDataFromTables(tables: TableNodeData[]) {
           data: {
             relationKey,
             relationType: ref.relationType || 'logical_relation',
+            matchOperator: normalizeMatchOperator(ref.matchOperator),
             relationship,
             type: relationship,
             sourceTable: table.id,
@@ -366,7 +370,11 @@ function graphDataFromTables(tables: TableNodeData[]) {
             verified: Boolean(ref.verified),
             tags: ref.tags || [],
           },
-          labels: [buildErRelationshipLabel(relationship)],
+          labels: [
+            buildErMatchOperatorLabel(
+              matchOperatorShortLabel(normalizeMatchOperator(ref.matchOperator)),
+            ),
+          ],
         })
       }
     }
@@ -499,8 +507,8 @@ function applyDocToGraph(graph: Graph, doc: Y.Doc) {
         const edgeId = String(edgeMeta.id)
         const existing = graph.getCellById(edgeId)
         const nextData = mapObject(edgeMeta.data)
-        const relationship = normalizeRelationshipType((nextData.relationship || nextData.type) as never)
-        const nextLabels = [buildErRelationshipLabel(relationship)]
+        const matchOperator = normalizeMatchOperator(nextData.matchOperator as string | undefined)
+        const nextLabels = [buildErMatchOperatorLabel(matchOperatorShortLabel(matchOperator))]
 
         if (!existing?.isEdge()) {
           graph.addEdge(edgeMeta)

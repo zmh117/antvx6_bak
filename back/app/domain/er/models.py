@@ -148,6 +148,7 @@ class Relation:
     target_table_key: str
     target_column_key: str
     relation_type: str = "logical_relation"
+    match_operator: str = "eq"
     relationship: str | None = "1:1"
     cardinality: str | None = None
     relation_name: str | None = None
@@ -168,6 +169,7 @@ class Relation:
             "target_table_key": self.target_table_key,
             "target_column_key": self.target_column_key,
             "relation_type": self.relation_type,
+            "match_operator": self.match_operator,
             "relationship": self.relationship,
             "cardinality": self.cardinality,
             "relation_name": self.relation_name,

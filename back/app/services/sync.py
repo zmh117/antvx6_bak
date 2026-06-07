@@ -203,10 +203,10 @@ def apply_full_sync_legacy(conn: psycopg.Connection, payload: NormalizedGraphPay
                     INSERT INTO er_relation (
                         graph_id, relation_key, source_table_key, source_column_key,
                         target_table_key, target_column_key, relation_type, relationship,
-                        cardinality, relation_name, description, join_condition, direction,
+                        match_operator, cardinality, relation_name, description, join_condition, direction,
                         confidence, source, verified, tags, raw_edge, updated_at, deleted_at
                     ) VALUES (
-                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NULL
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NULL
                     )
                     ON CONFLICT (graph_id, relation_key) DO UPDATE SET
                         source_table_key = EXCLUDED.source_table_key,
@@ -215,6 +215,7 @@ def apply_full_sync_legacy(conn: psycopg.Connection, payload: NormalizedGraphPay
                         target_column_key = EXCLUDED.target_column_key,
                         relation_type = EXCLUDED.relation_type,
                         relationship = EXCLUDED.relationship,
+                        match_operator = EXCLUDED.match_operator,
                         cardinality = EXCLUDED.cardinality,
                         relation_name = EXCLUDED.relation_name,
                         description = EXCLUDED.description,
@@ -238,6 +239,7 @@ def apply_full_sync_legacy(conn: psycopg.Connection, payload: NormalizedGraphPay
                         r.target_column_key,
                         r.relation_type,
                         r.relationship,
+                        r.match_operator,
                         r.cardinality,
                         r.relation_name,
                         r.description,

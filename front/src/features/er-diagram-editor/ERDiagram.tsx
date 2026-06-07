@@ -23,7 +23,6 @@ import {
   normalizeFieldRefs,
   type FieldSelection,
   type RelationSelection,
-  type RelationshipData,
   type TableSelection,
   type TableField,
   type TableNodeData,
@@ -52,9 +51,14 @@ import {
 import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { resolveTablesFromLoad } from './resolveGraphTables'
 import { buildRelationEdgeData, resolveRelationEndpoints } from './relationUtils'
-import type { RelationBusinessData } from '@/entities/er-graph/model/erSchema'
 import {
-  buildErRelationshipLabel,
+  matchOperatorShortLabel,
+  normalizeMatchOperator,
+  type MatchOperator,
+  type RelationBusinessData,
+} from '@/entities/er-graph/model/erSchema'
+import {
+  buildErMatchOperatorLabel,
   readErThemeVars,
   type ErColorMode,
 } from './erTheme'
@@ -310,7 +314,7 @@ Graph.registerEdge(
         targetMarker: { name: 'classic', size: 8 },
       },
     },
-    labels: [buildErRelationshipLabel('1:1', 'light')],
+    labels: [buildErMatchOperatorLabel('=', 'light')],
   },
   true,
 )
@@ -357,9 +361,11 @@ const transformToGraphData = (tables: TableNodeData[]) => {
             r.table,
             r.field,
             relType,
+            r.matchOperator,
             {
               relationKey: r.relationKey,
               relationType: r.relationType,
+              matchOperator: r.matchOperator,
               relationName: r.relationName,
               description: r.description,
               verified: r.verified,
@@ -375,7 +381,7 @@ const transformToGraphData = (tables: TableNodeData[]) => {
               port: fieldPortId(r.field, 'L'),
             },
             data: relData,
-            labels: [buildErRelationshipLabel(relType)],
+            labels: [buildErMatchOperatorLabel(matchOperatorShortLabel(relData.matchOperator))],
           })
         })
       })
@@ -387,15 +393,15 @@ const transformToGraphData = (tables: TableNodeData[]) => {
   )
 }
 
-const toggleRelationshipType = (graph: Graph, edge: Edge) => {
-  let next: RelationshipData['type'] = '1:1'
+const toggleMatchOperator = (graph: Graph, edge: Edge) => {
+  let next: MatchOperator = 'eq'
   graph.batchUpdate(() => {
-    const types: RelationshipData['type'][] = ['1:1', '1:N', 'N:N']
+    const types: MatchOperator[] = ['eq', 'contains', 'mapping', 'range_match', 'semantic_match']
     const data = edge.getData<RelationBusinessData>() || {}
-    const current = data.relationship || data.type || '1:1'
+    const current = normalizeMatchOperator(data.matchOperator)
     next = types[(types.indexOf(current) + 1) % types.length]
-    edge.setData({ ...data, type: next, relationship: next })
-    edge.setLabels([buildErRelationshipLabel(next)])
+    edge.setData({ ...data, matchOperator: next })
+    edge.setLabels([buildErMatchOperatorLabel(matchOperatorShortLabel(next))])
   })
   return next
 }
@@ -406,8 +412,8 @@ function applyErEdgesTheme(graph: Graph, mode: ErColorMode) {
     graph.getEdges().forEach((edge) => {
       if (edge.shape !== 'er-relationship') return
       edge.attr('line/stroke', theme.edgeStroke)
-      const relType = edge.getData<RelationshipData>()?.type || '1:1'
-      edge.setLabels([buildErRelationshipLabel(relType, mode)])
+      const operator = normalizeMatchOperator(edge.getData<RelationBusinessData>()?.matchOperator)
+      edge.setLabels([buildErMatchOperatorLabel(matchOperatorShortLabel(operator), mode)])
     })
   })
 }
@@ -817,10 +823,8 @@ export default function ERDiagram({ graphId }: { graphId?: string }) {
         if (patch.relationType) next.relationType = patch.relationType
         else delete next.relationType
       }
-      if ('relationship' in patch) {
-        const rel = normalizeRelationshipType(patch.relationship)
-        next.relationship = rel
-        next.type = rel
+      if ('matchOperator' in patch) {
+        next.matchOperator = normalizeMatchOperator(patch.matchOperator)
       }
       if ('verified' in patch) next.verified = Boolean(patch.verified)
       if ('tags' in patch) {
@@ -829,8 +833,10 @@ export default function ERDiagram({ graphId }: { graphId?: string }) {
       }
       graphRef.current.batchUpdate(() => {
         edge.setData(next)
-        if (patch.relationship) {
-          edge.setLabels([buildErRelationshipLabel(normalizeRelationshipType(next.relationship || next.type))])
+        if (patch.matchOperator) {
+          edge.setLabels([
+            buildErMatchOperatorLabel(matchOperatorShortLabel(next.matchOperator)),
+          ])
         }
       })
       setGraphDataRevision((v) => v + 1)
@@ -1234,6 +1240,7 @@ export default function ERDiagram({ graphId }: { graphId?: string }) {
             resolved.targetTable,
             resolved.targetColumn,
             '1:1',
+            'eq',
           )
           applyingEdgeMeta = true
           try {
@@ -1272,7 +1279,7 @@ export default function ERDiagram({ graphId }: { graphId?: string }) {
       if (edge.shape === 'er-relationship') {
         e.stopPropagation()
         if (e.detail && e.detail > 1) return
-        toggleRelationshipType(graph, edge)
+        toggleMatchOperator(graph, edge)
         openRelationPanel(edge)
         setGraphDataRevision((v) => v + 1)
         schedulePersist(true, true)

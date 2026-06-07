@@ -2,6 +2,7 @@
 export interface RelationRef {
   table: string
   field: string
+  matchOperator?: MatchOperator
   relationship?: RelationshipType
   relationKey?: string
   relationType?: RelationType
@@ -51,9 +52,29 @@ export type ColumnRole =
   | 'audit'
   | 'unknown'
 
+/** @deprecated 仅用于兼容旧基数字段，UI 主属性改用 MatchOperator。 */
 export type RelationshipType = '1:1' | '1:N' | 'N:N'
 
+export type MatchOperator =
+  | 'eq'
+  | 'contains'
+  | 'included_in'
+  | 'prefix_match'
+  | 'pattern_match'
+  | 'range_match'
+  | 'mapping'
+  | 'semantic_match'
+
 export type RelationType =
+  | 'identifier_match'
+  | 'ownership'
+  | 'lookup'
+  | 'same_meaning'
+  | 'hierarchy'
+  | 'derived'
+  | 'business_process'
+  | 'semantic_related'
+  // Legacy relation type values kept for old graph data.
   | 'logical_relation'
   | 'foreign_key'
   | 'business_relation'
@@ -90,13 +111,30 @@ export const COLUMN_ROLE_OPTIONS: Array<{ value: ColumnRole; label: string }> = 
 ]
 
 export const RELATION_TYPE_OPTIONS: Array<{ value: RelationType; label: string }> = [
-  { value: 'logical_relation', label: '逻辑关系' },
-  { value: 'foreign_key', label: '外键关系' },
-  { value: 'business_relation', label: '业务关系' },
-  { value: 'lookup_relation', label: '查询关系' },
-  { value: 'derived_relation', label: '派生关系' },
-  { value: 'same_meaning', label: '同义关系' },
+  { value: 'identifier_match', label: '标识匹配' },
+  { value: 'ownership', label: '归属关系' },
+  { value: 'lookup', label: '码值/维表映射' },
+  { value: 'same_meaning', label: '同义字段' },
+  { value: 'hierarchy', label: '层级关系' },
+  { value: 'derived', label: '派生关系' },
+  { value: 'business_process', label: '业务流程关联' },
+  { value: 'semantic_related', label: '语义相关' },
   { value: 'unknown', label: '未知' },
+]
+
+export const MATCH_OPERATOR_OPTIONS: Array<{
+  value: MatchOperator
+  label: string
+  shortLabel: string
+}> = [
+  { value: 'eq', label: '等于', shortLabel: '=' },
+  { value: 'contains', label: '包含', shortLabel: '包含' },
+  { value: 'included_in', label: '被包含', shortLabel: '被含' },
+  { value: 'prefix_match', label: '前缀匹配', shortLabel: '前缀' },
+  { value: 'pattern_match', label: '模式匹配', shortLabel: '模式' },
+  { value: 'range_match', label: '区间匹配', shortLabel: '区间' },
+  { value: 'mapping', label: '映射转换', shortLabel: '映射' },
+  { value: 'semantic_match', label: '语义适配', shortLabel: '语义' },
 ]
 
 export const RELATIONSHIP_OPTIONS: Array<{ value: RelationshipType; label: string }> = [
@@ -122,7 +160,7 @@ export interface TableField {
   keyType?: 'primary' | 'relation' | 'unique'
   /**
    * 关联指向：单目标或多列组合（多条边可共用同一源字段右端口）。
-   * relationship 表示与该目标列之间的基数（连线上显示/点击切换，默认 1:1）。
+   * matchOperator 表示两个字段如何匹配；relationship 仅兼容旧基数字段。
    */
   ref?: RelationRef | RelationRef[]
   defaultValue?: string
@@ -158,6 +196,7 @@ export interface RelationshipData {
 export interface RelationBusinessData extends RelationshipData {
   relationKey?: string
   relationType?: RelationType
+  matchOperator?: MatchOperator
   relationship?: RelationshipType
   sourceTable?: string
   sourceColumn?: string
@@ -170,6 +209,46 @@ export interface RelationBusinessData extends RelationshipData {
   source?: 'manual' | 'sql_analysis' | 'code_analysis' | 'name_rule' | 'data_profiling' | 'imported'
   verified?: boolean
   tags?: string[]
+}
+
+export function normalizeRelationType(type?: string | null): RelationType {
+  if (!type) return 'identifier_match'
+  if (type === 'logical_relation' || type === 'foreign_key') return 'identifier_match'
+  if (type === 'business_relation') return 'business_process'
+  if (type === 'lookup_relation') return 'lookup'
+  if (type === 'derived_relation') return 'derived'
+  const allowed: RelationType[] = [
+    'identifier_match',
+    'ownership',
+    'lookup',
+    'same_meaning',
+    'hierarchy',
+    'derived',
+    'business_process',
+    'semantic_related',
+    'unknown',
+  ]
+  return allowed.includes(type as RelationType) ? (type as RelationType) : 'unknown'
+}
+
+export function normalizeMatchOperator(operator?: string | null): MatchOperator {
+  if (!operator) return 'eq'
+  const allowed: MatchOperator[] = [
+    'eq',
+    'contains',
+    'included_in',
+    'prefix_match',
+    'pattern_match',
+    'range_match',
+    'mapping',
+    'semantic_match',
+  ]
+  return allowed.includes(operator as MatchOperator) ? (operator as MatchOperator) : 'eq'
+}
+
+export function matchOperatorShortLabel(operator?: string | null): string {
+  const normalized = normalizeMatchOperator(operator)
+  return MATCH_OPERATOR_OPTIONS.find((option) => option.value === normalized)?.shortLabel ?? '='
 }
 
 /** 画布快照：与 X6 graph.toJSON() 解耦后的 nodes/edges */

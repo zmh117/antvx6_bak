@@ -9,6 +9,42 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
+RELATION_TYPE_LABELS = {
+    "identifier_match": "标识匹配",
+    "ownership": "归属关系",
+    "lookup": "码值/维表映射",
+    "same_meaning": "同义字段",
+    "hierarchy": "层级关系",
+    "derived": "派生关系",
+    "business_process": "业务流程关联",
+    "semantic_related": "语义相关",
+    "logical_relation": "逻辑关系",
+    "foreign_key": "外键关系",
+    "business_relation": "业务关系",
+    "lookup_relation": "查询关系",
+    "derived_relation": "派生关系",
+    "unknown": "未知",
+}
+
+MATCH_OPERATOR_LABELS = {
+    "eq": "等于",
+    "contains": "包含",
+    "included_in": "被包含",
+    "prefix_match": "前缀匹配",
+    "pattern_match": "模式匹配",
+    "range_match": "区间匹配",
+    "mapping": "映射转换",
+    "semantic_match": "语义适配",
+}
+
+
+def _relation_type_label(value: str | None) -> str:
+    return RELATION_TYPE_LABELS.get(value or "", value or "标识匹配")
+
+
+def _match_operator_label(value: str | None) -> str:
+    return MATCH_OPERATOR_LABELS.get(value or "", value or "等于")
+
 
 def run_validation(cur: psycopg.Cursor, graph_id: UUID) -> list[str]:
     warnings: list[str] = []
@@ -145,7 +181,7 @@ def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
     cur.execute(
         """
         SELECT relation_key, source_table_key, source_column_key, target_table_key, target_column_key,
-               relationship, join_condition, description, confidence, verified
+               relation_type, match_operator, relationship, join_condition, description, confidence, verified
         FROM er_relation WHERE graph_id = %s AND deleted_at IS NULL
         """,
         (graph_id,),
@@ -157,7 +193,8 @@ def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
                 None,
                 [
                     f"逻辑关联 {r['source_table_key']}.{r['source_column_key']} -> {r['target_table_key']}.{r['target_column_key']}",
-                    f"基数 {r.get('relationship') or ''}",
+                    f"业务关系 {_relation_type_label(r.get('relation_type'))}",
+                    f"匹配方式 {_match_operator_label(r.get('match_operator'))}",
                     f"条件 {r.get('join_condition') or ''}",
                     f"说明 {r.get('description') or ''}",
                     f"置信度 {r.get('confidence')}",
@@ -190,7 +227,8 @@ def _relation_doc_from_row(r: dict[str, Any]) -> dict[str, Any]:
             None,
             [
                 f"逻辑关联 {r['source_table_key']}.{r['source_column_key']} -> {r['target_table_key']}.{r['target_column_key']}",
-                f"基数 {r.get('relationship') or ''}",
+                f"业务关系 {_relation_type_label(r.get('relation_type'))}",
+                f"匹配方式 {_match_operator_label(r.get('match_operator'))}",
                 f"条件 {r.get('join_condition') or ''}",
                 f"说明 {r.get('description') or ''}",
                 f"置信度 {r.get('confidence')}",
@@ -206,6 +244,8 @@ def _relation_doc_from_row(r: dict[str, Any]) -> dict[str, Any]:
         "ref_column_key": None,
         "ref_relation_key": r["relation_key"],
         "join_condition": r.get("join_condition"),
+        "relation_type": r.get("relation_type"),
+        "match_operator": r.get("match_operator"),
         "relationship": r.get("relationship"),
         "confidence": r.get("confidence"),
         "verified": r.get("verified"),
@@ -218,7 +258,7 @@ def _fetch_relations_for_column(
     cur.execute(
         """
         SELECT relation_key, source_table_key, source_column_key, target_table_key, target_column_key,
-               relationship, join_condition, description, confidence, verified
+               relation_type, match_operator, relationship, join_condition, description, confidence, verified
         FROM er_relation
         WHERE graph_id = %s AND deleted_at IS NULL
           AND (
@@ -240,7 +280,7 @@ def _fetch_relations_by_keys(
     cur.execute(
         """
         SELECT relation_key, source_table_key, source_column_key, target_table_key, target_column_key,
-               relationship, join_condition, description, confidence, verified
+               relation_type, match_operator, relationship, join_condition, description, confidence, verified
         FROM er_relation
         WHERE graph_id = %s AND deleted_at IS NULL AND relation_key = ANY(%s)
         ORDER BY relation_key
@@ -497,7 +537,7 @@ def build_agent_context(cur: psycopg.Cursor, graph_id: UUID, query: str | None =
             flag = " [verified]" if doc.get("verified") else " [unverified]"
             rel_lines.append(
                 f"- {rk}: {doc.get('join_condition') or ''} "
-                f"({doc.get('relationship')}, conf={doc.get('confidence')}){flag}"
+                f"({_match_operator_label(doc.get('match_operator'))}, conf={doc.get('confidence')}){flag}"
             )
         if doc.get("doc_type") == "business_flow_binding" and doc.get("ref_flow_key"):
             target = doc.get("ref_relation_key")
@@ -516,7 +556,7 @@ def build_agent_context(cur: psycopg.Cursor, graph_id: UUID, query: str | None =
     elif not q:
         cur.execute(
             """
-            SELECT relation_key, join_condition, relationship, confidence, verified
+            SELECT relation_key, join_condition, relation_type, match_operator, relationship, confidence, verified
             FROM er_relation WHERE graph_id = %s AND deleted_at IS NULL ORDER BY relation_key
             """,
             (graph_id,),
@@ -525,7 +565,7 @@ def build_agent_context(cur: psycopg.Cursor, graph_id: UUID, query: str | None =
             flag = " [verified]" if r.get("verified") else " [unverified]"
             rel_lines.append(
                 f"- {r['relation_key']}: {r.get('join_condition')} "
-                f"({r.get('relationship')}, conf={r.get('confidence')}){flag}"
+                f"({_match_operator_label(r.get('match_operator'))}, conf={r.get('confidence')}){flag}"
             )
         if rel_lines:
             text += "\n\n逻辑关联：\n" + "\n".join(rel_lines)

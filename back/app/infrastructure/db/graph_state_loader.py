@@ -49,7 +49,7 @@ def load_graph_state(cur: psycopg.Cursor, graph_id: UUID) -> GraphState:
     cur.execute(
         """
         SELECT relation_key, source_table_key, source_column_key, target_table_key,
-               target_column_key, relation_type, relationship, cardinality, relation_name,
+               target_column_key, relation_type, match_operator, relationship, cardinality, relation_name,
                description, join_condition, direction, confidence, source, verified, tags, raw_edge
         FROM er_relation WHERE graph_id = %s AND deleted_at IS NULL
         """,

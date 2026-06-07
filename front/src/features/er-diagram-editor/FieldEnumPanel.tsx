@@ -21,16 +21,18 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import {
   COLUMN_ROLE_OPTIONS,
-  RELATIONSHIP_OPTIONS,
+  MATCH_OPERATOR_OPTIONS,
   RELATION_TYPE_OPTIONS,
   TABLE_TYPE_OPTIONS,
   emptyEnumEntry,
   fieldQualifiedName,
+  normalizeMatchOperator,
+  normalizeRelationType,
   type ColumnRole,
   type FieldEnumEntry,
+  type MatchOperator,
   type RelationBusinessData,
   type RelationType,
-  type RelationshipType,
   type TableField,
   type TableNodeData,
   type TableType,
@@ -59,7 +61,7 @@ export type RelationBusinessPatch = {
   relationName?: string
   description?: string
   relationType?: RelationType
-  relationship?: RelationshipType
+  matchOperator?: MatchOperator
   verified?: boolean
   tags?: string[]
 }
@@ -148,12 +150,11 @@ function tableDraftFrom(table: TableNodeData) {
 }
 
 function relationDraftFrom(relation: RelationBusinessData) {
-  const relationship = relation.relationship || relation.type || '1:1'
   return {
     relationName: relation.relationName ?? '',
     description: relation.description ?? '',
-    relationType: relation.relationType ?? 'logical_relation',
-    relationship,
+    relationType: normalizeRelationType(relation.relationType),
+    matchOperator: normalizeMatchOperator(relation.matchOperator),
     verified: Boolean(relation.verified),
     tagsText: joinTags(relation.tags),
   }
@@ -354,31 +355,32 @@ function SelectField<T extends string>({
   )
 }
 
-function RelationshipSegmented({
+function MatchOperatorSegmented({
   value,
   onChange,
 }: {
-  value: RelationshipType
-  onChange: (value: RelationshipType) => void
+  value: MatchOperator
+  onChange: (value: MatchOperator) => void
 }) {
   return (
     <section className="space-y-2">
-      <Label className="text-xs text-muted-foreground">基数</Label>
-      <div className="grid grid-cols-3 gap-1 rounded-md border border-border bg-muted/30 p-1">
-        {RELATIONSHIP_OPTIONS.map((option) => (
+      <Label className="text-xs text-muted-foreground">匹配方式</Label>
+      <div className="grid grid-cols-4 gap-1 rounded-md border border-border bg-muted/30 p-1">
+        {MATCH_OPERATOR_OPTIONS.map((option) => (
           <button
             key={option.value}
             type="button"
             aria-pressed={value === option.value}
             className={cn(
-              'h-8 rounded-sm text-xs font-semibold transition-colors',
+              'h-8 rounded-sm px-1 text-xs font-semibold transition-colors',
               value === option.value
                 ? 'bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/40'
                 : 'text-muted-foreground hover:bg-background/60 hover:text-foreground',
             )}
             onClick={() => onChange(option.value)}
+            title={option.label}
           >
-            {option.label}
+            {option.shortLabel}
           </button>
         ))}
       </div>
@@ -769,7 +771,7 @@ export function RelationBusinessPanel({
         relationName: optionalText(next.relationName),
         description: optionalText(next.description),
         relationType: next.relationType as RelationType,
-        relationship: next.relationship as RelationshipType,
+        matchOperator: next.matchOperator as MatchOperator,
         verified: next.verified,
         tags: optionalTags(next.tagsText),
       })
@@ -784,7 +786,7 @@ export function RelationBusinessPanel({
     n: relation.relationName ?? '',
     d: relation.description ?? '',
     rt: relation.relationType ?? '',
-    rs: relation.relationship ?? relation.type ?? '',
+    mo: relation.matchOperator ?? '',
     v: relation.verified ?? false,
     t: relation.tags ?? [],
   })
@@ -839,9 +841,9 @@ export function RelationBusinessPanel({
         options={RELATION_TYPE_OPTIONS}
         onChange={(value) => commitDraft({ ...draft, relationType: value })}
       />
-      <RelationshipSegmented
-        value={draft.relationship as RelationshipType}
-        onChange={(value) => commitDraft({ ...draft, relationship: value }, true)}
+      <MatchOperatorSegmented
+        value={draft.matchOperator as MatchOperator}
+        onChange={(value) => commitDraft({ ...draft, matchOperator: value }, true)}
       />
       <section className="flex items-center justify-between rounded-md border border-border bg-muted/20 px-3 py-2">
         <Label htmlFor="relation-verified" className="text-xs text-muted-foreground">

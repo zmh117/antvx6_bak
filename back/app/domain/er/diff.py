@@ -100,6 +100,7 @@ def compute_graph_diff(old_state: GraphState, payload: GraphPayload) -> GraphCha
         "target_table_key",
         "target_column_key",
         "relation_type",
+        "match_operator",
         "relationship",
         "relation_name",
         "join_condition",

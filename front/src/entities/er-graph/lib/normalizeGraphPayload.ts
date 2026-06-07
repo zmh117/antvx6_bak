@@ -169,6 +169,7 @@ export function buildNormalizedSyncBody(
       target_table_key: tt,
       target_column_key: tc,
       relation_type: data.relationType ?? 'logical_relation',
+      match_operator: data.matchOperator ?? 'eq',
       relationship: data.relationship ?? data.type ?? '1:1',
       join_condition: data.joinCondition,
       relation_name: data.relationName,

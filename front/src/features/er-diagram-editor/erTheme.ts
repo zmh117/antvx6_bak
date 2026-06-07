@@ -32,8 +32,8 @@ const ER_THEME_DARK: ErThemeVars = {
   edgeLabelBorder: '#9ca3af',
 }
 
-/** 关系边基数标签（1:1 / 1:N / N:N） */
-export function buildErRelationshipLabel(text: string, mode?: string | null) {
+/** 关系边匹配方式标签（= / 包含 / 映射 / 语义 / 区间） */
+export function buildErMatchOperatorLabel(text: string, mode?: string | null) {
   const t = readErThemeVars(mode)
   return {
     attrs: {
@@ -43,6 +43,9 @@ export function buildErRelationshipLabel(text: string, mode?: string | null) {
     position: 0.5 as const,
   }
 }
+
+/** @deprecated 保留给旧调用；新代码使用 buildErMatchOperatorLabel。 */
+export const buildErRelationshipLabel = buildErMatchOperatorLabel
 
 export type ErColorMode = 'light' | 'dark'
 

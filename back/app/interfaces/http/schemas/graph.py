@@ -61,6 +61,7 @@ class RelationPayload(BaseModel):
     target_table_key: str
     target_column_key: str
     relation_type: str = "logical_relation"
+    match_operator: str = "eq"
     relationship: str | None = "1:1"
     cardinality: str | None = None
     relation_name: str | None = None

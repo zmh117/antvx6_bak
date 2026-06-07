@@ -6,12 +6,13 @@ import {
   tableBodyHeight,
 } from './erLayout'
 import { resolveRelationEndpoints } from './relationUtils'
-import type {
-  RelationBusinessData,
-  RelationRef,
-  RelationshipData,
-  TableField,
-  TableNodeData,
+import {
+  normalizeMatchOperator,
+  type RelationBusinessData,
+  type RelationRef,
+  type RelationshipData,
+  type TableField,
+  type TableNodeData,
 } from '@/entities/er-graph/model/erSchema'
 
 function fieldKey(name: string) {
@@ -32,7 +33,7 @@ export function normalizeRelationshipType(
 /**
  * 将图中当前节点与连线还原为 ER JSON 适用的表数组。
  * 关联以「字段端口」连线为准：`fld-R-<列>` → `fld-L-<目标列>` 或其反向（如 a.id = b.user_id）。
- * 会先清除各表中原来的 relation/ref，再根据边重建（含连线上基数 1:1/1:N/N:N）。
+ * 会先清除各表中原来的 relation/ref，再根据边重建（含连线匹配方式）。
  */
 export function graphToErTables(graph: Graph): TableNodeData[] {
   const tablesByNodeId = new Map<string, TableNodeData>()
@@ -120,6 +121,7 @@ export function graphToErTables(graph: Graph): TableNodeData[] {
     const entry: RelationRef = {
       table: toCellId,
       field: toField.name,
+      matchOperator: normalizeMatchOperator(edgeData?.matchOperator),
       relationship: relType,
       relationKey: edgeData?.relationKey,
       relationType: edgeData?.relationType,

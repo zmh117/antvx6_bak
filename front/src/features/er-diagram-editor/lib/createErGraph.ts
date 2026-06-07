@@ -5,8 +5,8 @@ import {
   type Edge,
   type ValidateConnectionArgs,
 } from '@antv/x6'
-import { buildErRelationshipLabel, readErThemeVars } from '../erTheme'
-import type { RelationshipData } from '@/entities/er-graph/model/erSchema'
+import { buildErMatchOperatorLabel, readErThemeVars } from '../erTheme'
+import type { RelationBusinessData } from '@/entities/er-graph/model/erSchema'
 
 const SHARED_EDGE_ROUTE = {
   router: { name: 'metro' as const },
@@ -59,8 +59,8 @@ export function createErGraph(opts: CreateErGraphOptions): Graph {
       createEdge: (): Edge =>
         graph.createEdge({
           shape: 'er-relationship',
-          data: { type: '1:1' } as RelationshipData,
-          labels: [buildErRelationshipLabel('1:1')],
+          data: { type: '1:1', relationship: '1:1', matchOperator: 'eq' } as RelationBusinessData,
+          labels: [buildErMatchOperatorLabel('=')],
         }),
       validateMagnet: ({ magnet }) => magnet.getAttribute('port-group') === 'fieldRight',
       validateConnection: (args: ValidateConnectionArgs): boolean =>

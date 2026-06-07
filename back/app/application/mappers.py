@@ -90,6 +90,7 @@ def _relation_from_dto(r: RelationPayload) -> Relation:
         target_table_key=r.target_table_key,
         target_column_key=r.target_column_key,
         relation_type=r.relation_type,
+        match_operator=r.match_operator,
         relationship=r.relationship,
         cardinality=r.cardinality,
         relation_name=r.relation_name,

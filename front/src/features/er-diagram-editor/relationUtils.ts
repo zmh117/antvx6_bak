@@ -1,6 +1,12 @@
 import type { EdgeMetadata } from '@antv/x6'
 import { fieldKey } from './erLayout'
-import type { RelationBusinessData, RelationshipData } from '@/entities/er-graph/model/erSchema'
+import {
+  normalizeMatchOperator,
+  normalizeRelationType,
+  type MatchOperator,
+  type RelationBusinessData,
+  type RelationshipData,
+} from '@/entities/er-graph/model/erSchema'
 import { normalizeRelationshipType } from './graphToErData'
 
 function withoutUndefined<T extends object>(obj: T): Partial<T> {
@@ -68,13 +74,16 @@ export function buildRelationEdgeData(
   targetTable: string,
   targetColumn: string,
   relationship?: RelationshipData['type'],
+  matchOperator?: MatchOperator,
   extra?: Partial<RelationBusinessData>,
 ): RelationBusinessData {
   const rel = normalizeRelationshipType(relationship)
+  const operator = normalizeMatchOperator(matchOperator ?? extra?.matchOperator)
   const relationKey = buildRelationKey(sourceTable, sourceColumn, targetTable, targetColumn)
   return {
     relationKey,
-    relationType: 'logical_relation',
+    relationType: 'identifier_match',
+    matchOperator: operator,
     relationship: rel,
     type: rel,
     sourceTable,
@@ -99,7 +108,14 @@ export function enrichEdgeMetadata(edge: EdgeMetadata, fieldNameByPortKey: Map<s
     return {
       ...edge,
       id: relationKey,
-      data: { ...data, relationKey, type: rel, relationship: rel },
+      data: {
+        ...data,
+        relationKey,
+        relationType: normalizeRelationType(data.relationType),
+        matchOperator: normalizeMatchOperator(data.matchOperator),
+        type: rel,
+        relationship: rel,
+      },
     }
   }
 
@@ -123,6 +139,7 @@ export function enrichEdgeMetadata(edge: EdgeMetadata, fieldNameByPortKey: Map<s
     resolved.targetTable,
     targetColumn,
     (data as RelationshipData).type,
+    data.matchOperator,
     data,
   )
 

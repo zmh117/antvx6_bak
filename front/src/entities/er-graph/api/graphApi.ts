@@ -2,7 +2,7 @@ import {
   buildNormalizedSyncBody,
   type GraphOperationSource,
 } from '@/entities/er-graph/lib/normalizeGraphPayload'
-import type { RelationType, TableNodeData } from '@/entities/er-graph/model/erSchema'
+import type { MatchOperator, RelationType, TableNodeData } from '@/entities/er-graph/model/erSchema'
 import { API_BASE, DEFAULT_GRAPH_ID } from '@/shared/api/config'
 import { authHeaders } from '@/entities/auth'
 import type { Graph } from '@antv/x6'
@@ -69,6 +69,7 @@ export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {
       target_table_key: string
       target_column_key: string
       relation_type?: RelationType | null
+      match_operator?: MatchOperator | null
       relation_name?: string | null
       description?: string | null
       relationship?: string | null

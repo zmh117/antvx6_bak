@@ -1,6 +1,11 @@
 import type { Graph } from '@antv/x6'
-import type { RelationBusinessData, RelationshipData } from '@/entities/er-graph/model/erSchema'
-import { buildErRelationshipLabel, readErColorMode } from '../erTheme'
+import {
+  matchOperatorShortLabel,
+  normalizeMatchOperator,
+  type RelationBusinessData,
+  type RelationshipData,
+} from '@/entities/er-graph/model/erSchema'
+import { buildErMatchOperatorLabel, readErColorMode } from '../erTheme'
 import { buildRelationEdgeData, resolveRelationEndpoints } from '../relationUtils'
 import { withHistoryPausedSync } from './withHistoryPaused'
 
@@ -25,10 +30,16 @@ export function repairErEdgesAfterHistory(graph: Graph): void {
         resolved.targetTable,
         resolved.targetColumn,
         relType,
+        existing.matchOperator,
         existing,
       )
       edge.setData(relData)
-      edge.setLabels([buildErRelationshipLabel(relType, readErColorMode())])
+      edge.setLabels([
+        buildErMatchOperatorLabel(
+          matchOperatorShortLabel(normalizeMatchOperator(relData.matchOperator)),
+          readErColorMode(),
+        ),
+      ])
     }
     })
   })

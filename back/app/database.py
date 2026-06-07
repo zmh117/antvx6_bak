@@ -37,6 +37,10 @@ def run_migrations() -> None:
                 encoding="utf-8"
             )
             cur.execute(collab_revision_sql)
+            relation_match_operator_sql = (
+                migrations_dir / "007_relation_match_operator.sql"
+            ).read_text(encoding="utf-8")
+            cur.execute(relation_match_operator_sql)
             comments_sql = (migrations_dir / "002_comments.sql").read_text(encoding="utf-8")
             cur.execute(comments_sql)
             business_flows_sql = (migrations_dir / "003_business_flows.sql").read_text(

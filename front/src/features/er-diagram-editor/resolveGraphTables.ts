@@ -68,6 +68,7 @@ export type RelationRow = {
   target_table_key: string
   target_column_key: string
   relation_type?: RelationBusinessData['relationType'] | null
+  match_operator?: RelationBusinessData['matchOperator'] | null
   relation_name?: string | null
   description?: string | null
   relationship?: string | null
@@ -202,6 +203,7 @@ export function applyRelationsToTables(
     const entry: RelationRef = {
       table: r.target_table_key,
       field: r.target_column_key,
+      matchOperator: r.match_operator ?? undefined,
       relationship: (r.relationship as RelationRef['relationship']) || '1:1',
       relationKey: r.relation_key,
       relationType: r.relation_type ?? undefined,

@@ -139,11 +139,14 @@ def normalize_edge_relation(
             source_column, target_column = target_column, source_column
 
     relationship = data.get("relationship") or data.get("type") or "1:1"
+    match_operator = data.get("matchOperator") or data.get("match_operator") or "eq"
     relation_key = data.get("relationKey") or build_relation_key(
         str(source_table), str(source_column), str(target_table), str(target_column)
     )
     join_condition = data.get("joinCondition") or (
         f"{source_table}.{source_column} = {target_table}.{target_column}"
+        if match_operator == "eq"
+        else None
     )
 
     return RelationPayload(
@@ -152,7 +155,8 @@ def normalize_edge_relation(
         source_column_key=str(source_column),
         target_table_key=str(target_table),
         target_column_key=str(target_column),
-        relation_type=data.get("relationType") or "logical_relation",
+        relation_type=data.get("relationType") or "identifier_match",
+        match_operator=match_operator,
         relationship=relationship,
         cardinality=data.get("cardinality") or relationship_to_cardinality(relationship),
         relation_name=data.get("relationName"),
@@ -343,6 +347,7 @@ def normalize_legacy_tables_array(
                 if not r:
                     continue
                 rel_type = r.get("relationship") or "1:1"
+                match_operator = r.get("matchOperator") or "eq"
                 target_table = r.get("table")
                 target_field = r.get("field")
                 if not target_table or not target_field:
@@ -361,7 +366,8 @@ def normalize_legacy_tables_array(
                         },
                         "data": {
                             "relationKey": rk,
-                            "relationType": r.get("relationType") or "logical_relation",
+                            "relationType": r.get("relationType") or "identifier_match",
+                            "matchOperator": match_operator,
                             "relationship": rel_type,
                             "relationName": r.get("relationName"),
                             "description": r.get("description"),
@@ -369,7 +375,11 @@ def normalize_legacy_tables_array(
                             "sourceColumn": field["name"],
                             "targetTable": target_table,
                             "targetColumn": target_field,
-                            "joinCondition": f"{tid}.{field['name']} = {target_table}.{target_field}",
+                            "joinCondition": (
+                                f"{tid}.{field['name']} = {target_table}.{target_field}"
+                                if match_operator == "eq"
+                                else None
+                            ),
                             "verified": bool(r.get("verified") or False),
                             "tags": r.get("tags") or [],
                         },
