@@ -50,6 +50,9 @@ def _format_summary(row: dict[str, Any]) -> str:
             return f"删除枚举 {key}"
         return f"删除 {et} {key}"
     if ct == "upsert":
+        if et == "business_flow":
+            after = row.get("after_data") or {}
+            return f"更新业务图 {after.get('name') or key}"
         if et == "relation":
             after = row.get("after_data") or {}
             return (
@@ -63,6 +66,9 @@ def _format_summary(row: dict[str, Any]) -> str:
         if et == "enum":
             return f"更新枚举 {key}"
         return f"更新 {et} {key}"
+    if ct == "create" and et == "business_flow":
+        after = row.get("after_data") or {}
+        return f"创建业务图 {after.get('name') or key}"
     return f"{ct} {et} {key}"
 
 

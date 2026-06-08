@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.application.business_flow_service import business_flow_service
 from app.database import db_transaction, get_connection
@@ -14,6 +14,11 @@ from app.interfaces.http.schemas.business_flow import (
     BusinessFlowListResponse,
     BusinessFlowPayload,
     BusinessFlowResponse,
+)
+from app.services.auth import (
+    AuthenticatedUser,
+    ensure_graph_role,
+    get_current_user_from_header,
 )
 
 router = APIRouter(prefix="/graphs/{graph_id}/business-flows", tags=["business-flows"])
@@ -69,8 +74,13 @@ def _flow_response(row: dict) -> BusinessFlowResponse:
 
 
 @router.get("", response_model=BusinessFlowListResponse)
-def list_flows(graph_id: UUID) -> BusinessFlowListResponse:
+def list_flows(
+    graph_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> BusinessFlowListResponse:
     with get_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_graph_role(cur, graph_id, user.id, "viewer")
         rows = business_flow_service.list_flows(conn, graph_id)
     return BusinessFlowListResponse(
         graph_id=graph_id,
@@ -79,9 +89,15 @@ def list_flows(graph_id: UUID) -> BusinessFlowListResponse:
 
 
 @router.get("/{flow_key}", response_model=BusinessFlowResponse)
-def get_flow(graph_id: UUID, flow_key: str) -> BusinessFlowResponse:
+def get_flow(
+    graph_id: UUID,
+    flow_key: str,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> BusinessFlowResponse:
     try:
         with get_connection() as conn:
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "viewer")
             row = business_flow_service.get_flow(conn, graph_id, flow_key)
         return _flow_response(row)
     except ValueError as e:
@@ -93,20 +109,33 @@ def put_flow(
     graph_id: UUID,
     flow_key: str,
     body: BusinessFlowPayload,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
 ) -> BusinessFlowResponse:
     body.flow_key = flow_key
     try:
         with db_transaction() as conn:
-            row = business_flow_service.save_flow(conn, _to_domain(graph_id, body))
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "editor")
+            row = business_flow_service.save_flow(
+                conn,
+                _to_domain(graph_id, body),
+                user_id=user.id,
+            )
         return _flow_response(row)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/{flow_key}")
-def delete_flow(graph_id: UUID, flow_key: str) -> dict[str, bool]:
+def delete_flow(
+    graph_id: UUID,
+    flow_key: str,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> dict[str, bool]:
     try:
         with db_transaction() as conn:
+            with conn.cursor() as cur:
+                ensure_graph_role(cur, graph_id, user.id, "editor")
             return business_flow_service.delete_flow(conn, graph_id, flow_key)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

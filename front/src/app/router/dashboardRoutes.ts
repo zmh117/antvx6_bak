@@ -5,6 +5,7 @@ export type DashboardRoute =
   | { name: 'business-flows' }
   | { name: 'agent' }
   | { name: 'er-diagram-edit'; graphId: string }
+  | { name: 'business-flow-edit'; graphId: string; flowKey: string }
 
 export type DashboardMenuItem = {
   key: DashboardRoute['name']
@@ -25,6 +26,16 @@ export function parseDashboardRoute(pathname: string): DashboardRoute {
   if (erEditMatch?.[1]) {
     return { name: 'er-diagram-edit', graphId: decodeURIComponent(erEditMatch[1]) }
   }
+  const flowEditMatch = pathname.match(
+    /^\/dashboard\/business-flows\/([^/]+)\/([^/]+)\/edit$/,
+  )
+  if (flowEditMatch?.[1] && flowEditMatch[2]) {
+    return {
+      name: 'business-flow-edit',
+      graphId: decodeURIComponent(flowEditMatch[1]),
+      flowKey: decodeURIComponent(flowEditMatch[2]),
+    }
+  }
   if (pathname === '/dashboard/business-flows') return { name: 'business-flows' }
   if (pathname === '/dashboard/agent') return { name: 'agent' }
   return { name: 'er-diagrams' }
@@ -32,6 +43,10 @@ export function parseDashboardRoute(pathname: string): DashboardRoute {
 
 export function erDiagramEditPath(graphId: string) {
   return `/dashboard/er-diagrams/${encodeURIComponent(graphId)}/edit`
+}
+
+export function businessFlowEditPath(graphId: string, flowKey: string) {
+  return `/dashboard/business-flows/${encodeURIComponent(graphId)}/${encodeURIComponent(flowKey)}/edit`
 }
 
 export function dashboardPathWithSearch(path: string, search?: URLSearchParams | string) {

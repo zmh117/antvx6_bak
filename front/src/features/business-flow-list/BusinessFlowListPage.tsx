@@ -54,9 +54,12 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { getDefaultGraphId, useGraphsQuery } from '@/entities/er-graph/api'
 import {
+  BUSINESS_FLOW_TEMPLATES,
+  getBusinessFlowTemplate,
   useBusinessFlowsQuery,
   useSaveBusinessFlowMutation,
   type BusinessFlowRecord,
+  type BusinessFlowTemplateKey,
 } from '@/entities/business-flow/api'
 import { useUrlSearchState } from '@/shared/lib/useUrlSearchState'
 import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
@@ -89,6 +92,7 @@ const businessFlowMetaFormSchema = z.object({
     .min(1, '请输入名称')
     .max(120, '名称不能超过 120 个字符'),
   description: z.string().trim().max(500, '描述不能超过 500 个字符').optional(),
+  templateKey: z.enum(['blank', 'leave_request_bpmn']).default('blank'),
 })
 
 function parsePositiveInteger(value: string | null, fallback: number) {
@@ -150,6 +154,7 @@ function defaultCreateValues(): BusinessFlowFormValues {
     flowKey: defaultFlowKey(),
     name: '新建业务图',
     description: '',
+    templateKey: 'blank',
   }
 }
 
@@ -158,6 +163,7 @@ function valuesFromFlow(flow: BusinessFlowRecord): BusinessFlowFormValues {
     flowKey: flow.flow_key,
     name: flow.name,
     description: flow.description ?? '',
+    templateKey: 'blank',
   }
 }
 
@@ -304,6 +310,43 @@ function BusinessFlowMetaDialog({
                 )
               }}
             />
+            {mode === 'create' ? (
+              <form.Field
+                name="templateKey"
+                children={(field) => (
+                  <Field>
+                    <FieldLabel htmlFor={field.name}>模板</FieldLabel>
+                    <Select
+                      value={field.state.value}
+                      onValueChange={(value) =>
+                        field.handleChange(value as BusinessFlowTemplateKey)
+                      }
+                      disabled={pending}
+                    >
+                      <SelectTrigger id={field.name}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {BUSINESS_FLOW_TEMPLATES.map((template) => (
+                            <SelectItem key={template.key} value={template.key}>
+                              {template.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {
+                        BUSINESS_FLOW_TEMPLATES.find(
+                          (template) => template.key === field.state.value,
+                        )?.description
+                      }
+                    </p>
+                  </Field>
+                )}
+              />
+            ) : null}
           </FieldGroup>
           <DialogFooter>
             <Button
@@ -324,7 +367,11 @@ function BusinessFlowMetaDialog({
   )
 }
 
-export function BusinessFlowListPage() {
+export function BusinessFlowListPage({
+  onOpenFlow,
+}: {
+  onOpenFlow?: (graphId: string, flowKey: string) => void
+}) {
   const graphsQuery = useGraphsQuery()
   const [filters, setFilters] = useUrlSearchState(
     parseBusinessFlowFilters,
@@ -465,6 +512,14 @@ export function BusinessFlowListPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>操作</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() =>
+                    onOpenFlow?.(row.original.graph_id, row.original.flow_key)
+                  }
+                >
+                  <Network className="size-4" />
+                  打开画布
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => openEditDialog(row.original)}>
                   <Edit3 className="size-4" />
                   编辑信息
@@ -475,7 +530,7 @@ export function BusinessFlowListPage() {
         ),
       }),
     ],
-    [],
+    [onOpenFlow],
   )
   const table = useReactTable({
     data: filteredFlows,
@@ -531,19 +586,19 @@ export function BusinessFlowListPage() {
             edges: editingFlow.edges,
             bindings: editingFlow.bindings,
           }
-        : {
+        : getBusinessFlowTemplate(values.templateKey).createBody({
             name: values.name,
             description: values.description || null,
-            nodes: [],
-            edges: [],
-            bindings: [],
-          }
-    await saveFlowMutation.mutateAsync({
+          })
+    const saved = await saveFlowMutation.mutateAsync({
       flowKey: values.flowKey,
       body,
     })
     setFormMode(null)
     setEditingFlow(null)
+    if (formMode === 'create') {
+      onOpenFlow?.(saved.graph_id, saved.flow_key)
+    }
   }
 
   return (

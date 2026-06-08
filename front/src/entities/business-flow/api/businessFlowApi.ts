@@ -1,41 +1,41 @@
 import { API_BASE, DEFAULT_GRAPH_ID } from '@/shared/api/config'
+import { authHeaders } from '@/entities/auth'
+import type {
+  BusinessFlowBinding,
+  BusinessFlowRecord,
+  BusinessFlowSaveBody,
+} from '../model/businessFlowSchema'
 
-export type BusinessFlowBinding = {
-  binding_key: string
-  step_key: string
-  table_key?: string | null
-  column_key?: string | null
-  relation_key?: string | null
-  usage_type?: string
-  description?: string | null
-}
-
-export type BusinessFlowRecord = {
-  graph_id: string
-  flow_key: string
-  name: string
-  description?: string | null
-  nodes: unknown[]
-  edges: unknown[]
-  bindings: BusinessFlowBinding[]
-  version: number
-}
+export type { BusinessFlowBinding, BusinessFlowRecord, BusinessFlowSaveBody }
 
 export async function listBusinessFlows(graphId = DEFAULT_GRAPH_ID): Promise<BusinessFlowRecord[]> {
-  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/business-flows`)
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/business-flows`, {
+    headers: { ...authHeaders() },
+  })
   if (!res.ok) throw new Error(await res.text())
   const data = (await res.json()) as { flows: BusinessFlowRecord[] }
   return data.flows
 }
 
+export async function fetchBusinessFlow(
+  graphId: string,
+  flowKey: string,
+): Promise<BusinessFlowRecord> {
+  const res = await fetch(`${API_BASE}/api/graphs/${graphId}/business-flows/${flowKey}`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<BusinessFlowRecord>
+}
+
 export async function saveBusinessFlow(
   graphId: string,
   flowKey: string,
-  body: Omit<BusinessFlowRecord, 'graph_id' | 'flow_key' | 'version'>,
+  body: BusinessFlowSaveBody,
 ): Promise<BusinessFlowRecord> {
   const res = await fetch(`${API_BASE}/api/graphs/${graphId}/business-flows/${flowKey}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ flow_key: flowKey, ...body }),
   })
   if (!res.ok) throw new Error(await res.text())
