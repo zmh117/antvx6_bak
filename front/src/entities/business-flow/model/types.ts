@@ -1,6 +1,7 @@
 export type SwimlaneComponentStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
 export type SwimlaneComponentVersionStatus = 'DRAFT' | 'PUBLISHED'
 export type BusinessFlowStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+export type BusinessFlowDomainRole = 'owner' | 'editor' | 'viewer'
 export type LaneInstanceStatus = 'ACTIVE' | 'REMOVED'
 
 export type BusinessFlowNodeType =
@@ -96,3 +97,12 @@ export type BusinessFlowEdgeData = {
 }
 
 export type BusinessFlowCellData = LaneInstanceData | BusinessFlowNodeData | BusinessFlowEdgeData
+
+export type BusinessFlowMemberModel = {
+  userId: string
+  email: string
+  displayName: string
+  role: BusinessFlowDomainRole
+  createdAt: string
+  isCreator?: boolean
+}

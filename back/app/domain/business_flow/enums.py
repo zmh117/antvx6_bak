@@ -12,6 +12,7 @@ from typing import Literal
 ComponentStatus = Literal["DRAFT", "PUBLISHED", "ARCHIVED"]
 ComponentVersionStatus = Literal["DRAFT", "PUBLISHED"]
 BusinessFlowStatus = Literal["DRAFT", "PUBLISHED", "ARCHIVED"]
+BusinessFlowRole = Literal["owner", "editor", "viewer"]
 LaneInstanceStatus = Literal["ACTIVE", "REMOVED"]
 BusinessNodeType = Literal["START", "END", "TASK", "DECISION", "SERVICE", "MANUAL", "EVENT"]
 BusinessEdgeEndpointType = Literal["NODE", "LANE"]
@@ -31,6 +32,7 @@ CollabOwnerType = Literal["BUSINESS_FLOW", "SWIMLANE_COMPONENT_DRAFT"]
 COMPONENT_STATUSES: tuple[str, ...] = ("DRAFT", "PUBLISHED", "ARCHIVED")
 COMPONENT_VERSION_STATUSES: tuple[str, ...] = ("DRAFT", "PUBLISHED")
 BUSINESS_FLOW_STATUSES: tuple[str, ...] = ("DRAFT", "PUBLISHED", "ARCHIVED")
+BUSINESS_FLOW_ROLES: tuple[str, ...] = ("owner", "editor", "viewer")
 LANE_INSTANCE_STATUSES: tuple[str, ...] = ("ACTIVE", "REMOVED")
 BUSINESS_NODE_TYPES: tuple[str, ...] = (
     "START",

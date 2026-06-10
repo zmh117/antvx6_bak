@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     default_graph_id: str = "00000000-0000-0000-0000-000000000001"
+    default_product_id: str = "00000000-0000-0000-0000-000000000001"
     api_prefix: str = "/api"
     jwt_secret: str = "dev-antvx6-change-me"
     jwt_issuer: str = "antvx6"

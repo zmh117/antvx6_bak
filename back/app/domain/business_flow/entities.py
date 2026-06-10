@@ -10,6 +10,7 @@ from app.domain.business_flow.enums import (
     BusinessEdgeEndpointType,
     BusinessEdgeType,
     BusinessFlowStatus,
+    BusinessFlowRole,
     BusinessNodeType,
     ChangeSource,
     ChangeTargetType,
@@ -103,6 +104,13 @@ class BusinessFlowModel:
     description: str | None = None
     status: BusinessFlowStatus = "DRAFT"
     current_version: int = 1
+
+
+@dataclass(slots=True)
+class BusinessFlowMember:
+    business_flow_id: UUID
+    user_id: UUID
+    role: BusinessFlowRole = "viewer"
 
 
 @dataclass(slots=True)

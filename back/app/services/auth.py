@@ -152,6 +152,37 @@ def ensure_graph_role(
     return role
 
 
+def get_business_flow_role(
+    cur: psycopg.Cursor,
+    business_flow_id: UUID,
+    user_id: UUID,
+) -> str | None:
+    cur.execute(
+        """
+        SELECT role FROM business_flow_member
+        WHERE business_flow_id = %s AND user_id = %s
+        """,
+        (business_flow_id, user_id),
+    )
+    row = cur.fetchone()
+    return str(row["role"]) if row else None
+
+
+def ensure_business_flow_role(
+    cur: psycopg.Cursor,
+    business_flow_id: UUID,
+    user_id: UUID,
+    min_role: str = "viewer",
+) -> str:
+    role = get_business_flow_role(cur, business_flow_id, user_id)
+    if not role or ROLE_RANK.get(role, 0) < ROLE_RANK[min_role]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="business flow access denied",
+        )
+    return role
+
+
 def ensure_internal_token(x_internal_token: str | None) -> None:
     if not x_internal_token or x_internal_token != get_settings().collab_internal_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid internal token")

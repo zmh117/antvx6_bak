@@ -21,6 +21,16 @@ from app.interfaces.http.schemas.business_flow.components import (
     PlaceSwimlaneComponentPayload,
     SwimlaneComponentListItemDTO,
 )
+from app.interfaces.http.schemas.business_flow.flows import (
+    BusinessFlowCreateRequest,
+    BusinessFlowMetaResponse,
+    BusinessFlowUpdateRequest,
+)
+from app.interfaces.http.schemas.business_flow.members import (
+    BusinessFlowMemberResponse,
+    BusinessFlowMemberUpsertRequest,
+    BusinessFlowRole,
+)
 
 
 class BusinessFlowBindingPayload(BaseModel):
@@ -63,12 +73,18 @@ __all__ = [
     "BusinessFlowPayload",
     "BusinessFlowResponse",
     "BusinessFlowListResponse",
+    "BusinessFlowCreateRequest",
+    "BusinessFlowMetaResponse",
+    "BusinessFlowUpdateRequest",
     "BusinessFlowChangeOpPayload",
     "BusinessFlowEditorStateResponse",
     "BusinessFlowEdgeDTO",
     "BusinessFlowLaneInstanceDTO",
     "BusinessFlowNodeDTO",
     "BusinessFlowNodeErRefDTO",
+    "BusinessFlowMemberResponse",
+    "BusinessFlowMemberUpsertRequest",
+    "BusinessFlowRole",
     "PlaceSwimlaneComponentPayload",
     "SwimlaneComponentListItemDTO",
 ]
