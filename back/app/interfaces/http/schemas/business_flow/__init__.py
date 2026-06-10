@@ -1,4 +1,8 @@
-"""业务流程 HTTP DTO。"""
+"""Business Flow HTTP DTOs.
+
+The legacy graph-scoped DTOs stay exported from this package so existing routers
+can continue importing `app.interfaces.http.schemas.business_flow`.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,17 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from app.interfaces.http.schemas.business_flow.components import (
+    BusinessFlowChangeOpPayload,
+    BusinessFlowEditorStateResponse,
+    BusinessFlowEdgeDTO,
+    BusinessFlowLaneInstanceDTO,
+    BusinessFlowNodeDTO,
+    BusinessFlowNodeErRefDTO,
+    PlaceSwimlaneComponentPayload,
+    SwimlaneComponentListItemDTO,
+)
 
 
 class BusinessFlowBindingPayload(BaseModel):
@@ -41,3 +56,19 @@ class BusinessFlowResponse(BaseModel):
 class BusinessFlowListResponse(BaseModel):
     graph_id: UUID
     flows: list[BusinessFlowResponse] = Field(default_factory=list)
+
+
+__all__ = [
+    "BusinessFlowBindingPayload",
+    "BusinessFlowPayload",
+    "BusinessFlowResponse",
+    "BusinessFlowListResponse",
+    "BusinessFlowChangeOpPayload",
+    "BusinessFlowEditorStateResponse",
+    "BusinessFlowEdgeDTO",
+    "BusinessFlowLaneInstanceDTO",
+    "BusinessFlowNodeDTO",
+    "BusinessFlowNodeErRefDTO",
+    "PlaceSwimlaneComponentPayload",
+    "SwimlaneComponentListItemDTO",
+]
