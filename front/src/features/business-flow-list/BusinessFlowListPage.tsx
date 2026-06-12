@@ -21,6 +21,7 @@ import {
   Trash2,
   UserPlus,
   Users,
+  Waypoints,
 } from 'lucide-react'
 import * as z from 'zod'
 
@@ -718,7 +719,11 @@ function BusinessFlowMembersDialog({
   )
 }
 
-export function BusinessFlowListPage() {
+export function BusinessFlowListPage({
+  onOpenCanvas,
+}: {
+  onOpenCanvas?: (businessFlowId: string) => void
+}) {
   const flowsQuery = useBusinessFlowMetasQuery()
   const createFlowMutation = useCreateBusinessFlowMutation()
   const updateFlowMutation = useUpdateBusinessFlowMutation()
@@ -906,6 +911,10 @@ export function BusinessFlowListPage() {
                 <DropdownMenuContent align="end">
                   <DropdownMenuLabel>操作</DropdownMenuLabel>
                   <DropdownMenuGroup>
+                    <DropdownMenuItem onClick={() => onOpenCanvas?.(flow.id)}>
+                      <Waypoints className="size-4" />
+                      打开画布
+                    </DropdownMenuItem>
                     {editable ? (
                       <DropdownMenuItem onClick={() => openEditDialog(flow)}>
                         <Edit3 className="size-4" />

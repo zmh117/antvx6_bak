@@ -37,6 +37,70 @@ export type CanvasSize = {
   height: number
 }
 
+export type SwimlaneComponentNode = {
+  id: string
+  componentVersionId: string
+  nodeKey: string
+  nodeType: BusinessFlowNodeType
+  title: string
+  description?: string | null
+  actor?: string | null
+  businessRule?: string | null
+  inputSummary?: string | null
+  outputSummary?: string | null
+  position: CanvasPosition
+  size: CanvasSize
+  styleJson?: BusinessFlowJson | null
+  propertiesJson?: BusinessFlowJson | null
+}
+
+export type SwimlaneComponentEdge = {
+  id: string
+  componentVersionId: string
+  edgeKey: string
+  sourceNodeKey: string
+  targetNodeKey: string
+  sourcePort?: string | null
+  targetPort?: string | null
+  edgeType: BusinessFlowEdgeType
+  label?: string | null
+  conditionText?: string | null
+  dataContractJson?: BusinessFlowJson | null
+  styleJson?: BusinessFlowJson | null
+  propertiesJson?: BusinessFlowJson | null
+}
+
+export type SwimlaneComponentVersion = {
+  id: string
+  componentId: string
+  versionNo: number
+  versionName?: string | null
+  status: SwimlaneComponentVersionStatus
+  canvasJson?: BusinessFlowJson | null
+  semanticJson?: BusinessFlowJson | null
+  thumbnailUrl?: string | null
+  checksum?: string | null
+  createdAt: string
+  publishedAt?: string | null
+  nodes: SwimlaneComponentNode[]
+  edges: SwimlaneComponentEdge[]
+}
+
+export type SwimlaneComponent = {
+  id: string
+  productId: string
+  code: string
+  name: string
+  category?: string | null
+  ownerRole?: string | null
+  description?: string | null
+  status: SwimlaneComponentStatus
+  currentVersionNo: number
+  createdAt: string
+  updatedAt: string
+  versions: SwimlaneComponentVersion[]
+}
+
 export type SwimlaneComponentListItem = {
   componentId: string
   componentVersionId: string
@@ -58,6 +122,18 @@ export type LaneInstanceData = {
   displayName: string
   ownerRole?: string | null
   isOverridden: boolean
+}
+
+export type BusinessFlowLaneInstance = LaneInstanceData & {
+  businessFlowId: string
+  position: CanvasPosition
+  size: CanvasSize
+  zIndex: number
+  layoutJson?: BusinessFlowJson | null
+  overrideJson?: BusinessFlowJson | null
+  status: LaneInstanceStatus
+  createdAt: string
+  updatedAt: string
 }
 
 export type BusinessFlowNodeErRef = {
@@ -82,6 +158,19 @@ export type BusinessFlowNodeData = {
   erRefs?: BusinessFlowNodeErRef[]
 }
 
+export type BusinessFlowNodeRecord = BusinessFlowNodeData & {
+  businessFlowId: string
+  position: CanvasPosition
+  size: CanvasSize
+  inputSummary?: string | null
+  outputSummary?: string | null
+  isOverridden: boolean
+  styleJson?: BusinessFlowJson | null
+  propertiesJson?: BusinessFlowJson | null
+  createdAt: string
+  updatedAt: string
+}
+
 export type BusinessFlowEdgeData = {
   kind: 'BUSINESS_FLOW_EDGE'
   edgeId: string
@@ -94,6 +183,38 @@ export type BusinessFlowEdgeData = {
     output?: string[]
   }
   isCrossLane: boolean
+}
+
+export type BusinessFlowEdgeRecord = BusinessFlowEdgeData & {
+  businessFlowId: string
+  laneInstanceId?: string | null
+  sourceType: BusinessFlowEdgeEndpointType
+  sourceNodeKey?: string | null
+  sourceLaneInstanceKey?: string | null
+  sourcePort?: string | null
+  targetType: BusinessFlowEdgeEndpointType
+  targetNodeKey?: string | null
+  targetLaneInstanceKey?: string | null
+  targetPort?: string | null
+  originComponentEdgeKey?: string | null
+  isOverridden: boolean
+  styleJson?: BusinessFlowJson | null
+  propertiesJson?: BusinessFlowJson | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type LocalBusinessFlowCanvas = {
+  businessFlowId: string
+  name: string
+  code?: string | null
+  description?: string | null
+  version: number
+  createdAt: string
+  updatedAt: string
+  laneInstances: BusinessFlowLaneInstance[]
+  nodes: BusinessFlowNodeRecord[]
+  edges: BusinessFlowEdgeRecord[]
 }
 
 export type BusinessFlowCellData = LaneInstanceData | BusinessFlowNodeData | BusinessFlowEdgeData

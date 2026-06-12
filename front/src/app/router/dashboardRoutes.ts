@@ -3,8 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 export type DashboardRoute =
   | { name: 'er-diagrams' }
   | { name: 'business-flows' }
+  | { name: 'swimlane-components' }
   | { name: 'agent' }
   | { name: 'er-diagram-edit'; graphId: string }
+  | { name: 'business-flow-edit'; businessFlowId: string }
+  | { name: 'swimlane-component-edit'; componentId: string }
 
 export type DashboardMenuItem = {
   key: DashboardRoute['name']
@@ -15,6 +18,7 @@ export type DashboardMenuItem = {
 export const dashboardMenus: DashboardMenuItem[] = [
   { key: 'er-diagrams', title: 'ER 图列表', path: '/dashboard/er-diagrams' },
   { key: 'business-flows', title: '业务图列表', path: '/dashboard/business-flows' },
+  { key: 'swimlane-components', title: '泳道组件', path: '/dashboard/swimlane-components' },
   { key: 'agent', title: 'Agent 输入框', path: '/dashboard/agent' },
 ]
 
@@ -25,13 +29,38 @@ export function parseDashboardRoute(pathname: string): DashboardRoute {
   if (erEditMatch?.[1]) {
     return { name: 'er-diagram-edit', graphId: decodeURIComponent(erEditMatch[1]) }
   }
+  const businessFlowEditMatch = pathname.match(/^\/dashboard\/business-flows\/([^/]+)\/edit$/)
+  if (businessFlowEditMatch?.[1]) {
+    return {
+      name: 'business-flow-edit',
+      businessFlowId: decodeURIComponent(businessFlowEditMatch[1]),
+    }
+  }
+  const swimlaneComponentEditMatch = pathname.match(
+    /^\/dashboard\/swimlane-components\/([^/]+)\/edit$/,
+  )
+  if (swimlaneComponentEditMatch?.[1]) {
+    return {
+      name: 'swimlane-component-edit',
+      componentId: decodeURIComponent(swimlaneComponentEditMatch[1]),
+    }
+  }
   if (pathname === '/dashboard/business-flows') return { name: 'business-flows' }
+  if (pathname === '/dashboard/swimlane-components') return { name: 'swimlane-components' }
   if (pathname === '/dashboard/agent') return { name: 'agent' }
   return { name: 'er-diagrams' }
 }
 
 export function erDiagramEditPath(graphId: string) {
   return `/dashboard/er-diagrams/${encodeURIComponent(graphId)}/edit`
+}
+
+export function businessFlowEditPath(businessFlowId: string) {
+  return `/dashboard/business-flows/${encodeURIComponent(businessFlowId)}/edit`
+}
+
+export function swimlaneComponentEditPath(componentId: string) {
+  return `/dashboard/swimlane-components/${encodeURIComponent(componentId)}/edit`
 }
 
 export function dashboardPathWithSearch(path: string, search?: URLSearchParams | string) {

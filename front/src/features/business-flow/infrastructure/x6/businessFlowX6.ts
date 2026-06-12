@@ -1,0 +1,687 @@
+import { Edge, Graph, Node, Shape, type Cell } from '@antv/x6'
+import type {
+  BusinessFlowEdgeRecord,
+  BusinessFlowNodeRecord,
+  BusinessFlowNodeType,
+  LocalBusinessFlowCanvas,
+  SwimlaneComponentVersion,
+} from '@/entities/business-flow'
+import type {
+  ComponentEditorEdgeDraft,
+  ComponentEditorNodeDraft,
+} from '@/features/business-flow/domain/localBusinessFlowStore'
+
+export const NODE_PORTS = {
+  groups: {
+    top: portGroup('top'),
+    right: portGroup('right'),
+    bottom: portGroup('bottom'),
+    left: portGroup('left'),
+  },
+  items: [
+    { id: 'top', group: 'top' },
+    { id: 'right', group: 'right' },
+    { id: 'bottom', group: 'bottom' },
+    { id: 'left', group: 'left' },
+  ],
+}
+
+export type FlowCellRole = 'LANE_INSTANCE' | 'FLOW_NODE' | 'FLOW_EDGE' | 'COMPONENT_NODE' | 'COMPONENT_EDGE'
+
+export type FlowCellData = {
+  boundedContext: 'business-flow'
+  cellRole: FlowCellRole
+  businessFlowId?: string
+  laneInstanceId?: string
+  laneInstanceKey?: string
+  nodeKey?: string
+  edgeKey?: string
+  componentId?: string
+  componentVersionId?: string
+  originComponentNodeKey?: string | null
+  originComponentEdgeKey?: string | null
+  nodeType?: BusinessFlowNodeType
+  title?: string
+  description?: string | null
+  actor?: string | null
+  businessRule?: string | null
+}
+
+type Point = { x: number; y: number }
+type TerminalData = ReturnType<Edge['getSource']>
+
+function portGroup(position: 'top' | 'right' | 'bottom' | 'left') {
+  return {
+    position,
+    attrs: {
+      circle: {
+        r: 4,
+        magnet: true,
+        stroke: '#5f95ff',
+        strokeWidth: 1.5,
+        fill: '#fff',
+      },
+    },
+  }
+}
+
+function nodeBodyAttrs(type: BusinessFlowNodeType) {
+  const common = {
+    stroke: '#5f95ff',
+    strokeWidth: 1.6,
+    fill: '#f7faff',
+  }
+  if (type === 'END') return { ...common, stroke: '#ef4444', fill: '#fff7f7' }
+  if (type === 'START') return { ...common, stroke: '#22c55e', fill: '#f6fff8' }
+  if (type === 'EVENT') return { ...common, stroke: '#8b5cf6', fill: '#faf5ff' }
+  if (type === 'SERVICE') return { ...common, fill: '#eef6ff' }
+  if (type === 'MANUAL') return { ...common, fill: '#fff8ed' }
+  return common
+}
+
+function nodeMarkup(type: BusinessFlowNodeType) {
+  if (type === 'DECISION') {
+    return [
+      { tagName: 'polygon', selector: 'body' },
+      { tagName: 'text', selector: 'label' },
+    ]
+  }
+  if (type === 'START' || type === 'END' || type === 'EVENT') {
+    return [
+      { tagName: 'circle', selector: 'body' },
+      { tagName: 'text', selector: 'label' },
+    ]
+  }
+  return [
+    { tagName: 'rect', selector: 'body' },
+    { tagName: 'text', selector: 'label' },
+    { tagName: 'text', selector: 'badge' },
+  ]
+}
+
+function nodeAttrs(type: BusinessFlowNodeType, title: string) {
+  const body = nodeBodyAttrs(type)
+  if (type === 'DECISION') {
+    return {
+      body: {
+        refPoints: '0,10 10,0 20,10 10,20',
+        ...body,
+      },
+      label: labelAttrs(title),
+      badge: { text: '' },
+    }
+  }
+  if (type === 'START' || type === 'END' || type === 'EVENT') {
+    return {
+      body: {
+        refCx: '50%',
+        refCy: '50%',
+        refR: '48%',
+        ...body,
+      },
+      label: labelAttrs(title, 11),
+      badge: { text: '' },
+    }
+  }
+  return {
+    body: {
+      rx: 6,
+      ry: 6,
+      ...body,
+    },
+    label: labelAttrs(title),
+    badge: {
+      text: typeText(type),
+      refX: 8,
+      refY: 14,
+      fontSize: 9,
+      fontWeight: 600,
+      fill: '#5f95ff',
+      textAnchor: 'start',
+      textVerticalAnchor: 'middle',
+    },
+  }
+}
+
+function labelAttrs(text: string, fontSize = 12) {
+  return {
+    text,
+    refX: '50%',
+    refY: '56%',
+    fill: '#1f2937',
+    fontSize,
+    fontWeight: 600,
+    textAnchor: 'middle',
+    textVerticalAnchor: 'middle',
+    textWrap: {
+      width: -14,
+      height: -10,
+      ellipsis: true,
+    },
+  }
+}
+
+function typeText(type: BusinessFlowNodeType) {
+  const labels: Record<BusinessFlowNodeType, string> = {
+    START: 'START',
+    END: 'END',
+    TASK: 'TASK',
+    DECISION: 'IF',
+    SERVICE: 'API',
+    MANUAL: 'USER',
+    EVENT: 'EVT',
+  }
+  return labels[type]
+}
+
+function edgeLabels(label?: string | null) {
+  return label
+    ? [
+        {
+          attrs: {
+            label: {
+              text: label,
+              fill: '#475569',
+              fontSize: 11,
+              fontWeight: 500,
+            },
+            body: {
+              fill: '#ffffff',
+              stroke: '#dbe3ef',
+              strokeWidth: 1,
+              rx: 4,
+              ry: 4,
+            },
+          },
+        },
+      ]
+    : []
+}
+
+export function registerBusinessFlowShapes() {
+  Graph.registerNode(
+    'bf-lane',
+    {
+      inherit: 'rect',
+      markup: [
+        { tagName: 'rect', selector: 'body' },
+        { tagName: 'rect', selector: 'header' },
+        { tagName: 'text', selector: 'label' },
+        { tagName: 'text', selector: 'owner' },
+      ],
+      attrs: {
+        body: {
+          rx: 8,
+          ry: 8,
+          stroke: '#8fb2ff',
+          strokeWidth: 1.5,
+          fill: '#ffffff',
+        },
+        header: {
+          refWidth: '100%',
+          height: 34,
+          rx: 8,
+          ry: 8,
+          fill: '#5f95ff',
+          stroke: '#5f95ff',
+          strokeWidth: 1.5,
+        },
+        label: {
+          refX: 14,
+          refY: 18,
+          textAnchor: 'start',
+          textVerticalAnchor: 'middle',
+          fontSize: 13,
+          fontWeight: 700,
+          fill: '#ffffff',
+        },
+        owner: {
+          refX: '100%',
+          refX2: -14,
+          refY: 18,
+          textAnchor: 'end',
+          textVerticalAnchor: 'middle',
+          fontSize: 11,
+          fontWeight: 500,
+          fill: '#eaf1ff',
+        },
+      },
+    },
+    true,
+  )
+
+  const nodeTypes: BusinessFlowNodeType[] = [
+    'START',
+    'END',
+    'TASK',
+    'DECISION',
+    'SERVICE',
+    'MANUAL',
+    'EVENT',
+  ]
+  nodeTypes.forEach((type) => {
+    Graph.registerNode(
+      shapeName(type),
+      {
+        inherit: 'rect',
+        markup: nodeMarkup(type),
+        attrs: nodeAttrs(type, typeText(type)),
+        ports: NODE_PORTS,
+      },
+      true,
+    )
+  })
+}
+
+export function createBusinessFlowGraph(container: HTMLElement) {
+  registerBusinessFlowShapes()
+  const graph = new Graph({
+    container,
+    autoResize: true,
+    background: { color: '#f7f8fb' },
+    grid: { visible: true, type: 'dot', args: { color: '#e1e7f0' } },
+    panning: { enabled: true, eventTypes: ['rightMouseDown'] },
+    mousewheel: {
+      enabled: true,
+      modifiers: 'ctrl',
+      minScale: 0.35,
+      maxScale: 2.4,
+    },
+    connecting: {
+      router: { name: 'manhattan' },
+      connector: { name: 'rounded', args: { radius: 8 } },
+      anchor: 'center',
+      connectionPoint: 'anchor',
+      allowBlank: false,
+      allowLoop: false,
+      allowMulti: true,
+      snap: { radius: 20 },
+      validateMagnet({ magnet }) {
+        return magnet.getAttribute('magnet') === 'true'
+      },
+      validateConnection({ sourceCell, targetCell }) {
+        if (!sourceCell || !targetCell || sourceCell === targetCell) return false
+        return readCellData(sourceCell).cellRole?.includes('NODE') === true &&
+          readCellData(targetCell).cellRole?.includes('NODE') === true
+      },
+      createEdge() {
+        return new Shape.Edge({
+          attrs: edgeAttrs(false),
+          zIndex: 20,
+          data: {
+            boundedContext: 'business-flow',
+            cellRole: 'FLOW_EDGE',
+          } satisfies FlowCellData,
+        })
+      },
+    },
+    interacting: {
+      nodeMovable(view) {
+        return readCellData(view.cell).cellRole !== 'FLOW_EDGE'
+      },
+    },
+  })
+  return graph
+}
+
+export function shapeName(type: BusinessFlowNodeType) {
+  return `bf-node-${type.toLocaleLowerCase()}`
+}
+
+export function graphPointFromEvent(graph: Graph, event: DragEvent): Point {
+  const client = graph.clientToLocal({ x: event.clientX, y: event.clientY })
+  return { x: client.x, y: client.y }
+}
+
+export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) {
+  return graph.addNode({
+    id: draft.nodeKey,
+    shape: shapeName(draft.nodeType),
+    x: draft.position.x,
+    y: draft.position.y,
+    width: draft.size.width,
+    height: draft.size.height,
+    attrs: nodeAttrs(draft.nodeType, draft.title),
+    ports: NODE_PORTS,
+    data: {
+      boundedContext: 'business-flow',
+      cellRole: 'COMPONENT_NODE',
+      nodeKey: draft.nodeKey,
+      nodeType: draft.nodeType,
+      title: draft.title,
+      description: draft.description ?? null,
+      actor: draft.actor ?? null,
+      businessRule: draft.businessRule ?? null,
+    } satisfies FlowCellData,
+    zIndex: 10,
+  })
+}
+
+export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
+  return graph.addNode({
+    id: record.nodeKey,
+    shape: shapeName(record.nodeType),
+    x: record.position.x,
+    y: record.position.y,
+    width: record.size.width,
+    height: record.size.height,
+    attrs: nodeAttrs(record.nodeType, record.title),
+    ports: NODE_PORTS,
+    data: {
+      boundedContext: 'business-flow',
+      cellRole: 'FLOW_NODE',
+      businessFlowId: record.businessFlowId,
+      laneInstanceId: record.laneInstanceId,
+      laneInstanceKey: undefined,
+      nodeKey: record.nodeKey,
+      originComponentNodeKey: record.originComponentNodeKey,
+      nodeType: record.nodeType,
+      title: record.title,
+      description: record.description ?? null,
+      actor: record.actor ?? null,
+      businessRule: record.businessRule ?? null,
+    } satisfies FlowCellData,
+    zIndex: 10,
+  })
+}
+
+export function renderComponentVersion(graph: Graph, version: SwimlaneComponentVersion) {
+  graph.clearCells()
+  version.nodes.forEach((node) => addComponentNode(graph, node))
+  version.edges.forEach((edge) => {
+    graph.addEdge({
+      id: edge.edgeKey,
+      source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
+      target: { cell: edge.targetNodeKey, port: edge.targetPort ?? undefined },
+      attrs: edgeAttrs(false),
+      labels: edgeLabels(edge.label),
+      data: {
+        boundedContext: 'business-flow',
+        cellRole: 'COMPONENT_EDGE',
+        edgeKey: edge.edgeKey,
+        title: edge.label ?? '',
+      } satisfies FlowCellData,
+      zIndex: 20,
+    })
+  })
+  graph.centerContent()
+}
+
+export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlowCanvas) {
+  graph.clearCells()
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  canvas.laneInstances.forEach((lane) => {
+    graph.addNode({
+      id: lane.instanceKey,
+      shape: 'bf-lane',
+      x: lane.position.x,
+      y: lane.position.y,
+      width: lane.size.width,
+      height: lane.size.height,
+      attrs: {
+        label: { text: lane.displayName },
+        owner: { text: lane.ownerRole ?? '' },
+      },
+      data: {
+        boundedContext: 'business-flow',
+        cellRole: 'LANE_INSTANCE',
+        businessFlowId: canvas.businessFlowId,
+        laneInstanceId: lane.laneInstanceId,
+        laneInstanceKey: lane.instanceKey,
+        componentId: lane.componentId,
+        componentVersionId: lane.componentVersionId,
+        title: lane.displayName,
+      } satisfies FlowCellData,
+      zIndex: lane.zIndex,
+    })
+  })
+  canvas.nodes.forEach((node) => {
+    const x6Node = addFlowNode(graph, node)
+    const laneKey = laneKeyById.get(node.laneInstanceId)
+    const lane = laneKey ? graph.getCellById(laneKey) : null
+    if (lane instanceof Node) {
+      lane.addChild(x6Node)
+      x6Node.setData(
+        {
+          ...readCellData(x6Node),
+          laneInstanceKey: laneKey,
+        },
+        { silent: true },
+      )
+    }
+  })
+  canvas.edges.forEach((edge) => {
+    if (!edge.sourceNodeKey || !edge.targetNodeKey) return
+    graph.addEdge({
+      id: edge.edgeKey,
+      source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
+      target: { cell: edge.targetNodeKey, port: edge.targetPort ?? undefined },
+      attrs: edgeAttrs(edge.isCrossLane),
+      labels: edgeLabels(edge.label),
+      data: {
+        boundedContext: 'business-flow',
+        cellRole: 'FLOW_EDGE',
+        businessFlowId: canvas.businessFlowId,
+        laneInstanceId: edge.laneInstanceId ?? undefined,
+        edgeKey: edge.edgeKey,
+        originComponentEdgeKey: edge.originComponentEdgeKey,
+        title: edge.label ?? '',
+      } satisfies FlowCellData,
+      zIndex: 20,
+    })
+  })
+  graph.zoomToFit({ maxScale: 1, minScale: 0.7, padding: 40 })
+}
+
+export function componentDraftFromGraph(graph: Graph) {
+  const nodes: ComponentEditorNodeDraft[] = graph
+    .getNodes()
+    .filter((node) => readCellData(node).cellRole === 'COMPONENT_NODE')
+    .map((node) => {
+      const data = readCellData(node)
+      const position = node.position()
+      const size = node.size()
+      return {
+        nodeKey: data.nodeKey ?? node.id,
+        nodeType: data.nodeType ?? 'TASK',
+        title: data.title ?? String(node.attr('label/text') ?? '任务'),
+        description: data.description ?? null,
+        actor: data.actor ?? null,
+        businessRule: data.businessRule ?? null,
+        position,
+        size,
+      }
+    })
+  const edges: ComponentEditorEdgeDraft[] = graph
+    .getEdges()
+    .filter((edge) => readCellData(edge).cellRole === 'COMPONENT_EDGE')
+    .flatMap((edge) => {
+      const source = edge.getSource()
+      const target = edge.getTarget()
+      const sourceCell = terminalCellId(source)
+      const targetCell = terminalCellId(target)
+      if (!sourceCell || !targetCell) return []
+      const data = readCellData(edge)
+      return [
+        {
+          edgeKey: data.edgeKey ?? edge.id,
+          sourceNodeKey: sourceCell,
+          targetNodeKey: targetCell,
+          sourcePort: terminalPort(source),
+          targetPort: terminalPort(target),
+          edgeType: 'SEQUENCE' as const,
+          label: data.title ?? readEdgeLabel(edge),
+          conditionText: null,
+        },
+      ]
+    })
+  return { nodes, edges }
+}
+
+export function flowDraftFromGraph(
+  graph: Graph,
+  canvas: Pick<LocalBusinessFlowCanvas, 'businessFlowId' | 'name' | 'code' | 'description'>,
+) {
+  const timestamp = new Date().toISOString()
+  const lanes = graph
+    .getNodes()
+    .filter((node) => readCellData(node).cellRole === 'LANE_INSTANCE')
+    .map((node, index) => {
+      const data = readCellData(node)
+      const position = node.position()
+      const size = node.size()
+      return {
+        kind: 'LANE_INSTANCE' as const,
+        businessFlowId: canvas.businessFlowId,
+        laneInstanceId: data.laneInstanceId ?? node.id,
+        instanceKey: data.laneInstanceKey ?? node.id,
+        componentId: data.componentId ?? '',
+        componentVersionId: data.componentVersionId ?? '',
+        componentName: data.title ?? String(node.attr('label/text') ?? '泳道实例'),
+        componentVersionNo: 1,
+        displayName: String(node.attr('label/text') ?? data.title ?? '泳道实例'),
+        ownerRole: String(node.attr('owner/text') ?? ''),
+        isOverridden: true,
+        position,
+        size,
+        zIndex: index + 1,
+        layoutJson: null,
+        overrideJson: null,
+        status: 'ACTIVE' as const,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }
+    })
+  const laneIdByKey = new Map(lanes.map((lane) => [lane.instanceKey, lane.laneInstanceId]))
+  const nodeLaneKey = new Map<string, string | undefined>()
+  const nodes = graph
+    .getNodes()
+    .filter((node) => readCellData(node).cellRole === 'FLOW_NODE')
+    .map((node) => {
+      const data = readCellData(node)
+      const position = node.position()
+      const size = node.size()
+      const parent = node.getParent()
+      const laneKey = data.laneInstanceKey ?? parent?.id
+      nodeLaneKey.set(node.id, laneKey)
+      return {
+        kind: 'BUSINESS_FLOW_NODE' as const,
+        businessFlowId: canvas.businessFlowId,
+        nodeId: data.nodeKey ?? node.id,
+        nodeKey: data.nodeKey ?? node.id,
+        laneInstanceId: data.laneInstanceId ?? laneIdByKey.get(laneKey ?? '') ?? '',
+        originComponentNodeKey: data.originComponentNodeKey ?? null,
+        nodeType: data.nodeType ?? 'TASK',
+        title: data.title ?? String(node.attr('label/text') ?? '任务'),
+        description: data.description ?? null,
+        actor: data.actor ?? null,
+        businessRule: data.businessRule ?? null,
+        erRefs: [],
+        position,
+        size,
+        inputSummary: null,
+        outputSummary: null,
+        isOverridden: true,
+        styleJson: null,
+        propertiesJson: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      } satisfies BusinessFlowNodeRecord
+    })
+  const edges = graph
+    .getEdges()
+    .filter((edge) => readCellData(edge).cellRole === 'FLOW_EDGE')
+    .flatMap((edge) => {
+      const source = edge.getSource()
+      const target = edge.getTarget()
+      const sourceCell = terminalCellId(source)
+      const targetCell = terminalCellId(target)
+      if (!sourceCell || !targetCell) return []
+      const data = readCellData(edge)
+      const sourceNodeKey = sourceCell
+      const targetNodeKey = targetCell
+      const sourceLaneKey = nodeLaneKey.get(sourceNodeKey)
+      const targetLaneKey = nodeLaneKey.get(targetNodeKey)
+      const isCrossLane = Boolean(sourceLaneKey && targetLaneKey && sourceLaneKey !== targetLaneKey)
+      return [
+        {
+          kind: 'BUSINESS_FLOW_EDGE' as const,
+          businessFlowId: canvas.businessFlowId,
+          edgeId: data.edgeKey ?? edge.id,
+          edgeKey: data.edgeKey ?? edge.id,
+          laneInstanceId: isCrossLane ? null : laneIdByKey.get(sourceLaneKey ?? '') ?? null,
+          edgeType: isCrossLane ? 'DEPENDENCY' : 'SEQUENCE',
+          label: data.title ?? readEdgeLabel(edge),
+          conditionText: null,
+          dataContract: undefined,
+          isCrossLane,
+          sourceType: 'NODE' as const,
+          sourceNodeKey,
+          sourceLaneInstanceKey: null,
+          sourcePort: terminalPort(source),
+          targetType: 'NODE' as const,
+          targetNodeKey,
+          targetLaneInstanceKey: null,
+          targetPort: terminalPort(target),
+          originComponentEdgeKey: data.originComponentEdgeKey ?? null,
+          isOverridden: true,
+          styleJson: null,
+          propertiesJson: null,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        } satisfies BusinessFlowEdgeRecord,
+      ]
+    })
+  return {
+    businessFlowId: canvas.businessFlowId,
+    name: canvas.name,
+    code: canvas.code,
+    description: canvas.description,
+    laneInstances: lanes,
+    nodes,
+    edges,
+  }
+}
+
+export function updateNodeText(cell: Cell, title: string) {
+  cell.attr('label/text', title)
+  cell.setData({ ...readCellData(cell), title })
+}
+
+export function updateEdgeText(edge: Edge, label: string) {
+  edge.setLabels(edgeLabels(label))
+  edge.setData({ ...readCellData(edge), title: label })
+}
+
+export function readCellData(cell: Cell): Partial<FlowCellData> {
+  const data = cell.getData() as Partial<FlowCellData> | null
+  return data ?? {}
+}
+
+function edgeAttrs(crossLane: boolean) {
+  return {
+    line: {
+      stroke: crossLane ? '#f97316' : '#9aa8bd',
+      strokeWidth: crossLane ? 2 : 1.6,
+      targetMarker: {
+        name: 'block',
+        width: 8,
+        height: 6,
+      },
+      strokeDasharray: crossLane ? '6 4' : '',
+    },
+  }
+}
+
+function terminalCellId(terminal: TerminalData) {
+  return 'cell' in terminal && terminal.cell ? String(terminal.cell) : null
+}
+
+function terminalPort(terminal: TerminalData) {
+  return 'port' in terminal && terminal.port ? String(terminal.port) : null
+}
+
+function readEdgeLabel(edge: Edge) {
+  const label = edge.getLabelAt(0)?.attrs?.label?.text
+  return typeof label === 'string' ? label : null
+}
