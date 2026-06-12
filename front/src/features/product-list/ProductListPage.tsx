@@ -1,5 +1,23 @@
 import { useMemo, useState } from 'react'
-import { Edit3, Package, Plus, RefreshCw, Trash2, UserPlus, Users } from 'lucide-react'
+import {
+  createColumnHelper,
+  getCoreRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  type PaginationState,
+  type SortingState,
+  useReactTable,
+} from '@tanstack/react-table'
+import {
+  ArrowUpDown,
+  Edit3,
+  Package,
+  Plus,
+  RefreshCw,
+  Trash2,
+  UserPlus,
+  Users,
+} from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -35,6 +53,7 @@ import {
   type ProductRole,
 } from '@/entities/product'
 import { formatDateTime } from '@/shared/lib/date'
+import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
 import { EntityTitleCell } from '@/shared/ui/entity-title-cell'
 
 const roleText: Record<ProductRole, string> = {
@@ -42,6 +61,9 @@ const roleText: Record<ProductRole, string> = {
   editor: 'Editor',
   viewer: 'Viewer',
 }
+
+const productPageSizes = [10, 20, 50]
+const productColumnHelper = createColumnHelper<ProductMeta>()
 
 function effectiveProductRole(product: ProductMeta): ProductRole {
   return product.current_user_role ?? 'viewer'
@@ -58,6 +80,21 @@ function canManageProduct(product: ProductMeta) {
 
 function defaultCode() {
   return `product_${Date.now()}`
+}
+
+function HeaderSortButton({
+  label,
+  onClick,
+}: {
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <Button type="button" variant="ghost" size="xs" className="-ml-2" onClick={onClick}>
+      {label}
+      <ArrowUpDown className="size-3.5" />
+    </Button>
+  )
 }
 
 function ProductMetaDialog({
@@ -268,12 +305,152 @@ export function ProductListPage() {
   const [memberProduct, setMemberProduct] = useState<ProductMeta | null>(null)
   const membersQuery = useProductMembersQuery(memberProduct?.id ?? null, { enabled: Boolean(memberProduct) })
   const products = productsQuery.data ?? []
+  const [sorting, setSorting] = useState<SortingState>([])
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 10,
+  })
   const pending =
     createMutation.isPending ||
     updateMutation.isPending ||
     archiveMutation.isPending ||
     upsertMemberMutation.isPending ||
     removeMemberMutation.isPending
+
+  const columns = useMemo(
+    () => [
+      productColumnHelper.accessor('name', {
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="产品"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 320,
+        cell: ({ row }) => (
+          <EntityTitleCell
+            icon={<Package className="size-4" />}
+            title={row.original.name}
+            description={row.original.description || row.original.code}
+          />
+        ),
+      }),
+      productColumnHelper.accessor(
+        (product) =>
+          product.er_graph_count +
+          product.business_flow_count +
+          product.swimlane_component_count,
+        {
+          id: 'asset_count',
+          header: ({ column }) => (
+            <HeaderSortButton
+              label="资产"
+              onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+            />
+          ),
+          size: 260,
+          cell: ({ row }) => {
+            const product = row.original
+            return (
+              <span className="text-xs text-muted-foreground">
+                ER {product.er_graph_count} · 业务图 {product.business_flow_count} · 泳道{' '}
+                {product.swimlane_component_count}
+              </span>
+            )
+          },
+        },
+      ),
+      productColumnHelper.accessor((product) => effectiveProductRole(product), {
+        id: 'role',
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="角色"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 120,
+        cell: ({ getValue }) => (
+          <Badge variant={getValue() === 'owner' ? 'default' : 'secondary'}>
+            {roleText[getValue()]}
+          </Badge>
+        ),
+      }),
+      productColumnHelper.accessor('updated_at', {
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="更新时间"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 150,
+        cell: ({ getValue }) => (
+          <span className="text-xs text-muted-foreground">
+            {formatDateTime(getValue())}
+          </span>
+        ),
+      }),
+      productColumnHelper.display({
+        id: 'actions',
+        header: () => <div className="text-right">操作</div>,
+        size: 190,
+        cell: ({ row }) => {
+          const product = row.original
+          return (
+            <div className="flex justify-end gap-1">
+              {canManageProduct(product) ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => setMemberProduct(product)}
+                >
+                  <Users className="size-3.5" />
+                  成员
+                </Button>
+              ) : null}
+              {canEditProduct(product) ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => setEditingProduct(product)}
+                >
+                  <Edit3 className="size-3.5" />
+                  编辑
+                </Button>
+              ) : null}
+              {canManageProduct(product) ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => void archiveMutation.mutateAsync(product.id)}
+                >
+                  <Trash2 className="size-3.5" />
+                  归档
+                </Button>
+              ) : null}
+            </div>
+          )
+        },
+      }),
+    ],
+    [archiveMutation, pending],
+  )
+
+  const table = useReactTable({
+    data: products,
+    columns,
+    state: {
+      sorting,
+      pagination,
+    },
+    onSortingChange: setSorting,
+    onPaginationChange: setPagination,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+  })
 
   async function submitProduct(values: { code: string; name: string; description: string }) {
     if (editingProduct === 'new') {
@@ -302,6 +479,25 @@ export function ProductListPage() {
           <p className="text-xs text-muted-foreground">管理 ER 图、业务图和泳道组件的产品归属与成员权限。</p>
         </div>
         <div className="flex items-center gap-2">
+          <Select
+            value={String(pagination.pageSize)}
+            onValueChange={(value) =>
+              setPagination({ pageIndex: 0, pageSize: Number(value) })
+            }
+          >
+            <SelectTrigger className="h-8 w-[108px]" aria-label="分页大小">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {productPageSizes.map((pageSize) => (
+                  <SelectItem key={pageSize} value={String(pageSize)}>
+                    {pageSize} / 页
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
           <Button size="sm" variant="outline" onClick={() => void productsQuery.refetch()}>
             <RefreshCw className="size-4" />
             刷新
@@ -313,77 +509,19 @@ export function ProductListPage() {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        <div className="overflow-hidden rounded-md border border-border bg-card">
-          <table className="w-full min-w-[860px] text-sm">
-            <thead className="bg-muted/50 text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium">产品</th>
-                <th className="px-3 py-2 text-left font-medium">资产</th>
-                <th className="px-3 py-2 text-left font-medium">角色</th>
-                <th className="px-3 py-2 text-left font-medium">更新时间</th>
-                <th className="px-3 py-2 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {productsQuery.isLoading ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-muted-foreground">
-                    加载中...
-                  </td>
-                </tr>
-              ) : products.length ? (
-                products.map((product) => (
-                  <tr key={product.id} className="border-t border-border">
-                    <td className="px-3 py-2">
-                      <EntityTitleCell
-                        icon={<Package className="size-4" />}
-                        title={product.name}
-                        description={product.description || product.code}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">
-                      ER {product.er_graph_count} · 业务图 {product.business_flow_count} · 泳道 {product.swimlane_component_count}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge variant={effectiveProductRole(product) === 'owner' ? 'default' : 'secondary'}>
-                        {roleText[effectiveProductRole(product)]}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{formatDateTime(product.updated_at)}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex justify-end gap-1">
-                        {canManageProduct(product) ? (
-                          <Button size="xs" variant="ghost" onClick={() => setMemberProduct(product)}>
-                            <Users className="size-3.5" />
-                            成员
-                          </Button>
-                        ) : null}
-                        {canEditProduct(product) ? (
-                          <Button size="xs" variant="ghost" onClick={() => setEditingProduct(product)}>
-                            <Edit3 className="size-3.5" />
-                            编辑
-                          </Button>
-                        ) : null}
-                        {canManageProduct(product) ? (
-                          <Button size="xs" variant="ghost" onClick={() => void archiveMutation.mutateAsync(product.id)}>
-                            <Trash2 className="size-3.5" />
-                            归档
-                          </Button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-muted-foreground">
-                    暂无产品
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          table={table}
+          columnsLength={columns.length}
+          loading={productsQuery.isLoading}
+          error={productsQuery.error}
+          minWidth={980}
+          emptyTitle="暂无产品"
+          emptyDescription="可以新增产品，用于归属 ER 图、业务图和泳道组件。"
+        />
+        <DataTablePagination
+          table={table}
+          label={`共 ${products.length} 个产品，当前显示 ${table.getRowModel().rows.length} 个`}
+        />
       </div>
 
       {editingProduct ? (
