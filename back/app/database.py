@@ -63,5 +63,9 @@ def run_migrations() -> None:
                 migrations_dir / "009_business_flow_members.sql"
             ).read_text(encoding="utf-8")
             cur.execute(business_flow_members_sql)
+            product_members_sql = (migrations_dir / "010_product_members.sql").read_text(
+                encoding="utf-8"
+            )
+            cur.execute(product_members_sql)
             database_connection_service.seed_env_target_connection(cur)
         conn.commit()

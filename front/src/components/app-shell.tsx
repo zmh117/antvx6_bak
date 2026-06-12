@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react'
-import { Database, Layers3, LogOut, Network, Sparkles } from 'lucide-react'
+import { Database, Layers3, LogOut, Network, Package, Sparkles } from 'lucide-react'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { clearAuthSession, getCurrentUser } from '@/entities/auth'
 import { dashboardMenus, type DashboardRoute } from '@/app/router/dashboardRoutes'
 import { cn } from '@/lib/utils'
 
 const menuIcons: Record<string, typeof Database> = {
+  products: Package,
   'er-diagrams': Database,
   'business-flows': Network,
   'swimlane-components': Layers3,

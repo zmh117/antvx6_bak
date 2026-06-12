@@ -21,10 +21,19 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import type { BusinessFlowNodeType, SwimlaneComponent } from '@/entities/business-flow'
+import { useProductsQuery } from '@/entities/product'
 import {
   createLocalId,
   createSwimlaneComponent,
@@ -71,15 +80,26 @@ export function SwimlaneComponentListPage({
   onCreate: (componentId: string) => void
   onEdit: (componentId: string) => void
 }) {
+  const productsQuery = useProductsQuery()
+  const [productFilter, setProductFilter] = useState('all')
   const [components, setComponents] = useState<SwimlaneComponent[]>(() => listSwimlaneComponents())
+  const products = productsQuery.data ?? []
+  const productNameById = useMemo(
+    () => new Map(products.map((product) => [product.id, product.name])),
+    [products],
+  )
   const sortedComponents = useMemo(
     () =>
-      [...components].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    [components],
+      [...components]
+        .filter((component) => productFilter === 'all' || component.productId === productFilter)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [components, productFilter],
   )
 
   function createComponent() {
-    const component = createSwimlaneComponent()
+    const selectedProductId =
+      productFilter !== 'all' ? productFilter : products[0]?.id
+    const component = createSwimlaneComponent(selectedProductId)
     setComponents(listSwimlaneComponents())
     onCreate(component.id)
   }
@@ -93,10 +113,27 @@ export function SwimlaneComponentListPage({
             预画可复用流程组件，业务图中拖入后生成独立实例。
           </p>
         </div>
-        <Button size="sm" onClick={createComponent}>
-          <Plus className="size-4" />
-          新建组件
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select value={productFilter} onValueChange={setProductFilter}>
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="产品" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部产品</SelectItem>
+                {products.map((product) => (
+                  <SelectItem key={product.id} value={product.id}>
+                    {product.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Button size="sm" onClick={createComponent} disabled={products.length === 0 && productFilter === 'all'}>
+            <Plus className="size-4" />
+            新建组件
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
         <div className="grid gap-3 lg:grid-cols-3 xl:grid-cols-4">
@@ -112,9 +149,9 @@ export function SwimlaneComponentListPage({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold">{component.name}</div>
-                    <div className="mt-1 truncate text-xs text-muted-foreground">
-                      {component.description || component.code}
-                    </div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">
+                      {productNameById.get(component.productId) || component.description || component.code}
+                  </div>
                   </div>
                   <Badge variant="outline">v{version?.versionNo ?? component.currentVersionNo}</Badge>
                 </div>

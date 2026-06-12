@@ -148,6 +148,7 @@ class GraphCreateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     business_domain: str | None = None
+    product_id: UUID | None = None
 
 
 class GraphUpdateRequest(BaseModel):
@@ -161,6 +162,9 @@ GraphRole = Literal["owner", "editor", "viewer"]
 
 class GraphMetaResponse(BaseModel):
     id: UUID
+    product_id: UUID | None = None
+    product_code: str | None = None
+    product_name: str | None = None
     name: str
     description: str | None = None
     business_domain: str | None = None

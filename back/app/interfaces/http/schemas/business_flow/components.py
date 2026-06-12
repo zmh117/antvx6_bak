@@ -18,6 +18,135 @@ class SwimlaneComponentListItemDTO(BaseModel):
     thumbnail_url: str | None = None
 
 
+class SwimlaneComponentNodeDTO(BaseModel):
+    id: UUID
+    component_version_id: UUID
+    node_key: str
+    node_type: str
+    title: str
+    description: str | None = None
+    actor: str | None = None
+    business_rule: str | None = None
+    input_summary: str | None = None
+    output_summary: str | None = None
+    position_x: float = 0
+    position_y: float = 0
+    width: float = 120
+    height: float = 60
+    style_json: dict[str, Any] = Field(default_factory=dict)
+    properties_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SwimlaneComponentEdgeDTO(BaseModel):
+    id: UUID
+    component_version_id: UUID
+    edge_key: str
+    source_node_key: str
+    target_node_key: str
+    source_port: str | None = None
+    target_port: str | None = None
+    edge_type: str = "SEQUENCE"
+    label: str | None = None
+    condition_text: str | None = None
+    data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    style_json: dict[str, Any] = Field(default_factory=dict)
+    properties_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SwimlaneComponentVersionDTO(BaseModel):
+    id: UUID
+    component_id: UUID
+    version_no: int
+    version_name: str | None = None
+    status: str
+    canvas_json: dict[str, Any] = Field(default_factory=dict)
+    semantic_json: dict[str, Any] = Field(default_factory=dict)
+    thumbnail_url: str | None = None
+    checksum: str | None = None
+    created_at: str
+    published_at: str | None = None
+    nodes: list[SwimlaneComponentNodeDTO] = Field(default_factory=list)
+    edges: list[SwimlaneComponentEdgeDTO] = Field(default_factory=list)
+
+
+class SwimlaneComponentResponse(BaseModel):
+    id: UUID
+    product_id: UUID
+    product_code: str | None = None
+    product_name: str | None = None
+    code: str
+    name: str
+    category: str | None = None
+    owner_role: str | None = None
+    description: str | None = None
+    status: str
+    current_version_no: int
+    created_at: str
+    updated_at: str
+    versions: list[SwimlaneComponentVersionDTO] = Field(default_factory=list)
+
+
+class SwimlaneComponentCreateRequest(BaseModel):
+    product_id: UUID
+    code: str = Field(pattern=r"^[a-zA-Z0-9_-]+$", max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+    category: str | None = Field(default=None, max_length=120)
+    owner_role: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class SwimlaneComponentUpdateRequest(BaseModel):
+    code: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]+$", max_length=120)
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    category: str | None = Field(default=None, max_length=120)
+    owner_role: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    status: str | None = None
+
+
+class SwimlaneComponentNodeInput(BaseModel):
+    node_key: str
+    node_type: str
+    title: str
+    description: str | None = None
+    actor: str | None = None
+    business_rule: str | None = None
+    input_summary: str | None = None
+    output_summary: str | None = None
+    position_x: float = 0
+    position_y: float = 0
+    width: float = 120
+    height: float = 60
+    style_json: dict[str, Any] = Field(default_factory=dict)
+    properties_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SwimlaneComponentEdgeInput(BaseModel):
+    edge_key: str
+    source_node_key: str
+    target_node_key: str
+    source_port: str | None = None
+    target_port: str | None = None
+    edge_type: str = "SEQUENCE"
+    label: str | None = None
+    condition_text: str | None = None
+    data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    style_json: dict[str, Any] = Field(default_factory=dict)
+    properties_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class SwimlaneComponentVersionSaveRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    category: str | None = Field(default=None, max_length=120)
+    owner_role: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    canvas_json: dict[str, Any] = Field(default_factory=dict)
+    semantic_json: dict[str, Any] = Field(default_factory=dict)
+    thumbnail_url: str | None = None
+    nodes: list[SwimlaneComponentNodeInput] = Field(default_factory=list)
+    edges: list[SwimlaneComponentEdgeInput] = Field(default_factory=list)
+
+
 class BusinessFlowLaneInstanceDTO(BaseModel):
     id: UUID
     instance_key: str

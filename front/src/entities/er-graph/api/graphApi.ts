@@ -101,6 +101,9 @@ export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {
 
 export type GraphMeta = {
   id: string
+  product_id?: string | null
+  product_code?: string | null
+  product_name?: string | null
   name: string
   description?: string | null
   business_domain?: string | null
@@ -133,6 +136,7 @@ export type CreateGraphBody = {
   name?: string
   description?: string | null
   business_domain?: string | null
+  product_id?: string | null
 }
 
 export type UpdateGraphBody = CreateGraphBody
@@ -155,8 +159,11 @@ async function apiErrorMessage(res: Response) {
   return text || `${res.status} ${res.statusText}`
 }
 
-export async function fetchGraphs(): Promise<GraphMeta[]> {
-  const res = await fetch(`${API_BASE}/api/graphs`, {
+export async function fetchGraphs(productId?: string | null): Promise<GraphMeta[]> {
+  const params = new URLSearchParams()
+  if (productId && productId !== 'all') params.set('product_id', productId)
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/api/graphs${qs ? `?${qs}` : ''}`, {
     headers: { ...authHeaders() },
   })
   if (!res.ok) throw new Error(await res.text())

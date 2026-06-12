@@ -46,7 +46,7 @@ export function useSaveBusinessFlowMutation(graphId = getDefaultGraphId()) {
   })
 }
 
-export function useBusinessFlowMetasQuery(productId = DEFAULT_PRODUCT_ID) {
+export function useBusinessFlowMetasQuery(productId = 'all') {
   return useQuery({
     queryKey: businessFlowKeys.metas(productId),
     queryFn: () => listBusinessFlowMetas(productId),

@@ -19,6 +19,7 @@ from app.interfaces.http.schemas.business_flow import (
 from app.services.auth import (
     AuthenticatedUser,
     ensure_business_flow_role,
+    ensure_product_role,
     get_current_user_from_header,
 )
 
@@ -30,21 +31,47 @@ def _default_product_id() -> UUID:
 
 
 BUSINESS_FLOW_META_SELECT = """
-SELECT bf.id, bf.product_id, bf.code, bf.name, bf.description,
+SELECT bf.id, bf.product_id, p.code AS product_code, p.name AS product_name,
+       bf.code, bf.name, bf.description,
        bf.status, bf.current_version, bf.updated_at,
-       m.role AS current_user_role,
+       CASE GREATEST(
+            COALESCE(CASE bfm.role
+                WHEN 'owner' THEN 3
+                WHEN 'editor' THEN 2
+                WHEN 'viewer' THEN 1
+                ELSE 0
+            END, 0),
+            COALESCE(CASE pm.role
+                WHEN 'owner' THEN 3
+                WHEN 'editor' THEN 2
+                WHEN 'viewer' THEN 1
+                ELSE 0
+            END, 0)
+       )
+         WHEN 3 THEN 'owner'
+         WHEN 2 THEN 'editor'
+         WHEN 1 THEN 'viewer'
+         ELSE NULL
+       END AS current_user_role,
        COUNT(DISTINCT li.id) AS lane_instance_count,
        COUNT(DISTINCT n.id) AS node_count,
        COUNT(DISTINCT e.id) AS edge_count
 FROM business_flow bf
-JOIN business_flow_member m ON m.business_flow_id = bf.id
+LEFT JOIN product p ON p.id = bf.product_id
+LEFT JOIN business_flow_member bfm
+  ON bfm.business_flow_id = bf.id AND bfm.user_id = %s
+LEFT JOIN product_member pm
+  ON pm.product_id = bf.product_id AND pm.user_id = %s
 LEFT JOIN business_flow_lane_instance li
   ON li.business_flow_id = bf.id AND li.status = 'ACTIVE'
 LEFT JOIN business_flow_node n ON n.business_flow_id = bf.id
 LEFT JOIN business_flow_edge e ON e.business_flow_id = bf.id
-WHERE bf.id = %s AND m.user_id = %s
-GROUP BY bf.id, bf.product_id, bf.code, bf.name, bf.description,
-         bf.status, bf.current_version, bf.updated_at, m.role
+WHERE bf.id = %s
+  AND (bfm.user_id IS NOT NULL OR pm.user_id IS NOT NULL)
+GROUP BY bf.id, bf.product_id, p.code, p.name,
+         bf.code, bf.name, bf.description,
+         bf.status, bf.current_version, bf.updated_at,
+         bfm.role, pm.role
 """
 
 
@@ -52,6 +79,8 @@ def _business_flow_meta_response(row: dict) -> BusinessFlowMetaResponse:
     return BusinessFlowMetaResponse(
         id=row["id"],
         product_id=row["product_id"],
+        product_code=row.get("product_code"),
+        product_name=row.get("product_name"),
         code=row["code"],
         name=row["name"],
         description=row["description"],
@@ -70,7 +99,7 @@ def _fetch_business_flow_meta(
     business_flow_id: UUID,
     user_id: UUID,
 ) -> BusinessFlowMetaResponse:
-    cur.execute(BUSINESS_FLOW_META_SELECT, (business_flow_id, user_id))
+    cur.execute(BUSINESS_FLOW_META_SELECT, (user_id, user_id, business_flow_id))
     row = cur.fetchone()
     if not row:
         raise HTTPException(
@@ -85,31 +114,55 @@ def list_business_flows(
     product_id: UUID | None = None,
     user: AuthenticatedUser = Depends(get_current_user_from_header),
 ) -> list[BusinessFlowMetaResponse]:
-    selected_product_id = product_id or _default_product_id()
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT bf.id, bf.product_id, bf.code, bf.name, bf.description,
+                SELECT bf.id, bf.product_id, p.code AS product_code, p.name AS product_name,
+                       bf.code, bf.name, bf.description,
                        bf.status, bf.current_version, bf.updated_at,
-                       m.role AS current_user_role,
+                       CASE GREATEST(
+                            COALESCE(CASE bfm.role
+                                WHEN 'owner' THEN 3
+                                WHEN 'editor' THEN 2
+                                WHEN 'viewer' THEN 1
+                                ELSE 0
+                            END, 0),
+                            COALESCE(CASE pm.role
+                                WHEN 'owner' THEN 3
+                                WHEN 'editor' THEN 2
+                                WHEN 'viewer' THEN 1
+                                ELSE 0
+                            END, 0)
+                       )
+                         WHEN 3 THEN 'owner'
+                         WHEN 2 THEN 'editor'
+                         WHEN 1 THEN 'viewer'
+                         ELSE NULL
+                       END AS current_user_role,
                        COUNT(DISTINCT li.id) AS lane_instance_count,
                        COUNT(DISTINCT n.id) AS node_count,
                        COUNT(DISTINCT e.id) AS edge_count
                 FROM business_flow bf
-                JOIN business_flow_member m ON m.business_flow_id = bf.id
+                LEFT JOIN product p ON p.id = bf.product_id
+                LEFT JOIN business_flow_member bfm
+                  ON bfm.business_flow_id = bf.id AND bfm.user_id = %s
+                LEFT JOIN product_member pm
+                  ON pm.product_id = bf.product_id AND pm.user_id = %s
                 LEFT JOIN business_flow_lane_instance li
                   ON li.business_flow_id = bf.id AND li.status = 'ACTIVE'
                 LEFT JOIN business_flow_node n ON n.business_flow_id = bf.id
                 LEFT JOIN business_flow_edge e ON e.business_flow_id = bf.id
-                WHERE m.user_id = %s
-                  AND bf.product_id = %s
+                WHERE (bfm.user_id IS NOT NULL OR pm.user_id IS NOT NULL)
+                  AND (%s::uuid IS NULL OR bf.product_id = %s)
                   AND bf.status <> 'ARCHIVED'
-                GROUP BY bf.id, bf.product_id, bf.code, bf.name, bf.description,
-                         bf.status, bf.current_version, bf.updated_at, m.role
+                GROUP BY bf.id, bf.product_id, p.code, p.name,
+                         bf.code, bf.name, bf.description,
+                         bf.status, bf.current_version, bf.updated_at,
+                         bfm.role, pm.role
                 ORDER BY bf.updated_at DESC, lower(bf.name)
                 """,
-                (user.id, selected_product_id),
+                (user.id, user.id, product_id, product_id),
             )
             return [_business_flow_meta_response(row) for row in cur.fetchall()]
 
@@ -128,9 +181,7 @@ def create_business_flow(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="business flow name is required")
     with db_transaction() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
-            if not cur.fetchone():
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="product not found")
+            ensure_product_role(cur, product_id, user.id, "editor")
             try:
                 cur.execute(
                     """

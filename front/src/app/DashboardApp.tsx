@@ -14,6 +14,7 @@ import { AgentPanelPage } from '@/features/agent-panel/AgentPanelPage'
 import { BusinessFlowEditor } from '@/features/business-flow-editor'
 import { BusinessFlowListPage } from '@/features/business-flow-list/BusinessFlowListPage'
 import { ErDiagramListPage } from '@/features/er-diagram-list/ErDiagramListPage'
+import { ProductListPage } from '@/features/product-list/ProductListPage'
 import {
   SwimlaneComponentEditorPage,
   SwimlaneComponentListPage,
@@ -27,12 +28,14 @@ const ErDiagramEditor = React.lazy(() =>
 
 function routeTitle(route: DashboardRoute) {
   if (route.name === 'er-diagram-edit') return 'ER 图编辑器'
+  if (route.name === 'products') return '产品'
   if (route.name === 'business-flow-edit') return '业务图编辑器'
   if (route.name === 'swimlane-component-edit') return '泳道组件编辑器'
   return dashboardMenus.find((item) => item.key === route.name)?.title ?? 'ER 建模工作台'
 }
 
 function routeSubtitle(route: DashboardRoute) {
+  if (route.name === 'products') return '产品、图资产与成员权限'
   if (route.name === 'er-diagram-edit') return 'AntV X6 · 工业数据建模'
   if (route.name === 'business-flow-edit') return '可复用泳道组件实例化编排'
   if (route.name === 'swimlane-component-edit') return '预画可复用流程组件'
@@ -56,7 +59,9 @@ export function DashboardApp() {
   const shellSubtitle = useMemo(() => routeSubtitle(route), [route])
 
   let content: React.ReactNode
-  if (route.name === 'business-flows') {
+  if (route.name === 'products') {
+    content = <ProductListPage />
+  } else if (route.name === 'business-flows') {
     content = <BusinessFlowListPage onOpenCanvas={(flowId) => navigate(businessFlowEditPath(flowId))} />
   } else if (route.name === 'business-flow-edit') {
     content = (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 export type DashboardRoute =
   | { name: 'er-diagrams' }
+  | { name: 'products' }
   | { name: 'business-flows' }
   | { name: 'swimlane-components' }
   | { name: 'agent' }
@@ -16,6 +17,7 @@ export type DashboardMenuItem = {
 }
 
 export const dashboardMenus: DashboardMenuItem[] = [
+  { key: 'products', title: '产品', path: '/dashboard/products' },
   { key: 'er-diagrams', title: 'ER 图列表', path: '/dashboard/er-diagrams' },
   { key: 'business-flows', title: '业务图列表', path: '/dashboard/business-flows' },
   { key: 'swimlane-components', title: '泳道组件', path: '/dashboard/swimlane-components' },
@@ -46,6 +48,7 @@ export function parseDashboardRoute(pathname: string): DashboardRoute {
     }
   }
   if (pathname === '/dashboard/business-flows') return { name: 'business-flows' }
+  if (pathname === '/dashboard/products') return { name: 'products' }
   if (pathname === '/dashboard/swimlane-components') return { name: 'swimlane-components' }
   if (pathname === '/dashboard/agent') return { name: 'agent' }
   return { name: 'er-diagrams' }

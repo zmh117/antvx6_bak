@@ -339,13 +339,13 @@ export function getSwimlaneComponentVersion(componentVersionId: string) {
   return null
 }
 
-export function createSwimlaneComponent() {
+export function createSwimlaneComponent(productId = DEFAULT_PRODUCT_ID) {
   const timestamp = nowIso()
   const componentId = createLocalId('cmp')
   const versionId = `${componentId}_v1`
   const component: SwimlaneComponent = {
     id: componentId,
-    productId: DEFAULT_PRODUCT_ID,
+    productId,
     code: componentId,
     name: '新泳道组件',
     category: '自定义',

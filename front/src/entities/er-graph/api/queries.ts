@@ -18,19 +18,20 @@ import {
 } from './graphApi'
 import { graphKeys } from './queryKeys'
 
-export function useGraphsQuery() {
+export function useGraphsQuery(productId = 'all') {
   return useQuery({
-    queryKey: graphKeys.list(),
-    queryFn: fetchGraphs,
+    queryKey: graphKeys.list(productId),
+    queryFn: () => fetchGraphs(productId),
   })
 }
 
-export function useCreateGraphMutation() {
+export function useCreateGraphMutation(productId = 'all') {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: createGraph,
     onSuccess: async (created) => {
-      queryClient.setQueryData<GraphMeta[]>(graphKeys.list(), (current) => {
+      const targetProductId = created.product_id ?? productId
+      queryClient.setQueryData<GraphMeta[]>(graphKeys.list(targetProductId), (current) => {
         if (!current) return [created]
         if (current.some((graph) => graph.id === created.id)) return current
         return [...current, created].sort((a, b) => a.name.localeCompare(b.name))

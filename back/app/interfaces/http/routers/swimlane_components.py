@@ -1,0 +1,419 @@
+from __future__ import annotations
+
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from psycopg.types.json import Jsonb
+
+from app.database import db_transaction, get_connection
+from app.interfaces.http.schemas.business_flow import (
+    SwimlaneComponentCreateRequest,
+    SwimlaneComponentResponse,
+    SwimlaneComponentUpdateRequest,
+    SwimlaneComponentVersionSaveRequest,
+)
+from app.services.auth import (
+    AuthenticatedUser,
+    ensure_product_role,
+    get_current_user_from_header,
+)
+
+router = APIRouter(prefix="/swimlane-components", tags=["swimlane-components"])
+
+
+def _component_product_id(cur, component_id: UUID) -> UUID:
+    cur.execute(
+        """
+        SELECT product_id
+        FROM swimlane_component
+        WHERE id = %s AND deleted_at IS NULL AND status <> 'ARCHIVED'
+        """,
+        (component_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"swimlane component not found: {component_id}",
+        )
+    return row["product_id"]
+
+
+def _node_response(row: dict) -> dict:
+    return {
+        **row,
+        "position_x": float(row["position_x"]),
+        "position_y": float(row["position_y"]),
+        "width": float(row["width"]),
+        "height": float(row["height"]),
+        "style_json": row.get("style_json") or {},
+        "properties_json": row.get("properties_json") or {},
+    }
+
+
+def _edge_response(row: dict) -> dict:
+    return {
+        **row,
+        "data_contract_json": row.get("data_contract_json") or {},
+        "style_json": row.get("style_json") or {},
+        "properties_json": row.get("properties_json") or {},
+    }
+
+
+def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
+    cur.execute(
+        """
+        SELECT sc.id, sc.product_id, p.code AS product_code, p.name AS product_name,
+               sc.code, sc.name, sc.category, sc.owner_role, sc.description,
+               sc.status, sc.current_version_no, sc.created_at, sc.updated_at
+        FROM swimlane_component sc
+        JOIN product p ON p.id = sc.product_id
+        WHERE sc.id = %s AND sc.deleted_at IS NULL
+        """,
+        (component_id,),
+    )
+    component = cur.fetchone()
+    if not component:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"swimlane component not found: {component_id}",
+        )
+
+    cur.execute(
+        """
+        SELECT id, component_id, version_no, version_name, canvas_json, semantic_json,
+               thumbnail_url, status, checksum, created_at, published_at
+        FROM swimlane_component_version
+        WHERE component_id = %s
+        ORDER BY version_no ASC
+        """,
+        (component_id,),
+    )
+    versions = []
+    for version in cur.fetchall():
+        cur.execute(
+            """
+            SELECT id, component_version_id, node_key, node_type, title, description,
+                   actor, business_rule, input_summary, output_summary,
+                   position_x, position_y, width, height, style_json, properties_json
+            FROM swimlane_component_node
+            WHERE component_version_id = %s
+            ORDER BY created_at ASC, node_key ASC
+            """,
+            (version["id"],),
+        )
+        nodes = [_node_response(row) for row in cur.fetchall()]
+        cur.execute(
+            """
+            SELECT id, component_version_id, edge_key, source_node_key, target_node_key,
+                   source_port, target_port, edge_type, label, condition_text,
+                   data_contract_json, style_json, properties_json
+            FROM swimlane_component_edge
+            WHERE component_version_id = %s
+            ORDER BY created_at ASC, edge_key ASC
+            """,
+            (version["id"],),
+        )
+        edges = [_edge_response(row) for row in cur.fetchall()]
+        versions.append(
+            {
+                **version,
+                "created_at": version["created_at"].isoformat(),
+                "published_at": version["published_at"].isoformat()
+                if version.get("published_at")
+                else None,
+                "canvas_json": version.get("canvas_json") or {},
+                "semantic_json": version.get("semantic_json") or {},
+                "nodes": nodes,
+                "edges": edges,
+            }
+        )
+
+    return SwimlaneComponentResponse(
+        **{
+            **component,
+            "created_at": component["created_at"].isoformat(),
+            "updated_at": component["updated_at"].isoformat(),
+            "versions": versions,
+        }
+    )
+
+
+def _insert_empty_version(cur, component_id: UUID, user_id: UUID) -> None:
+    cur.execute(
+        """
+        INSERT INTO swimlane_component_version (
+            component_id, version_no, version_name, status, created_by, published_at
+        )
+        VALUES (%s, 1, 'v1', 'PUBLISHED', %s, NOW())
+        """,
+        (component_id, str(user_id)),
+    )
+
+
+@router.get("", response_model=list[SwimlaneComponentResponse])
+def list_swimlane_components(
+    product_id: UUID | None = None,
+    component_status: str | None = Query(default=None, alias="status"),
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> list[SwimlaneComponentResponse]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT sc.id
+                FROM swimlane_component sc
+                JOIN product_member pm
+                  ON pm.product_id = sc.product_id AND pm.user_id = %s
+                WHERE sc.deleted_at IS NULL
+                  AND sc.status <> 'ARCHIVED'
+                  AND (%s::uuid IS NULL OR sc.product_id = %s)
+                  AND (%s::text IS NULL OR sc.status = %s)
+                ORDER BY sc.updated_at DESC, lower(sc.name)
+                """,
+                (user.id, product_id, product_id, component_status, component_status),
+            )
+            return [_fetch_component(cur, row["id"]) for row in cur.fetchall()]
+
+
+@router.post("", response_model=SwimlaneComponentResponse)
+def create_swimlane_component(
+    body: SwimlaneComponentCreateRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> SwimlaneComponentResponse:
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            ensure_product_role(cur, body.product_id, user.id, "editor")
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO swimlane_component (
+                        product_id, code, name, category, owner_role, description,
+                        status, current_version_no, created_by, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, 'PUBLISHED', 1, %s, NOW())
+                    RETURNING id
+                    """,
+                    (
+                        body.product_id,
+                        body.code.strip(),
+                        body.name.strip(),
+                        body.category,
+                        body.owner_role,
+                        body.description,
+                        str(user.id),
+                    ),
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="swimlane component code already exists in product",
+                ) from exc
+            component_id = cur.fetchone()["id"]
+            _insert_empty_version(cur, component_id, user.id)
+            return _fetch_component(cur, component_id)
+
+
+@router.get("/{component_id}", response_model=SwimlaneComponentResponse)
+def get_swimlane_component(
+    component_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> SwimlaneComponentResponse:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            product_id = _component_product_id(cur, component_id)
+            ensure_product_role(cur, product_id, user.id, "viewer")
+            return _fetch_component(cur, component_id)
+
+
+@router.patch("/{component_id}", response_model=SwimlaneComponentResponse)
+def update_swimlane_component(
+    component_id: UUID,
+    body: SwimlaneComponentUpdateRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> SwimlaneComponentResponse:
+    fields_set = body.model_fields_set
+    updates: dict[str, str | None] = {}
+    if "code" in fields_set and body.code is not None:
+        updates["code"] = body.code.strip()
+    if "name" in fields_set and body.name is not None:
+        updates["name"] = body.name.strip()
+    if "category" in fields_set:
+        updates["category"] = (body.category or "").strip() or None
+    if "owner_role" in fields_set:
+        updates["owner_role"] = (body.owner_role or "").strip() or None
+    if "description" in fields_set:
+        updates["description"] = (body.description or "").strip() or None
+    if "status" in fields_set and body.status is not None:
+        if body.status not in {"DRAFT", "PUBLISHED", "ARCHIVED"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="invalid swimlane component status",
+            )
+        updates["status"] = body.status
+
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            product_id = _component_product_id(cur, component_id)
+            ensure_product_role(cur, product_id, user.id, "editor")
+            if updates:
+                assignments = [f"{field} = %s" for field in updates]
+                values = [*updates.values(), component_id]
+                try:
+                    cur.execute(
+                        f"""
+                        UPDATE swimlane_component
+                        SET {", ".join(assignments)}, updated_at = NOW()
+                        WHERE id = %s AND deleted_at IS NULL
+                        """,
+                        values,
+                    )
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="swimlane component code already exists in product",
+                    ) from exc
+            return _fetch_component(cur, component_id)
+
+
+@router.put("/{component_id}/version", response_model=SwimlaneComponentResponse)
+def save_swimlane_component_version(
+    component_id: UUID,
+    body: SwimlaneComponentVersionSaveRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> SwimlaneComponentResponse:
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            product_id = _component_product_id(cur, component_id)
+            ensure_product_role(cur, product_id, user.id, "editor")
+            cur.execute(
+                """
+                SELECT current_version_no
+                FROM swimlane_component
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (component_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"swimlane component not found: {component_id}",
+                )
+            version_no = int(row["current_version_no"]) + 1
+            metadata_updates: dict[str, str | None] = {}
+            if body.name is not None:
+                metadata_updates["name"] = body.name.strip()
+            if body.category is not None:
+                metadata_updates["category"] = body.category.strip() or None
+            if body.owner_role is not None:
+                metadata_updates["owner_role"] = body.owner_role.strip() or None
+            if body.description is not None:
+                metadata_updates["description"] = body.description.strip() or None
+            assignments = [f"{field} = %s" for field in metadata_updates]
+            assignments.extend(["current_version_no = %s", "status = 'PUBLISHED'", "updated_at = NOW()"])
+            values = [*metadata_updates.values(), version_no, component_id]
+            cur.execute(
+                f"""
+                UPDATE swimlane_component
+                SET {", ".join(assignments)}
+                WHERE id = %s
+                """,
+                values,
+            )
+            cur.execute(
+                """
+                INSERT INTO swimlane_component_version (
+                    component_id, version_no, version_name, canvas_json, semantic_json,
+                    thumbnail_url, status, created_by, published_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, 'PUBLISHED', %s, NOW())
+                RETURNING id
+                """,
+                (
+                    component_id,
+                    version_no,
+                    f"v{version_no}",
+                    Jsonb(body.canvas_json),
+                    Jsonb(body.semantic_json),
+                    body.thumbnail_url,
+                    str(user.id),
+                ),
+            )
+            version_id = cur.fetchone()["id"]
+            for node in body.nodes:
+                cur.execute(
+                    """
+                    INSERT INTO swimlane_component_node (
+                        component_version_id, node_key, node_type, title, description,
+                        actor, business_rule, input_summary, output_summary,
+                        position_x, position_y, width, height, style_json, properties_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        version_id,
+                        node.node_key,
+                        node.node_type,
+                        node.title,
+                        node.description,
+                        node.actor,
+                        node.business_rule,
+                        node.input_summary,
+                        node.output_summary,
+                        node.position_x,
+                        node.position_y,
+                        node.width,
+                        node.height,
+                        Jsonb(node.style_json),
+                        Jsonb(node.properties_json),
+                    ),
+                )
+            for edge in body.edges:
+                cur.execute(
+                    """
+                    INSERT INTO swimlane_component_edge (
+                        component_version_id, edge_key, source_node_key, target_node_key,
+                        source_port, target_port, edge_type, label, condition_text,
+                        data_contract_json, style_json, properties_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        version_id,
+                        edge.edge_key,
+                        edge.source_node_key,
+                        edge.target_node_key,
+                        edge.source_port,
+                        edge.target_port,
+                        edge.edge_type,
+                        edge.label,
+                        edge.condition_text,
+                        Jsonb(edge.data_contract_json),
+                        Jsonb(edge.style_json),
+                        Jsonb(edge.properties_json),
+                    ),
+                )
+            return _fetch_component(cur, component_id)
+
+
+@router.delete("/{component_id}", response_model=SwimlaneComponentResponse)
+def archive_swimlane_component(
+    component_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> SwimlaneComponentResponse:
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            product_id = _component_product_id(cur, component_id)
+            ensure_product_role(cur, product_id, user.id, "owner")
+            component = _fetch_component(cur, component_id)
+            cur.execute(
+                """
+                UPDATE swimlane_component
+                SET status = 'ARCHIVED', deleted_at = NOW(), updated_at = NOW()
+                WHERE id = %s AND deleted_at IS NULL
+                """,
+                (component_id,),
+            )
+            return component

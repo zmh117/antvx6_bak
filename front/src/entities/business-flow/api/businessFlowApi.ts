@@ -25,6 +25,8 @@ export type BusinessFlowRecord = {
 export type BusinessFlowMeta = {
   id: string
   product_id: string
+  product_code?: string | null
+  product_name?: string | null
   code: string
   name: string
   description?: string | null
@@ -102,11 +104,12 @@ export async function saveBusinessFlow(
 }
 
 export async function listBusinessFlowMetas(
-  productId = DEFAULT_PRODUCT_ID,
+  productId?: string | null,
 ): Promise<BusinessFlowMeta[]> {
   const params = new URLSearchParams()
-  if (productId) params.set('product_id', productId)
-  const res = await fetch(`${API_BASE}/api/business-flows?${params.toString()}`, {
+  if (productId && productId !== 'all') params.set('product_id', productId)
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/api/business-flows${qs ? `?${qs}` : ''}`, {
     headers: { ...authHeaders() },
   })
   if (!res.ok) throw new Error(await apiErrorMessage(res))
@@ -119,7 +122,7 @@ export async function createBusinessFlow(
   const res = await fetch(`${API_BASE}/api/business-flows`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ product_id: DEFAULT_PRODUCT_ID, ...body }),
+    body: JSON.stringify({ product_id: body.product_id ?? DEFAULT_PRODUCT_ID, ...body }),
   })
   if (!res.ok) throw new Error(await apiErrorMessage(res))
   return res.json() as Promise<BusinessFlowMeta>

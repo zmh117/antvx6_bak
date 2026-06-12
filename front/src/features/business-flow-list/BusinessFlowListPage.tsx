@@ -93,6 +93,7 @@ import {
   type BusinessFlowMeta,
   type BusinessFlowRole,
 } from '@/entities/business-flow/api'
+import { useProductsQuery, type ProductMeta } from '@/entities/product'
 import { formatDateTime } from '@/shared/lib/date'
 import { useUrlSearchState } from '@/shared/lib/useUrlSearchState'
 import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
@@ -121,6 +122,7 @@ const roleOptions: Array<{ value: BusinessFlowRole; label: string }> = [
 
 export type BusinessFlowListFilters = {
   q?: string
+  productId?: string
   role?: BusinessFlowRole | 'all'
   status?: string
   page?: number
@@ -134,6 +136,7 @@ type BusinessFlowFormSubmitValues = z.output<typeof businessFlowMetaFormSchema>
 type BusinessFlowMemberFormSubmitValues = z.output<typeof businessFlowMemberFormSchema>
 
 const businessFlowMetaFormSchema = z.object({
+  productId: z.string().trim().optional(),
   code: z
     .string()
     .trim()
@@ -165,6 +168,7 @@ function parseBusinessFlowFilters(
   const role = params.get('role')
   return {
     q: params.get('q') ?? '',
+    productId: params.get('product') ?? 'all',
     role:
       role === 'owner' || role === 'editor' || role === 'viewer' ? role : 'all',
     status: params.get('status') ?? 'all',
@@ -177,6 +181,8 @@ function parseBusinessFlowFilters(
 function serializeBusinessFlowFilters(filters: BusinessFlowListFilters) {
   const params = new URLSearchParams()
   if (filters.q?.trim()) params.set('q', filters.q.trim())
+  if (filters.productId && filters.productId !== 'all')
+    params.set('product', filters.productId)
   if (filters.role && filters.role !== 'all') params.set('role', filters.role)
   if (filters.status && filters.status !== 'all')
     params.set('status', filters.status)
@@ -221,6 +227,8 @@ function statusLabel(status: string) {
 function flowSearchText(flow: BusinessFlowMeta) {
   return [
     flow.id,
+    flow.product_name,
+    flow.product_code,
     flow.code,
     flow.name,
     flow.description,
@@ -236,8 +244,9 @@ function defaultFlowCode() {
   return `business_flow_${Date.now()}`
 }
 
-function defaultCreateValues(): BusinessFlowFormValues {
+function defaultCreateValues(productId = ''): BusinessFlowFormValues {
   return {
+    productId,
     code: defaultFlowCode(),
     name: '新建业务图',
     description: '',
@@ -246,6 +255,7 @@ function defaultCreateValues(): BusinessFlowFormValues {
 
 function valuesFromFlow(flow: BusinessFlowMeta): BusinessFlowFormValues {
   return {
+    productId: flow.product_id,
     code: flow.code,
     name: flow.name,
     description: flow.description ?? '',
@@ -279,12 +289,14 @@ function BusinessFlowMetaDialog({
   onClose,
   onSubmit,
   pending,
+  products,
 }: {
   initialValues: BusinessFlowFormValues
   mode: BusinessFlowFormMode
   onClose: () => void
   onSubmit: (values: BusinessFlowFormSubmitValues) => Promise<void>
   pending: boolean
+  products: ProductMeta[]
 }) {
   const form = useForm({
     defaultValues: initialValues,
@@ -315,6 +327,32 @@ function BusinessFlowMetaDialog({
           }}
         >
           <FieldGroup>
+            <form.Field
+              name="productId"
+              children={(field) => (
+                <Field>
+                  <FieldLabel htmlFor={field.name}>产品</FieldLabel>
+                  <Select
+                    value={field.state.value || products[0]?.id || ''}
+                    disabled={mode === 'edit' || pending || products.length === 0}
+                    onValueChange={(value) => field.handleChange(value)}
+                  >
+                    <SelectTrigger id={field.name}>
+                      <SelectValue placeholder="选择产品" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {products.map((product) => (
+                          <SelectItem key={product.id} value={product.id}>
+                            {product.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            />
             <form.Field
               name="code"
               children={(field) => {
@@ -724,16 +762,18 @@ export function BusinessFlowListPage({
 }: {
   onOpenCanvas?: (businessFlowId: string) => void
 }) {
-  const flowsQuery = useBusinessFlowMetasQuery()
-  const createFlowMutation = useCreateBusinessFlowMutation()
-  const updateFlowMutation = useUpdateBusinessFlowMutation()
-  const archiveFlowMutation = useArchiveBusinessFlowMutation()
-  const upsertMemberMutation = useUpsertBusinessFlowMemberMutation()
-  const removeMemberMutation = useRemoveBusinessFlowMemberMutation()
   const [filters, setFilters] = useUrlSearchState(
     parseBusinessFlowFilters,
     serializeBusinessFlowFilters,
   )
+  const productsQuery = useProductsQuery()
+  const selectedProductId = filters.productId ?? 'all'
+  const flowsQuery = useBusinessFlowMetasQuery(selectedProductId)
+  const createFlowMutation = useCreateBusinessFlowMutation(selectedProductId)
+  const updateFlowMutation = useUpdateBusinessFlowMutation(selectedProductId)
+  const archiveFlowMutation = useArchiveBusinessFlowMutation(selectedProductId)
+  const upsertMemberMutation = useUpsertBusinessFlowMemberMutation()
+  const removeMemberMutation = useRemoveBusinessFlowMemberMutation()
   const [sorting, setSorting] = useState<SortingState>(() =>
     sortingFromParam(filters.sort),
   )
@@ -757,6 +797,7 @@ export function BusinessFlowListPage({
     removeMemberMutation.error
 
   const flows = flowsQuery.data ?? []
+  const products = productsQuery.data ?? []
   const statusOptions = useMemo(() => {
     const statuses = new Set<string>()
     flows.forEach((flow) => statuses.add(flow.status))
@@ -811,6 +852,26 @@ export function BusinessFlowListPage({
                 {row.original.description || row.original.code}
               </div>
             </div>
+          </div>
+        ),
+      }),
+      flowColumnHelper.accessor((flow) => flow.product_name || '未分配产品', {
+        id: 'product',
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="产品"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 160,
+        cell: ({ row, getValue }) => (
+          <div className="min-w-0">
+            <div className="truncate text-muted-foreground">{getValue()}</div>
+            {row.original.product_code ? (
+              <div className="truncate text-xs text-muted-foreground">
+                {row.original.product_code}
+              </div>
+            ) : null}
           </div>
         ),
       }),
@@ -982,7 +1043,9 @@ export function BusinessFlowListPage({
 
   function openCreateDialog() {
     setEditingFlow(null)
-    setFormInitialValues(defaultCreateValues())
+    const productId =
+      selectedProductId !== 'all' ? selectedProductId : products[0]?.id ?? ''
+    setFormInitialValues(defaultCreateValues(productId))
     setFormMode('create')
   }
 
@@ -1001,6 +1064,7 @@ export function BusinessFlowListPage({
   async function submitFlow(values: BusinessFlowFormSubmitValues) {
     if (formMode === 'create') {
       await createFlowMutation.mutateAsync({
+        product_id: values.productId || null,
         code: values.code,
         name: values.name,
         description: values.description || null,
@@ -1090,12 +1154,30 @@ export function BusinessFlowListPage({
             {pageError instanceof Error ? pageError.message : '操作失败'}
           </div>
         ) : null}
-        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(220px,1fr)_150px_150px_120px]">
+        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(220px,1fr)_180px_150px_150px_120px]">
           <Input
             value={filters.q ?? ''}
             onChange={(event) => setFilters({ q: event.target.value, page: 1 })}
-            placeholder="搜索业务图名称、描述、标识、ID"
+            placeholder="搜索业务图名称、描述、标识、产品、ID"
           />
+          <Select
+            value={filters.productId ?? 'all'}
+            onValueChange={(value) => setFilters({ productId: value, page: 1 })}
+          >
+            <SelectTrigger aria-label="产品筛选">
+              <SelectValue placeholder="产品" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部产品</SelectItem>
+                {products.map((product) => (
+                  <SelectItem key={product.id} value={product.id}>
+                    {product.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
           <Select
             value={filters.role ?? 'all'}
             onValueChange={(value) =>
@@ -1175,6 +1257,7 @@ export function BusinessFlowListPage({
           mode={formMode}
           initialValues={formInitialValues}
           pending={formPending}
+          products={products}
           onClose={closeDialog}
           onSubmit={submitFlow}
         />

@@ -26,6 +26,8 @@ class BusinessFlowUpdateRequest(BaseModel):
 class BusinessFlowMetaResponse(BaseModel):
     id: UUID
     product_id: UUID
+    product_code: str | None = None
+    product_name: str | None = None
     code: str
     name: str
     description: str | None = None

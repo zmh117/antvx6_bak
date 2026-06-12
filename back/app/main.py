@@ -5,7 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import run_migrations
-from app.interfaces.http.routers import auth, business_flows, database_connections, graphs
+from app.interfaces.http.routers import (
+    auth,
+    business_flows,
+    database_connections,
+    graphs,
+    products,
+    swimlane_components,
+)
 from app.interfaces.http.routers import business_flow as business_flow_context
 from app.routers import health
 
@@ -32,7 +39,9 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(auth.router, prefix=settings.api_prefix)
     app.include_router(database_connections.router, prefix=settings.api_prefix)
+    app.include_router(products.router, prefix=settings.api_prefix)
     app.include_router(graphs.router, prefix=settings.api_prefix)
+    app.include_router(swimlane_components.router, prefix=settings.api_prefix)
     app.include_router(business_flow_context.router, prefix=settings.api_prefix)
     app.include_router(business_flows.router, prefix=settings.api_prefix)
     return app

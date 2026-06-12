@@ -20,6 +20,14 @@ from app.config import get_settings
 ROLE_RANK = {"viewer": 1, "editor": 2, "owner": 3}
 
 
+def max_role(*roles: str | None) -> str | None:
+    best: str | None = None
+    for role in roles:
+        if role and ROLE_RANK.get(role, 0) > ROLE_RANK.get(best or "", 0):
+            best = role
+    return best
+
+
 @dataclass(frozen=True)
 class AuthenticatedUser:
     id: UUID
@@ -131,13 +139,20 @@ def current_user_from_request(request: Request) -> AuthenticatedUser:
 def get_graph_role(cur: psycopg.Cursor, graph_id: UUID, user_id: UUID) -> str | None:
     cur.execute(
         """
-        SELECT role FROM er_graph_member
-        WHERE graph_id = %s AND user_id = %s
+        SELECT gm.role AS graph_role, pm.role AS product_role
+        FROM er_graph g
+        LEFT JOIN er_graph_member gm
+          ON gm.graph_id = g.id AND gm.user_id = %s
+        LEFT JOIN product_member pm
+          ON pm.product_id = g.product_id AND pm.user_id = %s
+        WHERE g.id = %s AND g.status <> 'archived'
         """,
-        (graph_id, user_id),
+        (user_id, user_id, graph_id),
     )
     row = cur.fetchone()
-    return str(row["role"]) if row else None
+    if not row:
+        return None
+    return max_role(row.get("graph_role"), row.get("product_role"))
 
 
 def ensure_graph_role(
@@ -159,13 +174,20 @@ def get_business_flow_role(
 ) -> str | None:
     cur.execute(
         """
-        SELECT role FROM business_flow_member
-        WHERE business_flow_id = %s AND user_id = %s
+        SELECT bfm.role AS flow_role, pm.role AS product_role
+        FROM business_flow bf
+        LEFT JOIN business_flow_member bfm
+          ON bfm.business_flow_id = bf.id AND bfm.user_id = %s
+        LEFT JOIN product_member pm
+          ON pm.product_id = bf.product_id AND pm.user_id = %s
+        WHERE bf.id = %s AND bf.status <> 'ARCHIVED'
         """,
-        (business_flow_id, user_id),
+        (user_id, user_id, business_flow_id),
     )
     row = cur.fetchone()
-    return str(row["role"]) if row else None
+    if not row:
+        return None
+    return max_role(row.get("flow_role"), row.get("product_role"))
 
 
 def ensure_business_flow_role(
@@ -179,6 +201,36 @@ def ensure_business_flow_role(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="business flow access denied",
+        )
+    return role
+
+
+def get_product_role(cur: psycopg.Cursor, product_id: UUID, user_id: UUID) -> str | None:
+    cur.execute(
+        """
+        SELECT pm.role
+        FROM product p
+        LEFT JOIN product_member pm
+          ON pm.product_id = p.id AND pm.user_id = %s
+        WHERE p.id = %s AND p.status <> 'archived'
+        """,
+        (user_id, product_id),
+    )
+    row = cur.fetchone()
+    return str(row["role"]) if row and row.get("role") else None
+
+
+def ensure_product_role(
+    cur: psycopg.Cursor,
+    product_id: UUID,
+    user_id: UUID,
+    min_role: str = "viewer",
+) -> str:
+    role = get_product_role(cur, product_id, user_id)
+    if not role or ROLE_RANK.get(role, 0) < ROLE_RANK[min_role]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="product access denied",
         )
     return role
 

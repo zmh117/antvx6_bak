@@ -35,6 +35,7 @@ from app.services.auth import (
     AuthenticatedUser,
     ensure_graph_role,
     ensure_internal_token,
+    ensure_product_role,
     get_current_user_from_header,
 )
 from app.services.history import list_change_history
@@ -49,6 +50,9 @@ router = APIRouter(prefix="/graphs", tags=["graphs"])
 def _graph_meta_response(row: dict, current_user_role: GraphRole | None = None) -> GraphMetaResponse:
     return GraphMetaResponse(
         id=row["id"],
+        product_id=row.get("product_id"),
+        product_code=row.get("product_code"),
+        product_name=row.get("product_name"),
         name=row["name"],
         description=row["description"],
         business_domain=row["business_domain"],
@@ -63,15 +67,17 @@ def _graph_meta_response(row: dict, current_user_role: GraphRole | None = None) 
 
 
 GRAPH_META_SELECT = """
-SELECT g.id, g.name, g.description, g.business_domain,
+SELECT g.id, g.product_id, p.code AS product_code, p.name AS product_name,
+       g.name, g.description, g.business_domain,
        g.version, g.collab_revision, g.status, g.updated_at,
        COUNT(DISTINCT t.table_key) AS table_count,
        COUNT(DISTINCT r.relation_key) AS relation_count
 FROM er_graph g
+LEFT JOIN product p ON p.id = g.product_id
 LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
 LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
 WHERE g.id = %s
-GROUP BY g.id, g.name, g.description, g.business_domain,
+GROUP BY g.id, g.product_id, p.code, p.name, g.name, g.description, g.business_domain,
          g.version, g.collab_revision, g.status, g.updated_at
 """
 
@@ -136,27 +142,61 @@ def _fetch_graph_member(cur, graph_id: UUID, user_id: UUID) -> GraphMemberRespon
     return _member_response(row)
 
 
+def _default_product_id() -> UUID:
+    return UUID(get_settings().default_product_id)
+
+
 @router.get("", response_model=list[GraphMetaResponse])
-def list_graphs(user: AuthenticatedUser = Depends(get_current_user_from_header)) -> list[GraphMetaResponse]:
+def list_graphs(
+    product_id: UUID | None = None,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> list[GraphMetaResponse]:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT g.id, g.name, g.description, g.business_domain,
+                SELECT g.id, g.product_id, p.code AS product_code, p.name AS product_name,
+                       g.name, g.description, g.business_domain,
                        g.version, g.collab_revision, g.status, g.updated_at,
-                       m.role AS current_user_role,
+                       CASE GREATEST(
+                            COALESCE(CASE gm.role
+                                WHEN 'owner' THEN 3
+                                WHEN 'editor' THEN 2
+                                WHEN 'viewer' THEN 1
+                                ELSE 0
+                            END, 0),
+                            COALESCE(CASE pm.role
+                                WHEN 'owner' THEN 3
+                                WHEN 'editor' THEN 2
+                                WHEN 'viewer' THEN 1
+                                ELSE 0
+                            END, 0)
+                       )
+                         WHEN 3 THEN 'owner'
+                         WHEN 2 THEN 'editor'
+                         WHEN 1 THEN 'viewer'
+                         ELSE NULL
+                       END AS current_user_role,
                        COUNT(DISTINCT t.table_key) AS table_count,
                        COUNT(DISTINCT r.relation_key) AS relation_count
                 FROM er_graph g
-                JOIN er_graph_member m ON m.graph_id = g.id
+                LEFT JOIN product p ON p.id = g.product_id
+                LEFT JOIN er_graph_member gm
+                  ON gm.graph_id = g.id AND gm.user_id = %s
+                LEFT JOIN product_member pm
+                  ON pm.product_id = g.product_id AND pm.user_id = %s
                 LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
                 LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
-                WHERE m.user_id = %s AND g.status <> 'archived'
-                GROUP BY g.id, g.name, g.description, g.business_domain,
-                         g.version, g.collab_revision, g.status, g.updated_at, m.role
+                WHERE (gm.user_id IS NOT NULL OR pm.user_id IS NOT NULL)
+                  AND g.status <> 'archived'
+                  AND (%s::uuid IS NULL OR g.product_id = %s)
+                GROUP BY g.id, g.product_id, p.code, p.name,
+                         g.name, g.description, g.business_domain,
+                         g.version, g.collab_revision, g.status, g.updated_at,
+                         gm.role, pm.role
                 ORDER BY g.name
                 """,
-                (user.id,),
+                (user.id, user.id, product_id, product_id),
             )
             rows = cur.fetchall()
     return [_graph_meta_response(r) for r in rows]
@@ -168,18 +208,21 @@ def create_graph(
     user: AuthenticatedUser = Depends(get_current_user_from_header),
 ) -> GraphMetaResponse:
     name = (body.name or "").strip() or "新建 ER 图"
+    product_id = body.product_id or _default_product_id()
     with db_transaction() as conn:
         with conn.cursor() as cur:
+            ensure_product_role(cur, product_id, user.id, "editor")
             cur.execute(
                 """
                 INSERT INTO er_graph (
-                    name, description, business_domain, created_by, updated_by
+                    product_id, name, description, business_domain, created_by, updated_by
                 )
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id, name, description, business_domain,
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, product_id, name, description, business_domain,
                           version, collab_revision, status, updated_at
                 """,
                 (
+                    product_id,
                     name,
                     body.description,
                     body.business_domain,

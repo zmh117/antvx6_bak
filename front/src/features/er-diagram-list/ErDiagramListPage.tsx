@@ -93,6 +93,7 @@ import {
   type GraphMeta,
   type GraphRole,
 } from '@/entities/er-graph/api'
+import { useProductsQuery, type ProductMeta } from '@/entities/product'
 import { formatDateTime } from '@/shared/lib/date'
 import { useUrlSearchState } from '@/shared/lib/useUrlSearchState'
 import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
@@ -122,6 +123,7 @@ const memberColumnHelper = createColumnHelper<GraphMember>()
 
 export type GraphListFilters = {
   q?: string
+  productId?: string
   domain?: string
   role?: GraphRole | 'all'
   status?: string
@@ -136,6 +138,7 @@ type GraphMetaFormSubmitValues = z.output<typeof graphMetaFormSchema>
 type GraphMemberFormSubmitValues = z.output<typeof graphMemberFormSchema>
 
 const graphMetaFormSchema = z.object({
+  productId: z.string().trim().optional(),
   name: z
     .string()
     .trim()
@@ -171,8 +174,9 @@ function canManageGraph(graph: GraphMeta) {
   return effectiveGraphRole(graph) === 'owner'
 }
 
-function defaultCreateValues(): GraphMetaFormValues {
+function defaultCreateValues(productId = ''): GraphMetaFormValues {
   return {
+    productId,
     name: `新建 ER 图 ${formatDateTime(new Date().toISOString())}`,
     businessDomain: '默认域',
     description: '',
@@ -181,6 +185,7 @@ function defaultCreateValues(): GraphMetaFormValues {
 
 function valuesFromGraph(graph: GraphMeta): GraphMetaFormValues {
   return {
+    productId: graph.product_id ?? '',
     name: graph.name,
     businessDomain: graph.business_domain ?? '',
     description: graph.description ?? '',
@@ -190,6 +195,7 @@ function valuesFromGraph(graph: GraphMeta): GraphMetaFormValues {
 function graphBodyFromValues(values: GraphMetaFormSubmitValues) {
   return {
     name: values.name,
+    product_id: values.productId || null,
     business_domain: values.businessDomain || null,
     description: values.description || null,
   }
@@ -204,6 +210,7 @@ function parseGraphFilters(params: URLSearchParams): GraphListFilters {
   const role = params.get('role')
   return {
     q: params.get('q') ?? '',
+    productId: params.get('product') ?? 'all',
     domain: params.get('domain') ?? 'all',
     role:
       role === 'owner' || role === 'editor' || role === 'viewer' ? role : 'all',
@@ -221,6 +228,8 @@ function parseGraphFilters(params: URLSearchParams): GraphListFilters {
 function serializeGraphFilters(filters: GraphListFilters) {
   const params = new URLSearchParams()
   if (filters.q?.trim()) params.set('q', filters.q.trim())
+  if (filters.productId && filters.productId !== 'all')
+    params.set('product', filters.productId)
   if (filters.domain && filters.domain !== 'all')
     params.set('domain', filters.domain)
   if (filters.role && filters.role !== 'all') params.set('role', filters.role)
@@ -252,6 +261,8 @@ function getSearchText(graph: GraphMeta) {
     graph.name,
     graph.description,
     graph.id,
+    graph.product_name,
+    graph.product_code,
     graph.business_domain,
     graph.status,
     effectiveGraphRole(graph),
@@ -288,12 +299,14 @@ function GraphMetaDialog({
   onClose,
   onSubmit,
   pending,
+  products,
 }: {
   initialValues: GraphMetaFormValues
   mode: GraphFormMode
   onClose: () => void
   onSubmit: (values: GraphMetaFormSubmitValues) => Promise<void>
   pending: boolean
+  products: ProductMeta[]
 }) {
   const form = useForm({
     defaultValues: initialValues,
@@ -322,6 +335,32 @@ function GraphMetaDialog({
           }}
         >
           <FieldGroup>
+            <form.Field
+              name="productId"
+              children={(field) => (
+                <Field>
+                  <FieldLabel htmlFor={field.name}>产品</FieldLabel>
+                  <Select
+                    value={field.state.value || products[0]?.id || ''}
+                    disabled={mode === 'edit' || pending || products.length === 0}
+                    onValueChange={(value) => field.handleChange(value)}
+                  >
+                    <SelectTrigger id={field.name}>
+                      <SelectValue placeholder="选择产品" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {products.map((product) => (
+                          <SelectItem key={product.id} value={product.id}>
+                            {product.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            />
             <form.Field
               name="name"
               children={(field) => {
@@ -730,16 +769,18 @@ export function ErDiagramListPage({
 }: {
   onEditGraph: (graphId: string) => void
 }) {
-  const graphsQuery = useGraphsQuery()
-  const createGraphMutation = useCreateGraphMutation()
-  const updateGraphMutation = useUpdateGraphMetaMutation()
-  const archiveGraphMutation = useArchiveGraphMutation()
-  const upsertMemberMutation = useUpsertGraphMemberMutation()
-  const removeMemberMutation = useRemoveGraphMemberMutation()
   const [filters, setFilters] = useUrlSearchState(
     parseGraphFilters,
     serializeGraphFilters,
   )
+  const productsQuery = useProductsQuery()
+  const selectedProductId = filters.productId ?? 'all'
+  const graphsQuery = useGraphsQuery(selectedProductId)
+  const createGraphMutation = useCreateGraphMutation(selectedProductId)
+  const updateGraphMutation = useUpdateGraphMetaMutation()
+  const archiveGraphMutation = useArchiveGraphMutation()
+  const upsertMemberMutation = useUpsertGraphMemberMutation()
+  const removeMemberMutation = useRemoveGraphMemberMutation()
   const [sorting, setSorting] = useState<SortingState>(() =>
     sortingFromParam(filters.sort),
   )
@@ -767,6 +808,7 @@ export function ErDiagramListPage({
   }, [filters.sort])
 
   const graphs = graphsQuery.data ?? []
+  const products = productsQuery.data ?? []
   const domainOptions = useMemo(() => {
     const domains = new Set<string>()
     graphs.forEach((graph) => {
@@ -831,6 +873,26 @@ export function ErDiagramListPage({
                 {row.original.description || row.original.id}
               </div>
             </div>
+          </div>
+        ),
+      }),
+      graphColumnHelper.accessor((graph) => graph.product_name || '未分配产品', {
+        id: 'product',
+        header: ({ column }) => (
+          <HeaderSortButton
+            label="产品"
+            onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          />
+        ),
+        size: 160,
+        cell: ({ row, getValue }) => (
+          <div className="min-w-0">
+            <div className="truncate text-muted-foreground">{getValue()}</div>
+            {row.original.product_code ? (
+              <div className="truncate text-xs text-muted-foreground">
+                {row.original.product_code}
+              </div>
+            ) : null}
           </div>
         ),
       }),
@@ -1003,7 +1065,9 @@ export function ErDiagramListPage({
 
   function openCreateDialog() {
     setEditingGraph(null)
-    setFormInitialValues(defaultCreateValues())
+    const productId =
+      selectedProductId !== 'all' ? selectedProductId : products[0]?.id ?? ''
+    setFormInitialValues(defaultCreateValues(productId))
     setFormMode('create')
   }
 
@@ -1099,12 +1163,30 @@ export function ErDiagramListPage({
             {pageError instanceof Error ? pageError.message : '操作失败'}
           </div>
         ) : null}
-        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(220px,1fr)_180px_150px_150px_120px]">
+        <div className="mb-3 grid gap-2 md:grid-cols-[minmax(220px,1fr)_180px_180px_150px_150px_120px]">
           <Input
             value={filters.q ?? ''}
             onChange={(event) => setFilters({ q: event.target.value, page: 1 })}
-            placeholder="搜索名称、描述、ID、业务域"
+            placeholder="搜索名称、描述、ID、产品、业务域"
           />
+          <Select
+            value={filters.productId ?? 'all'}
+            onValueChange={(value) => setFilters({ productId: value, page: 1 })}
+          >
+            <SelectTrigger aria-label="产品筛选">
+              <SelectValue placeholder="产品" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部产品</SelectItem>
+                {products.map((product) => (
+                  <SelectItem key={product.id} value={product.id}>
+                    {product.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
           <Select
             value={filters.domain ?? 'all'}
             onValueChange={(value) => setFilters({ domain: value, page: 1 })}
@@ -1204,6 +1286,7 @@ export function ErDiagramListPage({
           onClose={closeFormDialog}
           onSubmit={submitForm}
           pending={formPending}
+          products={products}
         />
       ) : null}
 
