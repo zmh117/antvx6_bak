@@ -377,6 +377,51 @@ export function createSwimlaneComponent(productId = DEFAULT_PRODUCT_ID) {
   return component
 }
 
+export function updateSwimlaneComponentMeta(
+  componentId: string,
+  values: {
+    productId?: string | null
+    code?: string | null
+    name?: string | null
+    category?: string | null
+    ownerRole?: string | null
+    description?: string | null
+  },
+) {
+  const timestamp = nowIso()
+  let saved: SwimlaneComponent | null = null
+  updateStore((store) => ({
+    ...store,
+    components: store.components.map((component) => {
+      if (component.id !== componentId) return component
+      saved = {
+        ...component,
+        productId: values.productId?.trim() || component.productId,
+        code: values.code?.trim() || component.code,
+        name: values.name?.trim() || component.name,
+        category: values.category ?? null,
+        ownerRole: values.ownerRole ?? null,
+        description: values.description ?? null,
+        updatedAt: timestamp,
+      }
+      return saved
+    }),
+  }))
+  return saved
+}
+
+export function removeSwimlaneComponent(componentId: string) {
+  let removed: SwimlaneComponent | null = null
+  updateStore((store) => {
+    removed = store.components.find((component) => component.id === componentId) ?? null
+    return {
+      ...store,
+      components: store.components.filter((component) => component.id !== componentId),
+    }
+  })
+  return removed
+}
+
 export function saveSwimlaneComponentVersion(
   componentId: string,
   values: {
