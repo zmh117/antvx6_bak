@@ -105,12 +105,14 @@ export async function saveBusinessFlow(
 
 export async function listBusinessFlowMetas(
   productId?: string | null,
+  signal?: AbortSignal,
 ): Promise<BusinessFlowMeta[]> {
   const params = new URLSearchParams()
   if (productId && productId !== 'all') params.set('product_id', productId)
   const qs = params.toString()
   const res = await fetch(`${API_BASE}/api/business-flows${qs ? `?${qs}` : ''}`, {
     headers: { ...authHeaders() },
+    signal,
   })
   if (!res.ok) throw new Error(await apiErrorMessage(res))
   return res.json() as Promise<BusinessFlowMeta[]>

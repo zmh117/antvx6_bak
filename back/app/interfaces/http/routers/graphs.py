@@ -67,18 +67,28 @@ def _graph_meta_response(row: dict, current_user_role: GraphRole | None = None) 
 
 
 GRAPH_META_SELECT = """
+WITH table_counts AS (
+    SELECT graph_id, COUNT(*) AS table_count
+    FROM er_table
+    WHERE deleted_at IS NULL
+    GROUP BY graph_id
+),
+relation_counts AS (
+    SELECT graph_id, COUNT(*) AS relation_count
+    FROM er_relation
+    WHERE deleted_at IS NULL
+    GROUP BY graph_id
+)
 SELECT g.id, g.product_id, p.code AS product_code, p.name AS product_name,
        g.name, g.description, g.business_domain,
        g.version, g.collab_revision, g.status, g.updated_at,
-       COUNT(DISTINCT t.table_key) AS table_count,
-       COUNT(DISTINCT r.relation_key) AS relation_count
+       COALESCE(tc.table_count, 0) AS table_count,
+       COALESCE(rc.relation_count, 0) AS relation_count
 FROM er_graph g
 LEFT JOIN product p ON p.id = g.product_id
-LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
-LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
+LEFT JOIN table_counts tc ON tc.graph_id = g.id
+LEFT JOIN relation_counts rc ON rc.graph_id = g.id
 WHERE g.id = %s
-GROUP BY g.id, g.product_id, p.code, p.name, g.name, g.description, g.business_domain,
-         g.version, g.collab_revision, g.status, g.updated_at
 """
 
 
@@ -155,6 +165,18 @@ def list_graphs(
         with conn.cursor() as cur:
             cur.execute(
                 """
+                WITH table_counts AS (
+                    SELECT graph_id, COUNT(*) AS table_count
+                    FROM er_table
+                    WHERE deleted_at IS NULL
+                    GROUP BY graph_id
+                ),
+                relation_counts AS (
+                    SELECT graph_id, COUNT(*) AS relation_count
+                    FROM er_relation
+                    WHERE deleted_at IS NULL
+                    GROUP BY graph_id
+                )
                 SELECT g.id, g.product_id, p.code AS product_code, p.name AS product_name,
                        g.name, g.description, g.business_domain,
                        g.version, g.collab_revision, g.status, g.updated_at,
@@ -177,23 +199,19 @@ def list_graphs(
                          WHEN 1 THEN 'viewer'
                          ELSE NULL
                        END AS current_user_role,
-                       COUNT(DISTINCT t.table_key) AS table_count,
-                       COUNT(DISTINCT r.relation_key) AS relation_count
+                       COALESCE(tc.table_count, 0) AS table_count,
+                       COALESCE(rc.relation_count, 0) AS relation_count
                 FROM er_graph g
                 LEFT JOIN product p ON p.id = g.product_id
                 LEFT JOIN er_graph_member gm
                   ON gm.graph_id = g.id AND gm.user_id = %s
                 LEFT JOIN product_member pm
                   ON pm.product_id = g.product_id AND pm.user_id = %s
-                LEFT JOIN er_table t ON t.graph_id = g.id AND t.deleted_at IS NULL
-                LEFT JOIN er_relation r ON r.graph_id = g.id AND r.deleted_at IS NULL
+                LEFT JOIN table_counts tc ON tc.graph_id = g.id
+                LEFT JOIN relation_counts rc ON rc.graph_id = g.id
                 WHERE (gm.user_id IS NOT NULL OR pm.user_id IS NOT NULL)
                   AND g.status <> 'archived'
                   AND (%s::uuid IS NULL OR g.product_id = %s)
-                GROUP BY g.id, g.product_id, p.code, p.name,
-                         g.name, g.description, g.business_domain,
-                         g.version, g.collab_revision, g.status, g.updated_at,
-                         gm.role, pm.role
                 ORDER BY g.name
                 """,
                 (user.id, user.id, product_id, product_id),

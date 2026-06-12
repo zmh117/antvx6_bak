@@ -49,7 +49,7 @@ export function useSaveBusinessFlowMutation(graphId = getDefaultGraphId()) {
 export function useBusinessFlowMetasQuery(productId = 'all') {
   return useQuery({
     queryKey: businessFlowKeys.metas(productId),
-    queryFn: () => listBusinessFlowMetas(productId),
+    queryFn: ({ signal }) => listBusinessFlowMetas(productId, signal),
   })
 }
 

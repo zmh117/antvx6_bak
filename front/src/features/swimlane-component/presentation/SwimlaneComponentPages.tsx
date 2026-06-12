@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Graph, type Cell, type Edge } from '@antv/x6'
 import {
   createColumnHelper,
@@ -27,6 +27,7 @@ import {
   Square,
   Trash2,
   Workflow,
+  X,
 } from 'lucide-react'
 import * as z from 'zod'
 
@@ -869,7 +870,7 @@ export function SwimlaneComponentEditorPage({
           </Button>
         </div>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)_300px]">
+      <div className="grid min-h-0 flex-1 grid-cols-[220px_minmax(0,1fr)]">
         <aside className="min-h-0 border-r border-border bg-card">
           <ScrollArea className="h-full">
             <div className="space-y-3 p-3">
@@ -904,22 +905,81 @@ export function SwimlaneComponentEditorPage({
             </div>
           </ScrollArea>
         </aside>
-        <div
-          className="min-h-0"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={dropNode}
-        >
-          <div ref={containerRef} className="h-full w-full" />
-        </div>
-        <aside className="min-h-0 border-l border-border bg-card">
-          <ScrollArea className="h-full">
-            <div className="p-3">
-              <ComponentInspector selected={selected} onChange={setSelected} />
-            </div>
-          </ScrollArea>
-        </aside>
+        <section className="flex min-h-0 min-w-0">
+          <div
+            className="min-h-0 min-w-0 flex-1"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={dropNode}
+          >
+            <div ref={containerRef} className="h-full w-full" />
+          </div>
+          {selected ? (
+            <ComponentInspectorDrawer
+              selected={selected}
+              onChange={setSelected}
+              onClose={() => {
+                graphRef.current?.cleanSelection()
+                setSelected(null)
+              }}
+            />
+          ) : null}
+        </section>
       </div>
     </section>
+  )
+}
+
+function ComponentInspectorDrawer({
+  selected,
+  onChange,
+  onClose,
+}: {
+  selected: Exclude<SelectedComponentCell, null>
+  onChange: (selected: SelectedComponentCell) => void
+  onClose: () => void
+}) {
+  return (
+    <ComponentPanelShell
+      title={selected.kind === 'edge' ? '连线属性' : '节点属性'}
+      onClose={onClose}
+    >
+      <ComponentInspector selected={selected} onChange={onChange} />
+    </ComponentPanelShell>
+  )
+}
+
+function ComponentPanelShell({
+  title,
+  children,
+  onClose,
+}: {
+  title: string
+  children: ReactNode
+  onClose: () => void
+}) {
+  return (
+    <aside
+      className="z-30 flex h-full min-h-0 w-[344px] shrink-0 flex-col border-l border-border bg-card text-card-foreground shadow-sm"
+      role="complementary"
+      aria-label={title}
+    >
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-3">
+        <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+          aria-label="关闭"
+        >
+          <X className="size-4" />
+        </Button>
+      </header>
+      <ScrollArea className="min-h-0 flex-1">
+        <section className="space-y-4 p-4">{children}</section>
+      </ScrollArea>
+    </aside>
   )
 }
 
@@ -940,8 +1000,7 @@ function ComponentInspector({
   if (selected.kind === 'edge') {
     return (
       <div>
-        <div className="text-xs font-semibold">连线属性</div>
-        <FieldGroup className="mt-3">
+        <FieldGroup>
           <Field>
             <FieldLabel>标签</FieldLabel>
             <Input
@@ -959,8 +1018,7 @@ function ComponentInspector({
   }
   return (
     <div>
-      <div className="text-xs font-semibold">节点属性</div>
-      <FieldGroup className="mt-3">
+      <FieldGroup>
         <Field>
           <FieldLabel>标题</FieldLabel>
           <Input

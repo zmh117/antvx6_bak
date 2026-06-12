@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createColumnHelper,
   getCoreRowModel,
@@ -9,7 +9,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { useForm } from '@tanstack/react-form'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   ArrowUpDown,
@@ -89,6 +89,7 @@ import {
   useRemoveGraphMemberMutation,
   useUpdateGraphMetaMutation,
   useUpsertGraphMemberMutation,
+  graphKeys,
   type GraphMember,
   type GraphMeta,
   type GraphRole,
@@ -773,6 +774,7 @@ export function ErDiagramListPage({
     parseGraphFilters,
     serializeGraphFilters,
   )
+  const queryClient = useQueryClient()
   const productsQuery = useProductsQuery()
   const selectedProductId = filters.productId ?? 'all'
   const graphsQuery = useGraphsQuery(selectedProductId)
@@ -809,6 +811,19 @@ export function ErDiagramListPage({
 
   const graphs = graphsQuery.data ?? []
   const products = productsQuery.data ?? []
+  const handleProductFilterChange = useCallback(
+    (value: string) => {
+      void queryClient.cancelQueries({ queryKey: graphKeys.lists() })
+      if (selectedProductId === 'all' && value !== 'all') {
+        queryClient.removeQueries({
+          queryKey: graphKeys.list('all'),
+          exact: true,
+        })
+      }
+      startTransition(() => setFilters({ productId: value, page: 1 }))
+    },
+    [queryClient, selectedProductId, setFilters],
+  )
   const domainOptions = useMemo(() => {
     const domains = new Set<string>()
     graphs.forEach((graph) => {
@@ -1171,7 +1186,7 @@ export function ErDiagramListPage({
           />
           <Select
             value={filters.productId ?? 'all'}
-            onValueChange={(value) => setFilters({ productId: value, page: 1 })}
+            onValueChange={handleProductFilterChange}
           >
             <SelectTrigger aria-label="产品筛选">
               <SelectValue placeholder="产品" />

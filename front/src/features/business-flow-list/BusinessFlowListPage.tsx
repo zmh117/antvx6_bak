@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useMemo, useRef, useState } from 'react'
 import {
   createColumnHelper,
   getCoreRowModel,
@@ -9,11 +9,12 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { useForm } from '@tanstack/react-form'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   ArrowUpDown,
   Edit3,
+  ExternalLink,
   MoreHorizontal,
   Network,
   Plus,
@@ -21,7 +22,6 @@ import {
   Trash2,
   UserPlus,
   Users,
-  Waypoints,
 } from 'lucide-react'
 import * as z from 'zod'
 
@@ -89,6 +89,7 @@ import {
   useRemoveBusinessFlowMemberMutation,
   useUpdateBusinessFlowMutation,
   useUpsertBusinessFlowMemberMutation,
+  businessFlowKeys,
   type BusinessFlowMember,
   type BusinessFlowMeta,
   type BusinessFlowRole,
@@ -133,7 +134,9 @@ export type BusinessFlowListFilters = {
 type BusinessFlowFormMode = 'create' | 'edit'
 type BusinessFlowFormValues = z.input<typeof businessFlowMetaFormSchema>
 type BusinessFlowFormSubmitValues = z.output<typeof businessFlowMetaFormSchema>
-type BusinessFlowMemberFormSubmitValues = z.output<typeof businessFlowMemberFormSchema>
+type BusinessFlowMemberFormSubmitValues = z.output<
+  typeof businessFlowMemberFormSchema
+>
 
 const businessFlowMetaFormSchema = z.object({
   productId: z.string().trim().optional(),
@@ -334,7 +337,9 @@ function BusinessFlowMetaDialog({
                   <FieldLabel htmlFor={field.name}>产品</FieldLabel>
                   <Select
                     value={field.state.value || products[0]?.id || ''}
-                    disabled={mode === 'edit' || pending || products.length === 0}
+                    disabled={
+                      mode === 'edit' || pending || products.length === 0
+                    }
                     onValueChange={(value) => field.handleChange(value)}
                   >
                     <SelectTrigger id={field.name}>
@@ -682,7 +687,9 @@ function BusinessFlowMembersDialog({
                           onBlur={field.handleBlur}
                         />
                         <ComboboxEmpty>
-                          {activeUsersQuery.isFetching ? '搜索中...' : '未找到启用用户'}
+                          {activeUsersQuery.isFetching
+                            ? '搜索中...'
+                            : '未找到启用用户'}
                         </ComboboxEmpty>
                         <ComboboxList<CurrentUser>>
                           {(user) => (
@@ -738,7 +745,10 @@ function BusinessFlowMembersDialog({
               添加/更新
             </Button>
           </form>
-          <div ref={userComboboxPortalRef} data-slot="member-user-combobox-portal" />
+          <div
+            ref={userComboboxPortalRef}
+            data-slot="member-user-combobox-portal"
+          />
 
           <DataTable
             table={table}
@@ -749,7 +759,8 @@ function BusinessFlowMembersDialog({
           />
 
           <FieldDescription>
-            业务图创建者固定保留 Owner，不能降级或移除；成员按加入时间从早到晚排列。
+            业务图创建者固定保留
+            Owner，不能降级或移除；成员按加入时间从早到晚排列。
           </FieldDescription>
         </div>
       </DialogContent>
@@ -766,6 +777,7 @@ export function BusinessFlowListPage({
     parseBusinessFlowFilters,
     serializeBusinessFlowFilters,
   )
+  const queryClient = useQueryClient()
   const productsQuery = useProductsQuery()
   const selectedProductId = filters.productId ?? 'all'
   const flowsQuery = useBusinessFlowMetasQuery(selectedProductId)
@@ -779,7 +791,9 @@ export function BusinessFlowListPage({
   )
   const [formMode, setFormMode] = useState<BusinessFlowFormMode | null>(null)
   const [editingFlow, setEditingFlow] = useState<BusinessFlowMeta | null>(null)
-  const [archiveTarget, setArchiveTarget] = useState<BusinessFlowMeta | null>(null)
+  const [archiveTarget, setArchiveTarget] = useState<BusinessFlowMeta | null>(
+    null,
+  )
   const [sharingFlow, setSharingFlow] = useState<BusinessFlowMeta | null>(null)
   const [formInitialValues, setFormInitialValues] =
     useState<BusinessFlowFormValues>(() => defaultCreateValues())
@@ -798,6 +812,19 @@ export function BusinessFlowListPage({
 
   const flows = flowsQuery.data ?? []
   const products = productsQuery.data ?? []
+  const handleProductFilterChange = useCallback(
+    (value: string) => {
+      void queryClient.cancelQueries({ queryKey: businessFlowKeys.all })
+      if (selectedProductId === 'all' && value !== 'all') {
+        queryClient.removeQueries({
+          queryKey: businessFlowKeys.metas('all'),
+          exact: true,
+        })
+      }
+      startTransition(() => setFilters({ productId: value, page: 1 }))
+    },
+    [queryClient, selectedProductId, setFilters],
+  )
   const statusOptions = useMemo(() => {
     const statuses = new Set<string>()
     flows.forEach((flow) => statuses.add(flow.status))
@@ -897,7 +924,9 @@ export function BusinessFlowListPage({
           />
         ),
         size: 90,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       flowColumnHelper.accessor('node_count', {
         header: ({ column }) => (
@@ -907,7 +936,9 @@ export function BusinessFlowListPage({
           />
         ),
         size: 90,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       flowColumnHelper.accessor('edge_count', {
         header: ({ column }) => (
@@ -917,7 +948,9 @@ export function BusinessFlowListPage({
           />
         ),
         size: 90,
-        cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+        cell: ({ getValue }) => (
+          <span className="tabular-nums">{getValue()}</span>
+        ),
       }),
       flowColumnHelper.accessor('status', {
         header: '状态',
@@ -951,13 +984,21 @@ export function BusinessFlowListPage({
       flowColumnHelper.display({
         id: 'actions',
         header: () => <div className="text-right">操作</div>,
-        size: 140,
+        size: 170,
         cell: ({ row }) => {
           const flow = row.original
           const editable = canEditFlow(flow)
           const manageable = canManageFlow(flow)
           return (
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-1">
+              <Button
+                type="button"
+                size="xs"
+                onClick={() => onOpenCanvas?.(flow.id)}
+              >
+                <ExternalLink className="size-3.5" />
+                打开
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -972,10 +1013,6 @@ export function BusinessFlowListPage({
                 <DropdownMenuContent align="end">
                   <DropdownMenuLabel>操作</DropdownMenuLabel>
                   <DropdownMenuGroup>
-                    <DropdownMenuItem onClick={() => onOpenCanvas?.(flow.id)}>
-                      <Waypoints className="size-4" />
-                      打开画布
-                    </DropdownMenuItem>
                     {editable ? (
                       <DropdownMenuItem onClick={() => openEditDialog(flow)}>
                         <Edit3 className="size-4" />
@@ -1044,7 +1081,7 @@ export function BusinessFlowListPage({
   function openCreateDialog() {
     setEditingFlow(null)
     const productId =
-      selectedProductId !== 'all' ? selectedProductId : products[0]?.id ?? ''
+      selectedProductId !== 'all' ? selectedProductId : (products[0]?.id ?? '')
     setFormInitialValues(defaultCreateValues(productId))
     setFormMode('create')
   }
@@ -1136,11 +1173,7 @@ export function BusinessFlowListPage({
             <RefreshCw className="size-4" />
             刷新
           </Button>
-          <Button
-            size="sm"
-            onClick={openCreateDialog}
-            disabled={formPending}
-          >
+          <Button size="sm" onClick={openCreateDialog} disabled={formPending}>
             <Plus className="size-4" />
             新增业务图
           </Button>
@@ -1162,7 +1195,7 @@ export function BusinessFlowListPage({
           />
           <Select
             value={filters.productId ?? 'all'}
-            onValueChange={(value) => setFilters({ productId: value, page: 1 })}
+            onValueChange={handleProductFilterChange}
           >
             <SelectTrigger aria-label="产品筛选">
               <SelectValue placeholder="产品" />

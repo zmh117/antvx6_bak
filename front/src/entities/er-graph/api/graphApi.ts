@@ -159,12 +159,16 @@ async function apiErrorMessage(res: Response) {
   return text || `${res.status} ${res.statusText}`
 }
 
-export async function fetchGraphs(productId?: string | null): Promise<GraphMeta[]> {
+export async function fetchGraphs(
+  productId?: string | null,
+  signal?: AbortSignal,
+): Promise<GraphMeta[]> {
   const params = new URLSearchParams()
   if (productId && productId !== 'all') params.set('product_id', productId)
   const qs = params.toString()
   const res = await fetch(`${API_BASE}/api/graphs${qs ? `?${qs}` : ''}`, {
     headers: { ...authHeaders() },
+    signal,
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<GraphMeta[]>

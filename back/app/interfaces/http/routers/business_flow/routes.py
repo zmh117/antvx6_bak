@@ -31,6 +31,22 @@ def _default_product_id() -> UUID:
 
 
 BUSINESS_FLOW_META_SELECT = """
+WITH lane_counts AS (
+    SELECT business_flow_id, COUNT(*) AS lane_instance_count
+    FROM business_flow_lane_instance
+    WHERE status = 'ACTIVE'
+    GROUP BY business_flow_id
+),
+node_counts AS (
+    SELECT business_flow_id, COUNT(*) AS node_count
+    FROM business_flow_node
+    GROUP BY business_flow_id
+),
+edge_counts AS (
+    SELECT business_flow_id, COUNT(*) AS edge_count
+    FROM business_flow_edge
+    GROUP BY business_flow_id
+)
 SELECT bf.id, bf.product_id, p.code AS product_code, p.name AS product_name,
        bf.code, bf.name, bf.description,
        bf.status, bf.current_version, bf.updated_at,
@@ -53,25 +69,20 @@ SELECT bf.id, bf.product_id, p.code AS product_code, p.name AS product_name,
          WHEN 1 THEN 'viewer'
          ELSE NULL
        END AS current_user_role,
-       COUNT(DISTINCT li.id) AS lane_instance_count,
-       COUNT(DISTINCT n.id) AS node_count,
-       COUNT(DISTINCT e.id) AS edge_count
+       COALESCE(lc.lane_instance_count, 0) AS lane_instance_count,
+       COALESCE(nc.node_count, 0) AS node_count,
+       COALESCE(ec.edge_count, 0) AS edge_count
 FROM business_flow bf
 LEFT JOIN product p ON p.id = bf.product_id
 LEFT JOIN business_flow_member bfm
   ON bfm.business_flow_id = bf.id AND bfm.user_id = %s
 LEFT JOIN product_member pm
   ON pm.product_id = bf.product_id AND pm.user_id = %s
-LEFT JOIN business_flow_lane_instance li
-  ON li.business_flow_id = bf.id AND li.status = 'ACTIVE'
-LEFT JOIN business_flow_node n ON n.business_flow_id = bf.id
-LEFT JOIN business_flow_edge e ON e.business_flow_id = bf.id
+LEFT JOIN lane_counts lc ON lc.business_flow_id = bf.id
+LEFT JOIN node_counts nc ON nc.business_flow_id = bf.id
+LEFT JOIN edge_counts ec ON ec.business_flow_id = bf.id
 WHERE bf.id = %s
   AND (bfm.user_id IS NOT NULL OR pm.user_id IS NOT NULL)
-GROUP BY bf.id, bf.product_id, p.code, p.name,
-         bf.code, bf.name, bf.description,
-         bf.status, bf.current_version, bf.updated_at,
-         bfm.role, pm.role
 """
 
 
@@ -118,6 +129,22 @@ def list_business_flows(
         with conn.cursor() as cur:
             cur.execute(
                 """
+                WITH lane_counts AS (
+                    SELECT business_flow_id, COUNT(*) AS lane_instance_count
+                    FROM business_flow_lane_instance
+                    WHERE status = 'ACTIVE'
+                    GROUP BY business_flow_id
+                ),
+                node_counts AS (
+                    SELECT business_flow_id, COUNT(*) AS node_count
+                    FROM business_flow_node
+                    GROUP BY business_flow_id
+                ),
+                edge_counts AS (
+                    SELECT business_flow_id, COUNT(*) AS edge_count
+                    FROM business_flow_edge
+                    GROUP BY business_flow_id
+                )
                 SELECT bf.id, bf.product_id, p.code AS product_code, p.name AS product_name,
                        bf.code, bf.name, bf.description,
                        bf.status, bf.current_version, bf.updated_at,
@@ -140,26 +167,21 @@ def list_business_flows(
                          WHEN 1 THEN 'viewer'
                          ELSE NULL
                        END AS current_user_role,
-                       COUNT(DISTINCT li.id) AS lane_instance_count,
-                       COUNT(DISTINCT n.id) AS node_count,
-                       COUNT(DISTINCT e.id) AS edge_count
+                       COALESCE(lc.lane_instance_count, 0) AS lane_instance_count,
+                       COALESCE(nc.node_count, 0) AS node_count,
+                       COALESCE(ec.edge_count, 0) AS edge_count
                 FROM business_flow bf
                 LEFT JOIN product p ON p.id = bf.product_id
                 LEFT JOIN business_flow_member bfm
                   ON bfm.business_flow_id = bf.id AND bfm.user_id = %s
                 LEFT JOIN product_member pm
                   ON pm.product_id = bf.product_id AND pm.user_id = %s
-                LEFT JOIN business_flow_lane_instance li
-                  ON li.business_flow_id = bf.id AND li.status = 'ACTIVE'
-                LEFT JOIN business_flow_node n ON n.business_flow_id = bf.id
-                LEFT JOIN business_flow_edge e ON e.business_flow_id = bf.id
+                LEFT JOIN lane_counts lc ON lc.business_flow_id = bf.id
+                LEFT JOIN node_counts nc ON nc.business_flow_id = bf.id
+                LEFT JOIN edge_counts ec ON ec.business_flow_id = bf.id
                 WHERE (bfm.user_id IS NOT NULL OR pm.user_id IS NOT NULL)
                   AND (%s::uuid IS NULL OR bf.product_id = %s)
                   AND bf.status <> 'ARCHIVED'
-                GROUP BY bf.id, bf.product_id, p.code, p.name,
-                         bf.code, bf.name, bf.description,
-                         bf.status, bf.current_version, bf.updated_at,
-                         bfm.role, pm.role
                 ORDER BY bf.updated_at DESC, lower(bf.name)
                 """,
                 (user.id, user.id, product_id, product_id),

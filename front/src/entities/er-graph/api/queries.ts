@@ -21,7 +21,7 @@ import { graphKeys } from './queryKeys'
 export function useGraphsQuery(productId = 'all') {
   return useQuery({
     queryKey: graphKeys.list(productId),
-    queryFn: () => fetchGraphs(productId),
+    queryFn: ({ signal }) => fetchGraphs(productId, signal),
   })
 }
 
