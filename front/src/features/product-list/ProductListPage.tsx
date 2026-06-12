@@ -35,6 +35,7 @@ import {
   type ProductRole,
 } from '@/entities/product'
 import { formatDateTime } from '@/shared/lib/date'
+import { EntityTitleCell } from '@/shared/ui/entity-title-cell'
 
 const roleText: Record<ProductRole, string> = {
   owner: 'Owner',
@@ -334,12 +335,11 @@ export function ProductListPage() {
                 products.map((product) => (
                   <tr key={product.id} className="border-t border-border">
                     <td className="px-3 py-2">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <Package className="size-4 text-muted-foreground" />
-                        <span className="truncate font-medium">{product.name}</span>
-                        <Badge variant="outline">{product.code}</Badge>
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">{product.description || product.id}</div>
+                      <EntityTitleCell
+                        icon={<Package className="size-4" />}
+                        title={product.name}
+                        description={product.description || product.code}
+                      />
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">
                       ER {product.er_graph_count} · 业务图 {product.business_flow_count} · 泳道 {product.swimlane_component_count}

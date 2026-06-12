@@ -103,6 +103,7 @@ import {
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 import { formatDateTime } from '@/shared/lib/date'
 import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
+import { EntityTitleCell } from '@/shared/ui/entity-title-cell'
 
 const NODE_TOOLS: Array<{
   type: BusinessFlowNodeType
@@ -443,17 +444,11 @@ export function SwimlaneComponentListPage({
         cell: ({ row }) => {
           const component = row.original
           return (
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
-                <Workflow className="size-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate font-medium">{component.name}</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {component.description || component.code}
-                </div>
-              </div>
-            </div>
+            <EntityTitleCell
+              icon={<Workflow className="size-4" />}
+              title={component.name}
+              description={component.description || component.code}
+            />
           )
         },
       }),

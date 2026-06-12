@@ -98,6 +98,7 @@ import { useProductsQuery, type ProductMeta } from '@/entities/product'
 import { formatDateTime } from '@/shared/lib/date'
 import { useUrlSearchState } from '@/shared/lib/useUrlSearchState'
 import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
+import { EntityTitleCell } from '@/shared/ui/entity-title-cell'
 
 const flowPageSizes = [10, 20, 50]
 const flowColumnHelper = createColumnHelper<BusinessFlowMeta>()
@@ -869,17 +870,11 @@ export function BusinessFlowListPage({
         ),
         size: 300,
         cell: ({ row }) => (
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
-              <Network className="size-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate font-medium">{row.original.name}</div>
-              <div className="truncate text-xs text-muted-foreground">
-                {row.original.description || row.original.code}
-              </div>
-            </div>
-          </div>
+          <EntityTitleCell
+            icon={<Network className="size-4" />}
+            title={row.original.name}
+            description={row.original.description || row.original.code}
+          />
         ),
       }),
       flowColumnHelper.accessor((flow) => flow.product_name || '未分配产品', {

@@ -98,6 +98,7 @@ import { useProductsQuery, type ProductMeta } from '@/entities/product'
 import { formatDateTime } from '@/shared/lib/date'
 import { useUrlSearchState } from '@/shared/lib/useUrlSearchState'
 import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
+import { EntityTitleCell } from '@/shared/ui/entity-title-cell'
 
 const statusText: Record<string, string> = {
   active: '使用中',
@@ -878,17 +879,11 @@ export function ErDiagramListPage({
         ),
         size: 300,
         cell: ({ row }) => (
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
-              <Database className="size-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate font-medium">{row.original.name}</div>
-              <div className="truncate text-xs text-muted-foreground">
-                {row.original.description || row.original.id}
-              </div>
-            </div>
-          </div>
+          <EntityTitleCell
+            icon={<Database className="size-4" />}
+            title={row.original.name}
+            description={row.original.description || row.original.id}
+          />
         ),
       }),
       graphColumnHelper.accessor((graph) => graph.product_name || '未分配产品', {
