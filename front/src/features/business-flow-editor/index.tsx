@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Graph, type Cell, type Edge } from '@antv/x6'
 import {
   ArrowLeft,
   GripVertical,
   Layers3,
   Save,
-  Waypoints,
+  X,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -64,12 +64,11 @@ export function BusinessFlowEditor({
       description: meta?.description ?? null,
     }),
   )
-  const [palette, setPalette] = useState<SwimlaneComponentListItem[]>(() =>
-    listPublishedSwimlaneComponentItems(),
-  )
+  const [palette, setPalette] = useState<SwimlaneComponentListItem[]>([])
   const [selected, setSelected] = useState<SelectedBusinessCell>(null)
   const [savedAt, setSavedAt] = useState<string | null>(null)
   canvasRef.current = canvas
+  const businessFlowProductId = meta?.product_id ?? null
 
   useEffect(() => {
     const next = ensureBusinessFlowCanvas({
@@ -133,8 +132,12 @@ export function BusinessFlowEditor({
   }, [businessFlowId, schedulePersist])
 
   useEffect(() => {
-    setPalette(listPublishedSwimlaneComponentItems())
-  }, [])
+    setPalette(
+      businessFlowProductId
+        ? listPublishedSwimlaneComponentItems(businessFlowProductId)
+        : [],
+    )
+  }, [businessFlowProductId])
 
   function dropComponent(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault()
@@ -186,45 +189,104 @@ export function BusinessFlowEditor({
           </Button>
         </div>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)_310px]">
-        <SwimlaneComponentPalette items={palette} />
-        <div
-          className="relative min-h-0"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={dropComponent}
-        >
-          <div ref={containerRef} className="h-full w-full" />
-          {canvas.laneInstances.length === 0 ? (
-            <div className="pointer-events-none absolute left-1/2 top-10 w-80 -translate-x-1/2 rounded-md border border-dashed border-border bg-card/85 px-4 py-3 text-center text-xs text-muted-foreground shadow-sm">
-              从左侧拖入泳道组件，生成业务图中的泳道实例。
-            </div>
-          ) : null}
-        </div>
-        <aside className="min-h-0 border-l border-border bg-card">
-          <ScrollArea className="h-full">
-            <div className="space-y-4 p-3">
-              <div>
-                <div className="flex items-center gap-2 text-xs font-semibold">
-                  <Waypoints className="size-4 text-primary" />
-                  业务图投影
-                </div>
-                <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                  <Metric label="泳道" value={canvas.laneInstances.length} />
-                  <Metric label="节点" value={canvas.nodes.length} />
-                  <Metric label="连线" value={canvas.edges.length} />
-                </div>
+      <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)]">
+        <SwimlaneComponentPalette items={palette} productId={businessFlowProductId} />
+        <section className="flex min-h-0 min-w-0">
+          <div
+            className="relative min-h-0 min-w-0 flex-1"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={dropComponent}
+          >
+            <div ref={containerRef} className="h-full w-full" />
+            {canvas.laneInstances.length === 0 ? (
+              <div className="pointer-events-none absolute left-1/2 top-10 w-80 -translate-x-1/2 rounded-md border border-dashed border-border bg-card/85 px-4 py-3 text-center text-xs text-muted-foreground shadow-sm">
+                从左侧拖入泳道组件，生成业务图中的泳道实例。
               </div>
-              <Separator />
-              <BusinessInspector selected={selected} onChange={setSelected} onPersist={schedulePersist} />
-            </div>
-          </ScrollArea>
-        </aside>
+            ) : null}
+          </div>
+          {selected ? (
+            <BusinessInspectorDrawer
+              selected={selected}
+              onChange={setSelected}
+              onPersist={schedulePersist}
+              onClose={() => {
+                graphRef.current?.cleanSelection()
+                setSelected(null)
+              }}
+            />
+          ) : null}
+        </section>
       </div>
     </section>
   )
 }
 
-function SwimlaneComponentPalette({ items }: { items: SwimlaneComponentListItem[] }) {
+function BusinessInspectorDrawer({
+  selected,
+  onChange,
+  onPersist,
+  onClose,
+}: {
+  selected: Exclude<SelectedBusinessCell, null>
+  onChange: (selected: SelectedBusinessCell) => void
+  onPersist: () => void
+  onClose: () => void
+}) {
+  const title =
+    selected.kind === 'lane'
+      ? '泳道字段'
+      : selected.kind === 'edge'
+        ? '连线字段'
+        : '节点字段'
+  return (
+    <BusinessPanelShell title={title} onClose={onClose}>
+      <BusinessInspector selected={selected} onChange={onChange} onPersist={onPersist} />
+    </BusinessPanelShell>
+  )
+}
+
+function BusinessPanelShell({
+  title,
+  children,
+  onClose,
+}: {
+  title: string
+  children: ReactNode
+  onClose: () => void
+}) {
+  return (
+    <aside
+      className="z-30 flex h-full min-h-0 w-[344px] shrink-0 flex-col border-l border-border bg-card text-card-foreground shadow-sm"
+      role="complementary"
+      aria-label={title}
+    >
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-3">
+        <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+          aria-label="关闭"
+        >
+          <X className="size-4" />
+        </Button>
+      </header>
+      <ScrollArea className="min-h-0 flex-1">
+        <section className="space-y-4 p-4">{children}</section>
+      </ScrollArea>
+    </aside>
+  )
+}
+
+function SwimlaneComponentPalette({
+  items,
+  productId,
+}: {
+  items: SwimlaneComponentListItem[]
+  productId: string | null
+}) {
   return (
     <aside className="min-h-0 border-r border-border bg-card">
       <ScrollArea className="h-full">
@@ -237,40 +299,37 @@ function SwimlaneComponentPalette({ items }: { items: SwimlaneComponentListItem[
             <p className="mt-1 text-xs text-muted-foreground">拖入业务画布后复制为独立实例。</p>
           </div>
           <div className="space-y-2">
-            {items.map((item) => (
-              <button
-                key={item.componentVersionId}
-                type="button"
-                draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.setData('application/x-swimlane-component', item.componentVersionId)
-                  event.dataTransfer.effectAllowed = 'copy'
-                }}
-                className="flex w-full items-start gap-2 rounded-md border border-border bg-background p-2 text-left transition-colors hover:border-primary/60 hover:bg-accent"
-              >
-                <GripVertical className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{item.name}</div>
-                  <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                    <span className="truncate">{item.ownerRole || '未设置角色'}</span>
-                    <span>v{item.versionNo}</span>
+            {items.length ? (
+              items.map((item) => (
+                <button
+                  key={item.componentVersionId}
+                  type="button"
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData('application/x-swimlane-component', item.componentVersionId)
+                    event.dataTransfer.effectAllowed = 'copy'
+                  }}
+                  className="flex w-full items-start gap-2 rounded-md border border-border bg-background p-2 text-left transition-colors hover:border-primary/60 hover:bg-accent"
+                >
+                  <GripVertical className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{item.name}</div>
+                    <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                      <span className="truncate">{item.ownerRole || '未设置角色'}</span>
+                      <span>v{item.versionNo}</span>
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              ))
+            ) : (
+              <div className="rounded-md border border-dashed border-border bg-background p-3 text-xs text-muted-foreground">
+                {productId ? '当前产品暂无已发布泳道组件。' : '正在识别业务图所属产品...'}
+              </div>
+            )}
           </div>
         </div>
       </ScrollArea>
     </aside>
-  )
-}
-
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-border bg-background px-2 py-1.5">
-      <div className="text-muted-foreground">{label}</div>
-      <div className="font-semibold tabular-nums">{value}</div>
-    </div>
   )
 }
 

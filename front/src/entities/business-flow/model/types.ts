@@ -104,6 +104,7 @@ export type SwimlaneComponent = {
 export type SwimlaneComponentListItem = {
   componentId: string
   componentVersionId: string
+  productId: string
   name: string
   category?: string | null
   ownerRole?: string | null

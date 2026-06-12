@@ -301,14 +301,21 @@ export function listSwimlaneComponents() {
   return loadBusinessFlowDemoStore().components
 }
 
-export function listPublishedSwimlaneComponentItems(): SwimlaneComponentListItem[] {
+export function listPublishedSwimlaneComponentItems(
+  productId?: string | null,
+): SwimlaneComponentListItem[] {
   return listSwimlaneComponents()
-    .filter((component) => component.status === 'PUBLISHED')
+    .filter(
+      (component) =>
+        component.status === 'PUBLISHED' &&
+        (!productId || component.productId === productId),
+    )
     .map((component) => {
       const version = getCurrentComponentVersion(component)
       return {
         componentId: component.id,
         componentVersionId: version?.id ?? '',
+        productId: component.productId,
         name: component.name,
         category: component.category,
         ownerRole: component.ownerRole,

@@ -62,7 +62,6 @@ const roleText: Record<ProductRole, string> = {
   viewer: 'Viewer',
 }
 
-const productPageSizes = [10, 20, 50]
 const productColumnHelper = createColumnHelper<ProductMeta>()
 
 function effectiveProductRole(product: ProductMeta): ProductRole {
@@ -90,7 +89,13 @@ function HeaderSortButton({
   onClick: () => void
 }) {
   return (
-    <Button type="button" variant="ghost" size="xs" className="-ml-2" onClick={onClick}>
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      className="-ml-2"
+      onClick={onClick}
+    >
       {label}
       <ArrowUpDown className="size-3.5" />
     </Button>
@@ -107,7 +112,11 @@ function ProductMetaDialog({
   initial: { code: string; name: string; description: string }
   mode: 'create' | 'edit'
   onClose: () => void
-  onSubmit: (values: { code: string; name: string; description: string }) => Promise<void>
+  onSubmit: (values: {
+    code: string
+    name: string
+    description: string
+  }) => Promise<void>
   pending: boolean
 }) {
   const [code, setCode] = useState(initial.code)
@@ -117,35 +126,65 @@ function ProductMetaDialog({
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{mode === 'create' ? '新增产品' : '编辑产品'}</DialogTitle>
-          <DialogDescription>产品是 ER 图、业务图和泳道组件的共同归属。</DialogDescription>
+          <DialogTitle>
+            {mode === 'create' ? '新增产品' : '编辑产品'}
+          </DialogTitle>
+          <DialogDescription>
+            产品是 ER 图、业务图和泳道组件的共同归属。
+          </DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault()
-            void onSubmit({ code: code.trim(), name: name.trim(), description: description.trim() })
+            void onSubmit({
+              code: code.trim(),
+              name: name.trim(),
+              description: description.trim(),
+            })
           }}
         >
           <FieldGroup>
             <Field>
               <FieldLabel>产品标识</FieldLabel>
-              <Input value={code} disabled={mode === 'edit' || pending} onChange={(event) => setCode(event.target.value)} />
+              <Input
+                value={code}
+                disabled={mode === 'edit' || pending}
+                onChange={(event) => setCode(event.target.value)}
+              />
             </Field>
             <Field>
               <FieldLabel>产品名称</FieldLabel>
-              <Input value={name} disabled={pending} autoFocus onChange={(event) => setName(event.target.value)} />
+              <Input
+                value={name}
+                disabled={pending}
+                autoFocus
+                onChange={(event) => setName(event.target.value)}
+              />
             </Field>
             <Field>
               <FieldLabel>描述</FieldLabel>
-              <Textarea className="min-h-24 resize-none" value={description} disabled={pending} onChange={(event) => setDescription(event.target.value)} />
+              <Textarea
+                className="min-h-24 resize-none"
+                value={description}
+                disabled={pending}
+                onChange={(event) => setDescription(event.target.value)}
+              />
             </Field>
           </FieldGroup>
           <DialogFooter>
-            <Button type="button" variant="outline" disabled={pending} onClick={onClose}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={onClose}
+            >
               取消
             </Button>
-            <Button type="submit" disabled={pending || !code.trim() || !name.trim()}>
+            <Button
+              type="submit"
+              disabled={pending || !code.trim() || !name.trim()}
+            >
               {pending ? '保存中...' : '保存'}
             </Button>
           </DialogFooter>
@@ -177,12 +216,16 @@ function ProductMembersDialog({
   const sortedMembers = useMemo(
     () =>
       [...members].sort((left, right) => {
-        const createdAt = new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+        const createdAt =
+          new Date(left.created_at).getTime() -
+          new Date(right.created_at).getTime()
         return createdAt || left.email.localeCompare(right.email)
       }),
     [members],
   )
-  const ownerCount = sortedMembers.filter((member) => member.role === 'owner').length
+  const ownerCount = sortedMembers.filter(
+    (member) => member.role === 'owner',
+  ).length
 
   return (
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
@@ -200,11 +243,20 @@ function ProductMembersDialog({
         >
           <Field>
             <FieldLabel>用户邮箱</FieldLabel>
-            <Input value={email} disabled={pending} placeholder="user@example.com" onChange={(event) => setEmail(event.target.value)} />
+            <Input
+              value={email}
+              disabled={pending}
+              placeholder="user@example.com"
+              onChange={(event) => setEmail(event.target.value)}
+            />
           </Field>
           <Field>
             <FieldLabel>角色</FieldLabel>
-            <Select value={role} disabled={pending} onValueChange={(value) => setRole(value as ProductRole)}>
+            <Select
+              value={role}
+              disabled={pending}
+              onValueChange={(value) => setRole(value as ProductRole)}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -234,21 +286,32 @@ function ProductMembersDialog({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
+                  <td
+                    colSpan={3}
+                    className="px-3 py-8 text-center text-muted-foreground"
+                  >
                     加载中...
                   </td>
                 </tr>
               ) : sortedMembers.length ? (
                 sortedMembers.map((member) => {
-                  const locked = member.is_creator || (member.role === 'owner' && ownerCount <= 1)
+                  const locked =
+                    member.is_creator ||
+                    (member.role === 'owner' && ownerCount <= 1)
                   return (
                     <tr key={member.user_id} className="border-t border-border">
                       <td className="px-3 py-2">
                         <div className="flex min-w-0 items-center gap-2">
-                          <span className="truncate font-medium">{member.display_name}</span>
-                          {member.is_creator ? <Badge variant="secondary">创建者</Badge> : null}
+                          <span className="truncate font-medium">
+                            {member.display_name}
+                          </span>
+                          {member.is_creator ? (
+                            <Badge variant="secondary">创建者</Badge>
+                          ) : null}
                         </div>
-                        <div className="truncate text-xs text-muted-foreground">{member.email}</div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {member.email}
+                        </div>
                       </td>
                       <td className="px-3 py-2">
                         <Select
@@ -271,7 +334,12 @@ function ProductMembersDialog({
                         </Select>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <Button size="xs" variant="ghost" disabled={pending || locked} onClick={() => void onRemove(member)}>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          disabled={pending || locked}
+                          onClick={() => void onRemove(member)}
+                        >
                           <Trash2 className="size-3.5" />
                           移除
                         </Button>
@@ -281,7 +349,10 @@ function ProductMembersDialog({
                 })
               ) : (
                 <tr>
-                  <td colSpan={3} className="px-3 py-8 text-center text-muted-foreground">
+                  <td
+                    colSpan={3}
+                    className="px-3 py-8 text-center text-muted-foreground"
+                  >
                     暂无成员
                   </td>
                 </tr>
@@ -301,9 +372,13 @@ export function ProductListPage() {
   const archiveMutation = useArchiveProductMutation()
   const upsertMemberMutation = useUpsertProductMemberMutation()
   const removeMemberMutation = useRemoveProductMemberMutation()
-  const [editingProduct, setEditingProduct] = useState<ProductMeta | 'new' | null>(null)
+  const [editingProduct, setEditingProduct] = useState<
+    ProductMeta | 'new' | null
+  >(null)
   const [memberProduct, setMemberProduct] = useState<ProductMeta | null>(null)
-  const membersQuery = useProductMembersQuery(memberProduct?.id ?? null, { enabled: Boolean(memberProduct) })
+  const membersQuery = useProductMembersQuery(memberProduct?.id ?? null, {
+    enabled: Boolean(memberProduct),
+  })
   const products = productsQuery.data ?? []
   const [sorting, setSorting] = useState<SortingState>([])
   const [pagination, setPagination] = useState<PaginationState>({
@@ -345,7 +420,9 @@ export function ProductListPage() {
           header: ({ column }) => (
             <HeaderSortButton
               label="资产"
-              onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+              onClick={() =>
+                column.toggleSorting(column.getIsSorted() === 'asc')
+              }
             />
           ),
           size: 260,
@@ -353,7 +430,8 @@ export function ProductListPage() {
             const product = row.original
             return (
               <span className="text-xs text-muted-foreground">
-                ER {product.er_graph_count} · 业务图 {product.business_flow_count} · 泳道{' '}
+                ER {product.er_graph_count} · 业务图{' '}
+                {product.business_flow_count} · 泳道{' '}
                 {product.swimlane_component_count}
               </span>
             )
@@ -452,7 +530,11 @@ export function ProductListPage() {
     getPaginationRowModel: getPaginationRowModel(),
   })
 
-  async function submitProduct(values: { code: string; name: string; description: string }) {
+  async function submitProduct(values: {
+    code: string
+    name: string
+    description: string
+  }) {
     if (editingProduct === 'new') {
       await createMutation.mutateAsync({
         code: values.code,
@@ -476,29 +558,16 @@ export function ProductListPage() {
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">产品</h3>
-          <p className="text-xs text-muted-foreground">管理 ER 图、业务图和泳道组件的产品归属与成员权限。</p>
+          <p className="text-xs text-muted-foreground">
+            管理 ER 图、业务图和泳道组件的产品归属与成员权限。
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Select
-            value={String(pagination.pageSize)}
-            onValueChange={(value) =>
-              setPagination({ pageIndex: 0, pageSize: Number(value) })
-            }
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void productsQuery.refetch()}
           >
-            <SelectTrigger className="h-8 w-[108px]" aria-label="分页大小">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {productPageSizes.map((pageSize) => (
-                  <SelectItem key={pageSize} value={String(pageSize)}>
-                    {pageSize} / 页
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Button size="sm" variant="outline" onClick={() => void productsQuery.refetch()}>
             <RefreshCw className="size-4" />
             刷新
           </Button>
