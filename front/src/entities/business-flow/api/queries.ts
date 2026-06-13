@@ -286,9 +286,7 @@ export function useApplyBusinessFlowChangesMutation(businessFlowId: string) {
     }) => applyBusinessFlowChanges(businessFlowId, baseVersion, ops),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: businessFlowKeys.editorState(businessFlowId) }),
         queryClient.invalidateQueries({ queryKey: businessFlowKeys.history(businessFlowId) }),
-        queryClient.invalidateQueries({ queryKey: businessFlowKeys.all }),
       ])
     },
   })

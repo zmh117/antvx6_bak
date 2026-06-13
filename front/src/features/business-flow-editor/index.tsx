@@ -1,19 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Graph, Node, type Cell, type Edge } from '@antv/x6'
-import {
-  ArrowLeft,
-  GripVertical,
-  Layers3,
-  X,
-} from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { ArrowLeft, GripVertical, Layers3, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -27,6 +19,7 @@ import {
   useRestoreBusinessFlowVersionMutation,
   useSwimlaneComponentsQuery,
 } from '@/entities/business-flow/api'
+import { businessFlowKeys } from '@/entities/business-flow/api/queryKeys'
 import type {
   BusinessFlowChangeOpBody,
   BusinessFlowEdgeRecord,
@@ -49,7 +42,14 @@ import {
 
 type SelectedBusinessCell =
   | { kind: 'lane'; cell: Cell; displayName: string; ownerRole: string }
-  | { kind: 'node'; cell: Cell; title: string; description: string; actor: string; businessRule: string }
+  | {
+      kind: 'node'
+      cell: Cell
+      title: string
+      description: string
+      actor: string
+      businessRule: string
+    }
   | { kind: 'edge'; cell: Edge; label: string }
   | null
 
@@ -62,38 +62,58 @@ export function BusinessFlowEditor({
 }) {
   const metasQuery = useBusinessFlowMetasQuery()
   const meta = metasQuery.data?.find((item) => item.id === businessFlowId)
+  const queryClient = useQueryClient()
   const graphRef = useRef<Graph | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<LocalBusinessFlowCanvas | null>(null)
   const persistTimer = useRef<number | null>(null)
+  const persistInFlightRef = useRef(false)
+  const persistQueuedRef = useRef(false)
+  const persistCanvasRef = useRef<() => Promise<void>>(async () => {})
+  const loadedFlowIdRef = useRef<string | null>(null)
   const renderingRef = useRef(false)
   const normalizingRef = useRef(false)
   const editorQuery = useBusinessFlowEditorStateQuery(businessFlowId, meta)
-  const placeComponentMutation = usePlaceSwimlaneComponentMutation(businessFlowId)
-  const applyChangesMutation = useApplyBusinessFlowChangesMutation(businessFlowId)
+  const placeComponentMutation =
+    usePlaceSwimlaneComponentMutation(businessFlowId)
+  const applyChangesMutation =
+    useApplyBusinessFlowChangesMutation(businessFlowId)
   const historyQuery = useBusinessFlowHistoryQuery(businessFlowId)
   const restoreMutation = useRestoreBusinessFlowVersionMutation(businessFlowId)
   const [canvas, setCanvas] = useState<LocalBusinessFlowCanvas | null>(null)
-  const publishedComponentsQuery = useSwimlaneComponentsQuery(meta?.product_id ?? 'none', 'PUBLISHED')
-  const palette: SwimlaneComponentListItem[] = (publishedComponentsQuery.data ?? []).flatMap((component) => {
+  const publishedComponentsQuery = useSwimlaneComponentsQuery(
+    meta?.product_id ?? 'none',
+    'PUBLISHED',
+  )
+  const palette: SwimlaneComponentListItem[] = (
+    publishedComponentsQuery.data ?? []
+  ).flatMap((component) => {
     const version =
-      component.versions.find((item) => item.status === 'PUBLISHED' && item.versionNo === component.currentVersionNo)
-      ?? component.versions.filter((item) => item.status === 'PUBLISHED').at(-1)
+      component.versions.find(
+        (item) =>
+          item.status === 'PUBLISHED' &&
+          item.versionNo === component.currentVersionNo,
+      ) ??
+      component.versions.filter((item) => item.status === 'PUBLISHED').at(-1)
     if (!version) return []
-    return [{
-      componentId: component.id,
-      componentVersionId: version.id,
-      productId: component.productId,
-      name: component.name,
-      category: component.category,
-      ownerRole: component.ownerRole,
-      versionNo: version.versionNo,
-      thumbnailUrl: version.thumbnailUrl,
-    }]
+    return [
+      {
+        componentId: component.id,
+        componentVersionId: version.id,
+        productId: component.productId,
+        name: component.name,
+        category: component.category,
+        ownerRole: component.ownerRole,
+        versionNo: version.versionNo,
+        thumbnailUrl: version.thumbnailUrl,
+      },
+    ]
   })
   const [selected, setSelected] = useState<SelectedBusinessCell>(null)
   const selectedRef = useRef<SelectedBusinessCell>(null)
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveState, setSaveState] = useState<
+    'idle' | 'saving' | 'saved' | 'error'
+  >('idle')
   const [savedAt, setSavedAt] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const businessFlowProductId = meta?.product_id ?? null
@@ -102,42 +122,95 @@ export function BusinessFlowEditor({
     selectedRef.current = selected
   }, [selected])
 
+  const loadCanvasIntoGraph = useCallback(
+    (nextCanvas: LocalBusinessFlowCanvas) => {
+      canvasRef.current = nextCanvas
+      setCanvas(nextCanvas)
+      queryClient.setQueryData(
+        businessFlowKeys.editorState(businessFlowId),
+        nextCanvas,
+      )
+      const graph = graphRef.current
+      if (!graph) return
+      renderingRef.current = true
+      try {
+        renderBusinessFlowCanvas(graph, nextCanvas)
+        loadedFlowIdRef.current = businessFlowId
+      } finally {
+        renderingRef.current = false
+      }
+    },
+    [businessFlowId, queryClient],
+  )
+
   useEffect(() => {
     if (!editorQuery.data) return
-    canvasRef.current = editorQuery.data
-    setCanvas(editorQuery.data)
-    const graph = graphRef.current
-    if (graph) {
-      renderingRef.current = true
-      renderBusinessFlowCanvas(graph, editorQuery.data)
-      renderingRef.current = false
-    }
-  }, [editorQuery.data])
+    const currentCanvas = canvasRef.current
+    const shouldLoadCanvas =
+      loadedFlowIdRef.current !== businessFlowId ||
+      !currentCanvas ||
+      currentCanvas.businessFlowId !== businessFlowId
+    if (!shouldLoadCanvas) return
+    loadCanvasIntoGraph(editorQuery.data)
+  }, [businessFlowId, editorQuery.data, loadCanvasIntoGraph])
 
-  const persistCanvas = useCallback(async () => {
+  const runPersistCanvas = useCallback(async () => {
     const graph = graphRef.current
     const previous = canvasRef.current
     if (!graph || !previous || renderingRef.current) return
     const draft = flowDraftFromGraph(graph, previous)
     const ops = buildBusinessFlowOps(previous, draft)
     if (ops.length === 0) return
+    const layoutOnly = isLayoutOnlyBusinessFlowOps(ops)
     setSaveState('saving')
     try {
-      await applyChangesMutation.mutateAsync({
+      const result = await applyChangesMutation.mutateAsync({
         baseVersion: previous.version,
         ops,
       })
-      const refreshed = await editorQuery.refetch()
-      if (refreshed.data) {
-        canvasRef.current = refreshed.data
-        setCanvas(refreshed.data)
+      const nextCanvas: LocalBusinessFlowCanvas = {
+        ...previous,
+        ...draft,
+        version: result.newVersion,
+        updatedAt: new Date().toISOString(),
+      }
+      canvasRef.current = nextCanvas
+      queryClient.setQueryData(
+        businessFlowKeys.editorState(businessFlowId),
+        nextCanvas,
+      )
+      if (!layoutOnly) {
+        setCanvas(nextCanvas)
       }
       setSaveState('saved')
       setSavedAt(new Date().toLocaleTimeString())
     } catch {
       setSaveState('error')
     }
-  }, [applyChangesMutation, editorQuery])
+  }, [applyChangesMutation, businessFlowId, queryClient])
+
+  const persistCanvas = useCallback(async () => {
+    if (persistInFlightRef.current) {
+      persistQueuedRef.current = true
+      return
+    }
+    persistInFlightRef.current = true
+    try {
+      await runPersistCanvas()
+    } finally {
+      persistInFlightRef.current = false
+      if (persistQueuedRef.current) {
+        persistQueuedRef.current = false
+        window.setTimeout(() => {
+          void persistCanvasRef.current()
+        }, 0)
+      }
+    }
+  }, [runPersistCanvas])
+
+  useEffect(() => {
+    persistCanvasRef.current = persistCanvas
+  }, [persistCanvas])
 
   const schedulePersist = useCallback(() => {
     if (persistTimer.current != null) window.clearTimeout(persistTimer.current)
@@ -151,28 +224,80 @@ export function BusinessFlowEditor({
     if (!containerRef.current) return
     const graph = createBusinessFlowGraph(containerRef.current)
     graphRef.current = graph
-    if (canvasRef.current) renderBusinessFlowCanvas(graph, canvasRef.current)
+    if (canvasRef.current) {
+      renderingRef.current = true
+      try {
+        renderBusinessFlowCanvas(graph, canvasRef.current)
+        loadedFlowIdRef.current = businessFlowId
+      } finally {
+        renderingRef.current = false
+      }
+    }
 
-    graph.on('cell:click', ({ cell }) => setSelected(readSelectedBusinessCell(cell)))
+    graph.on('cell:click', ({ cell }) =>
+      setSelected(readSelectedBusinessCell(cell)),
+    )
     graph.on('blank:click', () => setSelected(null))
     graph.on('node:change:position', ({ node }) => {
       if (renderingRef.current || normalizingRef.current) return
       if (readCellData(node).cellRole !== 'FLOW_NODE') return
       const parent = node.getParent()
-      if (!(parent instanceof Node) || readCellData(parent).cellRole !== 'LANE_INSTANCE') return
+      if (
+        !(parent instanceof Node) ||
+        readCellData(parent).cellRole !== 'LANE_INSTANCE'
+      )
+        return
       normalizingRef.current = true
-      fitLaneToChildren(parent, { preserveManualSize: true })
-      normalizingRef.current = false
+      try {
+        graph.batchUpdate(() => {
+          fitLaneToChildren(parent, {
+            preserveManualSize: true,
+            clampChildren: false,
+            shrinkToFit: false,
+          })
+        })
+      } finally {
+        normalizingRef.current = false
+      }
     })
-    graph.on('node:moved', () => {
-      if (!renderingRef.current) schedulePersist()
+    graph.on('node:moved', ({ node }) => {
+      if (renderingRef.current) return
+      if (readCellData(node).cellRole === 'FLOW_NODE') {
+        const parent = node.getParent()
+        if (
+          parent instanceof Node &&
+          readCellData(parent).cellRole === 'LANE_INSTANCE'
+        ) {
+          normalizingRef.current = true
+          try {
+            graph.batchUpdate(() => {
+              fitLaneToChildren(parent, {
+                preserveManualSize: true,
+                clampChildren: true,
+              })
+            })
+          } finally {
+            normalizingRef.current = false
+          }
+        }
+      }
+      schedulePersist()
     })
     graph.on('node:resized', ({ node }) => {
-      if (renderingRef.current || readCellData(node).cellRole !== 'LANE_INSTANCE') return
+      if (
+        renderingRef.current ||
+        readCellData(node).cellRole !== 'LANE_INSTANCE'
+      )
+        return
       normalizingRef.current = true
-      rememberManualLaneSize(node)
-      fitLaneToChildren(node, { preserveManualSize: true })
-      normalizingRef.current = false
+      try {
+        graph.batchUpdate(() => {
+          rememberManualLaneSize(node)
+          fitLaneToChildren(node, { preserveManualSize: true })
+        })
+      } finally {
+        normalizingRef.current = false
+      }
       schedulePersist()
     })
     graph.on('edge:connected', ({ edge }) => {
@@ -191,8 +316,13 @@ export function BusinessFlowEditor({
     graph.on('node:removed', () => {
       if (renderingRef.current) return
       normalizingRef.current = true
-      normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
-      normalizingRef.current = false
+      try {
+        graph.batchUpdate(() => {
+          normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
+        })
+      } finally {
+        normalizingRef.current = false
+      }
       schedulePersist()
     })
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -200,7 +330,8 @@ export function BusinessFlowEditor({
       if (target?.closest('input, textarea, [contenteditable="true"]')) return
       if (event.key !== 'Delete' && event.key !== 'Backspace') return
       const selectedCells = graph.getSelectedCells()
-      if (!selectedCells.length && selectedRef.current?.cell) selectedCells.push(selectedRef.current.cell)
+      if (!selectedCells.length && selectedRef.current?.cell)
+        selectedCells.push(selectedRef.current.cell)
       if (!selectedCells.length) return
       event.preventDefault()
       selectedCells.forEach((cell) => {
@@ -212,10 +343,12 @@ export function BusinessFlowEditor({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => {
-      if (persistTimer.current != null) window.clearTimeout(persistTimer.current)
+      if (persistTimer.current != null)
+        window.clearTimeout(persistTimer.current)
       window.removeEventListener('keydown', handleKeyDown)
       graph.dispose()
       graphRef.current = null
+      loadedFlowIdRef.current = null
     }
   }, [businessFlowId, schedulePersist])
 
@@ -223,7 +356,9 @@ export function BusinessFlowEditor({
     event.preventDefault()
     const graph = graphRef.current
     if (!graph) return
-    const componentVersionId = event.dataTransfer.getData('application/x-swimlane-component')
+    const componentVersionId = event.dataTransfer.getData(
+      'application/x-swimlane-component',
+    )
     if (!componentVersionId) return
     const point = graphPointFromEvent(graph, event.nativeEvent)
     setSaveState('saving')
@@ -237,8 +372,7 @@ export function BusinessFlowEditor({
       })
       const refreshed = await editorQuery.refetch()
       if (refreshed.data) {
-        canvasRef.current = refreshed.data
-        setCanvas(refreshed.data)
+        loadCanvasIntoGraph(refreshed.data)
       }
       setSaveState('saved')
       setSavedAt(new Date().toLocaleTimeString())
@@ -257,17 +391,15 @@ export function BusinessFlowEditor({
           </Button>
           <Separator orientation="vertical" className="h-5" />
           <div className="min-w-0">
-            <div className="truncate text-xs font-medium">{canvas?.name ?? meta?.name ?? businessFlowId}</div>
-            <div className="truncate text-[11px] text-muted-foreground">{canvas?.code || meta?.code || businessFlowId}</div>
+            <div className="truncate text-xs font-medium">
+              {canvas?.name ?? meta?.name ?? businessFlowId}
+            </div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              {canvas?.code || meta?.code || businessFlowId}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="hidden sm:inline-flex">
-            {canvas?.laneInstances.length ?? 0} 泳道
-          </Badge>
-          <Badge variant="secondary" className="hidden sm:inline-flex">
-            {canvas?.edges.filter((edge) => edge.isCrossLane).length ?? 0} 跨泳道线
-          </Badge>
           <span className="text-xs text-muted-foreground">
             {saveState === 'saving'
               ? '保存中...'
@@ -277,13 +409,28 @@ export function BusinessFlowEditor({
                   ? `已保存 ${savedAt}`
                   : '自动保存'}
           </span>
-          <Button size="sm" variant="outline" onClick={() => setShowHistory((value) => !value)}>
+          <Badge variant="outline" className="hidden sm:inline-flex">
+            {canvas?.laneInstances.length ?? 0} 泳道
+          </Badge>
+          <Badge variant="secondary" className="hidden sm:inline-flex">
+            {canvas?.edges.filter((edge) => edge.isCrossLane).length ?? 0}{' '}
+            跨泳道线
+          </Badge>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setShowHistory((value) => !value)}
+          >
             历史
           </Button>
         </div>
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)]">
-        <SwimlaneComponentPalette items={palette} productId={businessFlowProductId} />
+        <SwimlaneComponentPalette
+          items={palette}
+          productId={businessFlowProductId}
+        />
         <section className="flex min-h-0 min-w-0">
           <div
             className="relative min-h-0 min-w-0 flex-1"
@@ -291,7 +438,8 @@ export function BusinessFlowEditor({
             onDrop={dropComponent}
           >
             <div ref={containerRef} className="h-full w-full" />
-            {!editorQuery.isLoading && (canvas?.laneInstances.length ?? 0) === 0 ? (
+            {!editorQuery.isLoading &&
+            (canvas?.laneInstances.length ?? 0) === 0 ? (
               <div className="pointer-events-none absolute left-1/2 top-10 w-80 -translate-x-1/2 rounded-md border border-dashed border-border bg-card/85 px-4 py-3 text-center text-xs text-muted-foreground shadow-sm">
                 从左侧拖入泳道组件，生成业务图中的泳道实例。
               </div>
@@ -319,8 +467,7 @@ export function BusinessFlowEditor({
                   await restoreMutation.mutateAsync(version)
                   const refreshed = await editorQuery.refetch()
                   if (refreshed.data) {
-                    canvasRef.current = refreshed.data
-                    setCanvas(refreshed.data)
+                    loadCanvasIntoGraph(refreshed.data)
                   }
                   setSaveState('saved')
                   setSavedAt(new Date().toLocaleTimeString())
@@ -355,14 +502,19 @@ function BusinessHistoryDrawer({
   return (
     <BusinessPanelShell title="历史记录" onClose={onClose}>
       <div className="space-y-2">
-        {loading ? <div className="text-xs text-muted-foreground">处理中...</div> : null}
+        {loading ? (
+          <div className="text-xs text-muted-foreground">处理中...</div>
+        ) : null}
         {items.length === 0 ? (
           <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
             暂无历史记录。
           </div>
         ) : null}
         {items.map((item) => (
-          <div key={item.version} className="rounded-md border border-border bg-background p-3">
+          <div
+            key={item.version}
+            className="rounded-md border border-border bg-background p-3"
+          >
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs font-semibold">版本 {item.version}</div>
               <Button
@@ -375,8 +527,12 @@ function BusinessHistoryDrawer({
                 恢复
               </Button>
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">{item.summary || '业务图更新'}</div>
-            <div className="mt-1 text-[11px] text-muted-foreground">{item.createdAt}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {item.summary || '业务图更新'}
+            </div>
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              {item.createdAt}
+            </div>
             {item.ops.length ? (
               <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
                 {item.ops.slice(0, 4).map((op, index) => (
@@ -410,7 +566,11 @@ function BusinessInspectorDrawer({
         : '节点字段'
   return (
     <BusinessPanelShell title={title} onClose={onClose}>
-      <BusinessInspector selected={selected} onChange={onChange} onPersist={onPersist} />
+      <BusinessInspector
+        selected={selected}
+        onChange={onChange}
+        onPersist={onPersist}
+      />
     </BusinessPanelShell>
   )
 }
@@ -431,7 +591,9 @@ function BusinessPanelShell({
       aria-label={title}
     >
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-3">
-        <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
+        <h2 className="text-sm font-semibold tracking-tight text-foreground">
+          {title}
+        </h2>
         <Button
           type="button"
           variant="ghost"
@@ -466,7 +628,9 @@ function SwimlaneComponentPalette({
               <Layers3 className="size-4 text-primary" />
               泳道组件库
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">拖入业务画布后复制为独立实例。</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              拖入业务画布后复制为独立实例。
+            </p>
           </div>
           <div className="space-y-2">
             {items.length ? (
@@ -476,16 +640,23 @@ function SwimlaneComponentPalette({
                   type="button"
                   draggable
                   onDragStart={(event) => {
-                    event.dataTransfer.setData('application/x-swimlane-component', item.componentVersionId)
+                    event.dataTransfer.setData(
+                      'application/x-swimlane-component',
+                      item.componentVersionId,
+                    )
                     event.dataTransfer.effectAllowed = 'copy'
                   }}
                   className="flex w-full items-start gap-2 rounded-md border border-border bg-background p-2 text-left transition-colors hover:border-primary/60 hover:bg-accent"
                 >
                   <GripVertical className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{item.name}</div>
+                    <div className="truncate text-sm font-medium">
+                      {item.name}
+                    </div>
                     <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                      <span className="truncate">{item.ownerRole || '未设置角色'}</span>
+                      <span className="truncate">
+                        {item.ownerRole || '未设置角色'}
+                      </span>
                       <span>v{item.versionNo}</span>
                     </div>
                   </div>
@@ -493,7 +664,9 @@ function SwimlaneComponentPalette({
               ))
             ) : (
               <div className="rounded-md border border-dashed border-border bg-background p-3 text-xs text-muted-foreground">
-                {productId ? '当前产品暂无已发布泳道组件。' : '正在识别业务图所属产品...'}
+                {productId
+                  ? '当前产品暂无已发布泳道组件。'
+                  : '正在识别业务图所属产品...'}
               </div>
             )}
           </div>
@@ -508,8 +681,12 @@ function buildBusinessFlowOps(
   draft: ReturnType<typeof flowDraftFromGraph>,
 ): BusinessFlowChangeOpBody[] {
   const ops: BusinessFlowChangeOpBody[] = []
-  const prevLanes = new Map(previous.laneInstances.map((lane) => [lane.instanceKey, lane]))
-  const nextLanes = new Map(draft.laneInstances.map((lane) => [lane.instanceKey, lane]))
+  const prevLanes = new Map(
+    previous.laneInstances.map((lane) => [lane.instanceKey, lane]),
+  )
+  const nextLanes = new Map(
+    draft.laneInstances.map((lane) => [lane.instanceKey, lane]),
+  )
   nextLanes.forEach((lane, key) => {
     const prev = prevLanes.get(key)
     if (!prev) return
@@ -518,7 +695,8 @@ function buildBusinessFlowOps(
       prev.position.y !== lane.position.y ||
       prev.size.width !== lane.size.width ||
       prev.size.height !== lane.size.height ||
-      stableJson(prev.layoutJson ?? null) !== stableJson(lane.layoutJson ?? null)
+      stableJson(prev.layoutJson ?? null) !==
+        stableJson(lane.layoutJson ?? null)
     ) {
       ops.push({
         opType: 'MOVE_LANE_INSTANCE',
@@ -536,7 +714,10 @@ function buildBusinessFlowOps(
         summary: `移动泳道：${lane.displayName}`,
       })
     }
-    if (prev.displayName !== lane.displayName || (prev.ownerRole ?? '') !== (lane.ownerRole ?? '')) {
+    if (
+      prev.displayName !== lane.displayName ||
+      (prev.ownerRole ?? '') !== (lane.ownerRole ?? '')
+    ) {
       ops.push({
         opType: 'RENAME_LANE_INSTANCE',
         targetType: 'LANE_INSTANCE',
@@ -601,9 +782,12 @@ function buildBusinessFlowOps(
       }
     }
     if (prev.title !== node.title) patch.title = node.title
-    if ((prev.description ?? '') !== (node.description ?? '')) patch.description = node.description ?? null
-    if ((prev.actor ?? '') !== (node.actor ?? '')) patch.actor = node.actor ?? null
-    if ((prev.businessRule ?? '') !== (node.businessRule ?? '')) patch.businessRule = node.businessRule ?? null
+    if ((prev.description ?? '') !== (node.description ?? ''))
+      patch.description = node.description ?? null
+    if ((prev.actor ?? '') !== (node.actor ?? ''))
+      patch.actor = node.actor ?? null
+    if ((prev.businessRule ?? '') !== (node.businessRule ?? ''))
+      patch.businessRule = node.businessRule ?? null
     if (Object.keys(patch).length > 0) {
       ops.push({
         opType: 'UPDATE_NODE',
@@ -650,7 +834,8 @@ function buildBusinessFlowOps(
     ) {
       ops.push({
         opType:
-          prev.sourceNodeKey !== edge.sourceNodeKey || prev.targetNodeKey !== edge.targetNodeKey
+          prev.sourceNodeKey !== edge.sourceNodeKey ||
+          prev.targetNodeKey !== edge.targetNodeKey
             ? 'ADD_EDGE'
             : 'UPDATE_EDGE',
         targetType: 'EDGE',
@@ -667,11 +852,28 @@ function stableJson(value: unknown) {
   return JSON.stringify(value ?? null)
 }
 
+function isLayoutOnlyBusinessFlowOps(ops: BusinessFlowChangeOpBody[]) {
+  return ops.every((op) => {
+    if (
+      op.opType === 'MOVE_LANE_INSTANCE' ||
+      op.opType === 'RESIZE_LANE_INSTANCE'
+    )
+      return true
+    if (op.opType !== 'UPDATE_NODE') return false
+    const patch = op.patch
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch))
+      return false
+    return Object.keys(patch).every((key) => key === 'to')
+  })
+}
+
 function laneKeyForNode(
   draft: ReturnType<typeof flowDraftFromGraph>,
   node: BusinessFlowNodeRecord,
 ) {
-  return draft.laneInstances.find((lane) => lane.laneInstanceId === node.laneInstanceId)?.instanceKey
+  return draft.laneInstances.find(
+    (lane) => lane.laneInstanceId === node.laneInstanceId,
+  )?.instanceKey
 }
 
 function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
@@ -714,7 +916,10 @@ function BusinessInspector({
               onChange={(event) => {
                 const displayName = event.target.value
                 selected.cell.attr('label/text', displayName)
-                selected.cell.setData({ ...readCellData(selected.cell), title: displayName })
+                selected.cell.setData({
+                  ...readCellData(selected.cell),
+                  title: displayName,
+                })
                 onChange({ ...selected, displayName })
                 onPersist()
               }}
@@ -780,7 +985,10 @@ function BusinessInspector({
             value={selected.description}
             onChange={(event) => {
               const description = event.target.value
-              selected.cell.setData({ ...readCellData(selected.cell), description })
+              selected.cell.setData({
+                ...readCellData(selected.cell),
+                description,
+              })
               onChange({ ...selected, description })
               onPersist()
             }}
@@ -805,7 +1013,10 @@ function BusinessInspector({
             value={selected.businessRule}
             onChange={(event) => {
               const businessRule = event.target.value
-              selected.cell.setData({ ...readCellData(selected.cell), businessRule })
+              selected.cell.setData({
+                ...readCellData(selected.cell),
+                businessRule,
+              })
               onChange({ ...selected, businessRule })
               onPersist()
             }}

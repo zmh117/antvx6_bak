@@ -554,7 +554,11 @@ export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlow
 
 export function normalizeBusinessFlowLanes(
   graph: Graph,
-  options: { preserveManualSize?: boolean } = {},
+  options: {
+    preserveManualSize?: boolean
+    clampChildren?: boolean
+    shrinkToFit?: boolean
+  } = {},
 ) {
   let changed = false
   graph.getNodes().forEach((node) => {
@@ -566,7 +570,11 @@ export function normalizeBusinessFlowLanes(
 
 export function fitLaneToChildren(
   lane: Node,
-  options: { preserveManualSize?: boolean } = {},
+  options: {
+    preserveManualSize?: boolean
+    clampChildren?: boolean
+    shrinkToFit?: boolean
+  } = {},
 ) {
   const children = flowNodeChildren(lane)
   const layout = BUSINESS_FLOW_LANE_LAYOUT
@@ -577,8 +585,13 @@ export function fitLaneToChildren(
   children.forEach((child) => {
     const relativePosition = child.position({ relative: true })
     const size = child.size()
-    const nextX = Math.max(layout.paddingLeft, relativePosition.x)
-    const nextY = Math.max(layout.headerHeight, relativePosition.y)
+    const shouldClampChildren = options.clampChildren ?? true
+    const nextX = shouldClampChildren
+      ? Math.max(layout.paddingLeft, relativePosition.x)
+      : relativePosition.x
+    const nextY = shouldClampChildren
+      ? Math.max(layout.headerHeight, relativePosition.y)
+      : relativePosition.y
     if (nextX !== relativePosition.x || nextY !== relativePosition.y) {
       child.position(nextX, nextY, { relative: true })
       changed = true
@@ -588,17 +601,24 @@ export function fitLaneToChildren(
   })
 
   const sizePolicy = readLaneSizePolicy(lane)
-  const requiredWidth = Math.max(
+  const currentSize = lane.size()
+  const contentWidth = Math.max(
     layout.minWidth,
     maxRight + layout.paddingRight,
     options.preserveManualSize ? sizePolicy.manualWidth ?? 0 : 0,
   )
-  const requiredHeight = Math.max(
+  const contentHeight = Math.max(
     layout.minHeight,
     maxBottom + layout.paddingBottom,
     options.preserveManualSize ? sizePolicy.manualHeight ?? 0 : 0,
   )
-  const currentSize = lane.size()
+  const canShrink = options.shrinkToFit ?? true
+  const requiredWidth = canShrink
+    ? contentWidth
+    : Math.max(currentSize.width, contentWidth)
+  const requiredHeight = canShrink
+    ? contentHeight
+    : Math.max(currentSize.height, contentHeight)
   if (currentSize.width !== requiredWidth || currentSize.height !== requiredHeight) {
     lane.resize(requiredWidth, requiredHeight)
     changed = true

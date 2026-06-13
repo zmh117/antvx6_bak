@@ -31,7 +31,10 @@ function routeTitle(route: DashboardRoute) {
   if (route.name === 'products') return '产品'
   if (route.name === 'business-flow-edit') return '业务图编辑器'
   if (route.name === 'swimlane-component-edit') return '泳道组件编辑器'
-  return dashboardMenus.find((item) => item.key === route.name)?.title ?? 'ER 建模工作台'
+  return (
+    dashboardMenus.find((item) => item.key === route.name)?.title ??
+    'ER 建模工作台'
+  )
 }
 
 function routeSubtitle(route: DashboardRoute) {
@@ -62,7 +65,11 @@ export function DashboardApp() {
   if (route.name === 'products') {
     content = <ProductListPage />
   } else if (route.name === 'business-flows') {
-    content = <BusinessFlowListPage onOpenCanvas={(flowId) => navigate(businessFlowEditPath(flowId))} />
+    content = (
+      <BusinessFlowListPage
+        onOpenCanvas={(flowId) => navigate(businessFlowEditPath(flowId))}
+      />
+    )
   } else if (route.name === 'business-flow-edit') {
     content = (
       <BusinessFlowEditor
@@ -74,8 +81,12 @@ export function DashboardApp() {
   } else if (route.name === 'swimlane-components') {
     content = (
       <SwimlaneComponentListPage
-        onCreate={(componentId) => navigate(swimlaneComponentEditPath(componentId))}
-        onEdit={(componentId) => navigate(swimlaneComponentEditPath(componentId))}
+        onCreate={(componentId) =>
+          navigate(swimlaneComponentEditPath(componentId))
+        }
+        onEdit={(componentId) =>
+          navigate(swimlaneComponentEditPath(componentId))
+        }
       />
     )
   } else if (route.name === 'swimlane-component-edit') {
@@ -92,19 +103,33 @@ export function DashboardApp() {
     content = (
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-card px-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard/er-diagrams')}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate('/dashboard/er-diagrams')}
+          >
             <ArrowLeft className="size-4" />
             返回列表
           </Button>
-          <div className="truncate text-xs text-muted-foreground">{route.graphId}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {route.graphId}
+          </div>
         </div>
-        <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">加载画布...</div>}>
+        <Suspense
+          fallback={
+            <div className="p-4 text-sm text-muted-foreground">加载画布...</div>
+          }
+        >
           <ErDiagramEditor key={route.graphId} graphId={route.graphId} />
         </Suspense>
       </section>
     )
   } else {
-    content = <ErDiagramListPage onEditGraph={(graphId) => navigate(erDiagramEditPath(graphId))} />
+    content = (
+      <ErDiagramListPage
+        onEditGraph={(graphId) => navigate(erDiagramEditPath(graphId))}
+      />
+    )
   }
 
   return (
