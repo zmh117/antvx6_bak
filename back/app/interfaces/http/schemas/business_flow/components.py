@@ -152,6 +152,8 @@ class BusinessFlowLaneInstanceDTO(BaseModel):
     instance_key: str
     component_id: UUID
     component_version_id: UUID
+    component_name: str | None = None
+    component_version_no: int | None = None
     display_name: str
     owner_role: str | None = None
     position_x: float = 0
@@ -199,11 +201,15 @@ class BusinessFlowEdgeDTO(BaseModel):
     edge_key: str
     source_type: str
     source_node_id: UUID | None = None
+    source_node_key: str | None = None
     source_lane_instance_id: UUID | None = None
+    source_lane_instance_key: str | None = None
     source_port: str | None = None
     target_type: str
     target_node_id: UUID | None = None
+    target_node_key: str | None = None
     target_lane_instance_id: UUID | None = None
+    target_lane_instance_key: str | None = None
     target_port: str | None = None
     edge_type: str = "SEQUENCE"
     label: str | None = None
@@ -220,6 +226,13 @@ class PlaceSwimlaneComponentPayload(BaseModel):
     position: dict[str, float]
 
 
+class PlaceSwimlaneComponentResponse(BaseModel):
+    lane_instance: BusinessFlowLaneInstanceDTO
+    nodes: list[BusinessFlowNodeDTO] = Field(default_factory=list)
+    edges: list[BusinessFlowEdgeDTO] = Field(default_factory=list)
+    new_version: int
+
+
 class BusinessFlowChangeOpPayload(BaseModel):
     op_type: str
     target_type: str
@@ -229,9 +242,51 @@ class BusinessFlowChangeOpPayload(BaseModel):
     summary: str | None = None
 
 
+class ApplyBusinessFlowChangesRequest(BaseModel):
+    base_version: int
+    source: str = "USER"
+    ops: list[BusinessFlowChangeOpPayload] = Field(default_factory=list)
+
+
+class ApplyBusinessFlowChangesResponse(BaseModel):
+    new_version: int
+    summary: str
+
+
 class BusinessFlowEditorStateResponse(BaseModel):
     business_flow_id: UUID
     current_version: int
+    collab_revision: int = 1
+    canvas_json: dict[str, Any] = Field(default_factory=dict)
+    semantic_json: dict[str, Any] = Field(default_factory=dict)
     lane_instances: list[BusinessFlowLaneInstanceDTO] = Field(default_factory=list)
     nodes: list[BusinessFlowNodeDTO] = Field(default_factory=list)
     edges: list[BusinessFlowEdgeDTO] = Field(default_factory=list)
+
+
+class BusinessFlowHistoryOpDTO(BaseModel):
+    op_type: str
+    target_type: str
+    target_key: str
+    summary: str | None = None
+
+
+class BusinessFlowHistoryItemDTO(BaseModel):
+    version: int
+    base_version: int
+    source: str
+    summary: str | None = None
+    created_by: str | None = None
+    created_at: str
+    ops: list[BusinessFlowHistoryOpDTO] = Field(default_factory=list)
+
+
+class RestoreBusinessFlowRequest(BaseModel):
+    target_version: int
+
+
+class RestoreBusinessFlowResponse(BaseModel):
+    new_version: int
+    restored_from_version: int
+    summary: str
+    editor_state: BusinessFlowEditorStateResponse

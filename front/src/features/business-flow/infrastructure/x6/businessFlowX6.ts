@@ -1,4 +1,4 @@
-import { Edge, Graph, Node, Shape, type Cell } from '@antv/x6'
+import { Edge, Graph, Node, Shape, type Cell, type ValidateConnectionArgs } from '@antv/x6'
 import type {
   BusinessFlowEdgeRecord,
   BusinessFlowNodeRecord,
@@ -50,16 +50,22 @@ export type FlowCellData = {
 type Point = { x: number; y: number }
 type TerminalData = ReturnType<Edge['getSource']>
 
+const LANE_Z_INDEX_BASE = 10
+const EDGE_Z_INDEX = 200
+const FLOW_NODE_Z_INDEX = 300
+
 function portGroup(position: 'top' | 'right' | 'bottom' | 'left') {
   return {
     position,
     attrs: {
       circle: {
-        r: 4,
+        r: 5,
         magnet: true,
         stroke: '#5f95ff',
         strokeWidth: 1.5,
         fill: '#fff',
+        cursor: 'crosshair',
+        visibility: 'visible',
       },
     },
   }
@@ -294,20 +300,17 @@ export function createBusinessFlowGraph(container: HTMLElement) {
       connectionPoint: 'anchor',
       allowBlank: false,
       allowLoop: false,
-      allowMulti: true,
+      allowPort: true,
+      allowMulti: allowMultiplePortEdges,
       snap: { radius: 20 },
       validateMagnet({ magnet }) {
         return magnet.getAttribute('magnet') === 'true'
       },
-      validateConnection({ sourceCell, targetCell }) {
-        if (!sourceCell || !targetCell || sourceCell === targetCell) return false
-        return readCellData(sourceCell).cellRole?.includes('NODE') === true &&
-          readCellData(targetCell).cellRole?.includes('NODE') === true
-      },
+      validateConnection: validatePortConnection,
       createEdge() {
         return new Shape.Edge({
           attrs: edgeAttrs(false),
-          zIndex: 20,
+          zIndex: EDGE_Z_INDEX,
           data: {
             boundedContext: 'business-flow',
             cellRole: 'FLOW_EDGE',
@@ -322,6 +325,25 @@ export function createBusinessFlowGraph(container: HTMLElement) {
     },
   })
   return graph
+}
+
+function allowMultiplePortEdges() {
+  return true
+}
+
+function validatePortConnection({ sourceCell, targetCell, sourceMagnet, targetMagnet }: ValidateConnectionArgs) {
+  if (!sourceCell || !targetCell || sourceCell === targetCell) return false
+  if (!isFlowNodeCell(sourceCell) || !isFlowNodeCell(targetCell)) return false
+  return isReusablePort(sourceMagnet) && isReusablePort(targetMagnet)
+}
+
+function isFlowNodeCell(cell: Cell) {
+  const role = readCellData(cell).cellRole
+  return role === 'FLOW_NODE' || role === 'COMPONENT_NODE'
+}
+
+function isReusablePort(magnet?: Element | null) {
+  return magnet?.getAttribute('magnet') === 'true'
 }
 
 export function shapeName(type: BusinessFlowNodeType) {
@@ -353,7 +375,7 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       actor: draft.actor ?? null,
       businessRule: draft.businessRule ?? null,
     } satisfies FlowCellData,
-    zIndex: 10,
+    zIndex: FLOW_NODE_Z_INDEX,
   })
 }
 
@@ -381,7 +403,7 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       actor: record.actor ?? null,
       businessRule: record.businessRule ?? null,
     } satisfies FlowCellData,
-    zIndex: 10,
+    zIndex: FLOW_NODE_Z_INDEX,
   })
 }
 
@@ -401,7 +423,7 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
         edgeKey: edge.edgeKey,
         title: edge.label ?? '',
       } satisfies FlowCellData,
-      zIndex: 20,
+      zIndex: EDGE_Z_INDEX,
     })
   })
   graph.centerContent()
@@ -432,7 +454,7 @@ export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlow
         componentVersionId: lane.componentVersionId,
         title: lane.displayName,
       } satisfies FlowCellData,
-      zIndex: lane.zIndex,
+      zIndex: LANE_Z_INDEX_BASE + lane.zIndex,
     })
   })
   canvas.nodes.forEach((node) => {
@@ -467,7 +489,7 @@ export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlow
         originComponentEdgeKey: edge.originComponentEdgeKey,
         title: edge.label ?? '',
       } satisfies FlowCellData,
-      zIndex: 20,
+      zIndex: EDGE_Z_INDEX,
     })
   })
   graph.zoomToFit({ maxScale: 1, minScale: 0.7, padding: 40 })

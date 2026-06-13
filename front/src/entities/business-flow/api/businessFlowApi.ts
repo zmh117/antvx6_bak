@@ -1,5 +1,16 @@
 import { authHeaders } from '@/entities/auth'
 import { API_BASE, DEFAULT_GRAPH_ID, DEFAULT_PRODUCT_ID } from '@/shared/api/config'
+import type {
+  BusinessFlowEdgeRecord,
+  BusinessFlowJson,
+  BusinessFlowNodeType,
+  CanvasPosition,
+  LocalBusinessFlowCanvas,
+  SwimlaneComponent,
+  SwimlaneComponentEdge,
+  SwimlaneComponentNode,
+  SwimlaneComponentVersion,
+} from '@/entities/business-flow/model/types'
 
 export type BusinessFlowBinding = {
   binding_key: string
@@ -69,6 +80,215 @@ export type UpdateBusinessFlowBody = {
   status?: BusinessFlowMetaStatus
 }
 
+type ApiSwimlaneComponentNode = {
+  id: string
+  component_version_id: string
+  node_key: string
+  node_type: BusinessFlowNodeType
+  title: string
+  description?: string | null
+  actor?: string | null
+  business_rule?: string | null
+  input_summary?: string | null
+  output_summary?: string | null
+  position_x: number
+  position_y: number
+  width: number
+  height: number
+  style_json?: BusinessFlowJson | null
+  properties_json?: BusinessFlowJson | null
+}
+
+type ApiSwimlaneComponentEdge = {
+  id: string
+  component_version_id: string
+  edge_key: string
+  source_node_key: string
+  target_node_key: string
+  source_port?: string | null
+  target_port?: string | null
+  edge_type: SwimlaneComponentEdge['edgeType']
+  label?: string | null
+  condition_text?: string | null
+  data_contract_json?: BusinessFlowJson | null
+  style_json?: BusinessFlowJson | null
+  properties_json?: BusinessFlowJson | null
+}
+
+type ApiSwimlaneComponentVersion = {
+  id: string
+  component_id: string
+  version_no: number
+  version_name?: string | null
+  status: SwimlaneComponentVersion['status']
+  canvas_json?: BusinessFlowJson | null
+  semantic_json?: BusinessFlowJson | null
+  thumbnail_url?: string | null
+  checksum?: string | null
+  created_at: string
+  published_at?: string | null
+  nodes: ApiSwimlaneComponentNode[]
+  edges: ApiSwimlaneComponentEdge[]
+}
+
+type ApiSwimlaneComponent = {
+  id: string
+  product_id: string
+  code: string
+  name: string
+  category?: string | null
+  owner_role?: string | null
+  description?: string | null
+  status: SwimlaneComponent['status']
+  current_version_no: number
+  created_at: string
+  updated_at: string
+  versions: ApiSwimlaneComponentVersion[]
+}
+
+export type SaveSwimlaneComponentVersionBody = {
+  name?: string | null
+  category?: string | null
+  ownerRole?: string | null
+  description?: string | null
+  canvasJson?: BusinessFlowJson | null
+  semanticJson?: BusinessFlowJson | null
+  thumbnailUrl?: string | null
+  nodes: Array<{
+    nodeKey: string
+    nodeType: BusinessFlowNodeType
+    title: string
+    description?: string | null
+    actor?: string | null
+    businessRule?: string | null
+    inputSummary?: string | null
+    outputSummary?: string | null
+    position: CanvasPosition
+    size: { width: number; height: number }
+    styleJson?: BusinessFlowJson | null
+    propertiesJson?: BusinessFlowJson | null
+  }>
+  edges: Array<{
+    edgeKey: string
+    sourceNodeKey: string
+    targetNodeKey: string
+    sourcePort?: string | null
+    targetPort?: string | null
+    edgeType: SwimlaneComponentEdge['edgeType']
+    label?: string | null
+    conditionText?: string | null
+    dataContractJson?: BusinessFlowJson | null
+    styleJson?: BusinessFlowJson | null
+    propertiesJson?: BusinessFlowJson | null
+  }>
+}
+
+export type BusinessFlowChangeOpBody = {
+  opType: string
+  targetType: 'LANE_INSTANCE' | 'NODE' | 'EDGE' | 'ER_REF' | 'CANVAS'
+  targetKey: string
+  patch?: BusinessFlowJson
+  inversePatch?: BusinessFlowJson
+  summary?: string | null
+}
+
+export type BusinessFlowHistoryItem = {
+  version: number
+  baseVersion: number
+  source: string
+  summary?: string | null
+  createdBy?: string | null
+  createdAt: string
+  ops: Array<{
+    opType: string
+    targetType: string
+    targetKey: string
+    summary?: string | null
+  }>
+}
+
+type ApiBusinessFlowLaneInstance = {
+  id: string
+  instance_key: string
+  component_id: string
+  component_version_id: string
+  component_name?: string | null
+  component_version_no?: number | null
+  display_name: string
+  owner_role?: string | null
+  position_x: number
+  position_y: number
+  width: number
+  height: number
+  z_index: number
+  is_overridden?: boolean
+  layout_json?: BusinessFlowJson | null
+  override_json?: BusinessFlowJson | null
+}
+
+type ApiBusinessFlowNode = {
+  id: string
+  lane_instance_id?: string | null
+  node_key: string
+  origin_component_node_key?: string | null
+  node_type: BusinessFlowNodeType
+  title: string
+  description?: string | null
+  actor?: string | null
+  business_rule?: string | null
+  input_summary?: string | null
+  output_summary?: string | null
+  position_x: number
+  position_y: number
+  width: number
+  height: number
+  is_overridden: boolean
+  er_refs?: Array<{
+    er_diagram_id: string
+    er_table_key: string
+    er_column_key?: string | null
+    ref_type: 'READ' | 'CREATE' | 'UPDATE' | 'DELETE' | 'CHECK'
+    description?: string | null
+  }>
+  style_json?: BusinessFlowJson | null
+  properties_json?: BusinessFlowJson | null
+}
+
+type ApiBusinessFlowEdge = {
+  id: string
+  lane_instance_id?: string | null
+  edge_key: string
+  source_type: 'NODE' | 'LANE'
+  source_node_id?: string | null
+  source_node_key?: string | null
+  source_lane_instance_id?: string | null
+  source_lane_instance_key?: string | null
+  source_port?: string | null
+  target_type: 'NODE' | 'LANE'
+  target_node_id?: string | null
+  target_node_key?: string | null
+  target_lane_instance_id?: string | null
+  target_lane_instance_key?: string | null
+  target_port?: string | null
+  edge_type: BusinessFlowEdgeRecord['edgeType']
+  label?: string | null
+  condition_text?: string | null
+  data_contract_json?: BusinessFlowJson | null
+  origin_component_edge_key?: string | null
+  is_overridden: boolean
+  style_json?: BusinessFlowJson | null
+  properties_json?: BusinessFlowJson | null
+}
+
+type ApiBusinessFlowEditorState = {
+  business_flow_id: string
+  current_version: number
+  collab_revision?: number
+  lane_instances: ApiBusinessFlowLaneInstance[]
+  nodes: ApiBusinessFlowNode[]
+  edges: ApiBusinessFlowEdge[]
+}
+
 async function apiErrorMessage(res: Response) {
   const text = await res.text()
   try {
@@ -78,6 +298,226 @@ async function apiErrorMessage(res: Response) {
     // keep raw text fallback
   }
   return text || `${res.status} ${res.statusText}`
+}
+
+function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): SwimlaneComponentNode {
+  return {
+    id: node.id,
+    componentVersionId: node.component_version_id,
+    nodeKey: node.node_key,
+    nodeType: node.node_type,
+    title: node.title,
+    description: node.description ?? null,
+    actor: node.actor ?? null,
+    businessRule: node.business_rule ?? null,
+    inputSummary: node.input_summary ?? null,
+    outputSummary: node.output_summary ?? null,
+    position: { x: Number(node.position_x), y: Number(node.position_y) },
+    size: { width: Number(node.width), height: Number(node.height) },
+    styleJson: node.style_json ?? null,
+    propertiesJson: node.properties_json ?? null,
+  }
+}
+
+function normalizeSwimlaneComponentEdge(edge: ApiSwimlaneComponentEdge): SwimlaneComponentEdge {
+  return {
+    id: edge.id,
+    componentVersionId: edge.component_version_id,
+    edgeKey: edge.edge_key,
+    sourceNodeKey: edge.source_node_key,
+    targetNodeKey: edge.target_node_key,
+    sourcePort: edge.source_port ?? null,
+    targetPort: edge.target_port ?? null,
+    edgeType: edge.edge_type,
+    label: edge.label ?? null,
+    conditionText: edge.condition_text ?? null,
+    dataContractJson: edge.data_contract_json ?? null,
+    styleJson: edge.style_json ?? null,
+    propertiesJson: edge.properties_json ?? null,
+  }
+}
+
+function normalizeSwimlaneComponent(component: ApiSwimlaneComponent): SwimlaneComponent {
+  return {
+    id: component.id,
+    productId: component.product_id,
+    code: component.code,
+    name: component.name,
+    category: component.category ?? null,
+    ownerRole: component.owner_role ?? null,
+    description: component.description ?? null,
+    status: component.status,
+    currentVersionNo: component.current_version_no,
+    createdAt: component.created_at,
+    updatedAt: component.updated_at,
+    versions: (component.versions ?? []).map((version) => ({
+      id: version.id,
+      componentId: version.component_id,
+      versionNo: version.version_no,
+      versionName: version.version_name ?? null,
+      status: version.status,
+      canvasJson: version.canvas_json ?? null,
+      semanticJson: version.semantic_json ?? null,
+      thumbnailUrl: version.thumbnail_url ?? null,
+      checksum: version.checksum ?? null,
+      createdAt: version.created_at,
+      publishedAt: version.published_at ?? null,
+      nodes: (version.nodes ?? []).map(normalizeSwimlaneComponentNode),
+      edges: (version.edges ?? []).map(normalizeSwimlaneComponentEdge),
+    })),
+  }
+}
+
+function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) {
+  return {
+    name: body.name,
+    category: body.category,
+    owner_role: body.ownerRole,
+    description: body.description,
+    canvas_json: body.canvasJson ?? {},
+    semantic_json: body.semanticJson ?? {},
+    thumbnail_url: body.thumbnailUrl,
+    nodes: body.nodes.map((node) => ({
+      node_key: node.nodeKey,
+      node_type: node.nodeType,
+      title: node.title,
+      description: node.description,
+      actor: node.actor,
+      business_rule: node.businessRule,
+      input_summary: node.inputSummary,
+      output_summary: node.outputSummary,
+      position_x: node.position.x,
+      position_y: node.position.y,
+      width: node.size.width,
+      height: node.size.height,
+      style_json: node.styleJson ?? {},
+      properties_json: node.propertiesJson ?? {},
+    })),
+    edges: body.edges.map((edge) => ({
+      edge_key: edge.edgeKey,
+      source_node_key: edge.sourceNodeKey,
+      target_node_key: edge.targetNodeKey,
+      source_port: edge.sourcePort,
+      target_port: edge.targetPort,
+      edge_type: edge.edgeType,
+      label: edge.label,
+      condition_text: edge.conditionText,
+      data_contract_json: edge.dataContractJson ?? {},
+      style_json: edge.styleJson ?? {},
+      properties_json: edge.propertiesJson ?? {},
+    })),
+  }
+}
+
+function normalizeBusinessFlowEditorState(
+  state: ApiBusinessFlowEditorState,
+  meta?: Pick<BusinessFlowMeta, 'name' | 'code' | 'description'> | null,
+): LocalBusinessFlowCanvas {
+  const laneKeyById = new Map(state.lane_instances.map((lane) => [lane.id, lane.instance_key]))
+  return {
+    businessFlowId: state.business_flow_id,
+    name: meta?.name ?? state.business_flow_id,
+    code: meta?.code ?? null,
+    description: meta?.description ?? null,
+    version: state.current_version,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    laneInstances: state.lane_instances.map((lane) => ({
+      kind: 'LANE_INSTANCE',
+      businessFlowId: state.business_flow_id,
+      laneInstanceId: lane.id,
+      instanceKey: lane.instance_key,
+      componentId: lane.component_id,
+      componentVersionId: lane.component_version_id,
+      componentName: lane.component_name ?? lane.display_name,
+      componentVersionNo: lane.component_version_no ?? 1,
+      displayName: lane.display_name,
+      ownerRole: lane.owner_role ?? null,
+      isOverridden: Boolean(lane.is_overridden),
+      position: { x: Number(lane.position_x), y: Number(lane.position_y) },
+      size: { width: Number(lane.width), height: Number(lane.height) },
+      zIndex: Number(lane.z_index),
+      layoutJson: lane.layout_json ?? null,
+      overrideJson: lane.override_json ?? null,
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })),
+    nodes: state.nodes.map((node) => ({
+      kind: 'BUSINESS_FLOW_NODE',
+      businessFlowId: state.business_flow_id,
+      nodeId: node.id,
+      nodeKey: node.node_key,
+      laneInstanceId: node.lane_instance_id ?? '',
+      originComponentNodeKey: node.origin_component_node_key ?? null,
+      nodeType: node.node_type,
+      title: node.title,
+      description: node.description ?? null,
+      actor: node.actor ?? null,
+      businessRule: node.business_rule ?? null,
+      erRefs: (node.er_refs ?? []).map((ref) => ({
+        erDiagramId: ref.er_diagram_id,
+        erTableKey: ref.er_table_key,
+        erColumnKey: ref.er_column_key ?? null,
+        refType: ref.ref_type,
+        description: ref.description ?? null,
+      })),
+      position: { x: Number(node.position_x), y: Number(node.position_y) },
+      size: { width: Number(node.width), height: Number(node.height) },
+      inputSummary: node.input_summary ?? null,
+      outputSummary: node.output_summary ?? null,
+      isOverridden: Boolean(node.is_overridden),
+      styleJson: node.style_json ?? null,
+      propertiesJson: node.properties_json ?? null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })),
+    edges: state.edges.map((edge) => {
+      const sourceLaneId =
+        edge.source_lane_instance_id ??
+        (edge.source_node_key
+          ? state.nodes.find((node) => node.node_key === edge.source_node_key)?.lane_instance_id
+          : null)
+      const targetLaneId =
+        edge.target_lane_instance_id ??
+        (edge.target_node_key
+          ? state.nodes.find((node) => node.node_key === edge.target_node_key)?.lane_instance_id
+          : null)
+      const sourceLaneKey = sourceLaneId ? laneKeyById.get(sourceLaneId) ?? null : null
+      const targetLaneKey = targetLaneId ? laneKeyById.get(targetLaneId) ?? null : null
+      const isCrossLane = Boolean(sourceLaneKey && targetLaneKey && sourceLaneKey !== targetLaneKey)
+      return {
+        kind: 'BUSINESS_FLOW_EDGE',
+        businessFlowId: state.business_flow_id,
+        edgeId: edge.id,
+        edgeKey: edge.edge_key,
+        laneInstanceId: edge.lane_instance_id ?? null,
+        edgeType: edge.edge_type,
+        label: edge.label ?? null,
+        conditionText: edge.condition_text ?? null,
+        dataContract: undefined,
+        isCrossLane,
+        sourceType: edge.source_type,
+        sourceNodeKey: edge.source_node_key ?? null,
+        sourceLaneInstanceKey:
+          edge.source_lane_instance_key ??
+          (edge.source_lane_instance_id ? laneKeyById.get(edge.source_lane_instance_id) ?? null : sourceLaneKey),
+        sourcePort: edge.source_port ?? null,
+        targetType: edge.target_type,
+        targetNodeKey: edge.target_node_key ?? null,
+        targetLaneInstanceKey:
+          edge.target_lane_instance_key ??
+          (edge.target_lane_instance_id ? laneKeyById.get(edge.target_lane_instance_id) ?? null : targetLaneKey),
+        targetPort: edge.target_port ?? null,
+        originComponentEdgeKey: edge.origin_component_edge_key ?? null,
+        isOverridden: Boolean(edge.is_overridden),
+        styleJson: edge.style_json ?? null,
+        propertiesJson: edge.properties_json ?? null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+    }),
+  }
 }
 
 export async function listBusinessFlows(graphId = DEFAULT_GRAPH_ID): Promise<BusinessFlowRecord[]> {
@@ -193,4 +633,224 @@ export async function removeBusinessFlowMember(
   })
   if (!res.ok) throw new Error(await apiErrorMessage(res))
   return res.json() as Promise<BusinessFlowMember>
+}
+
+export async function listSwimlaneComponentsApi(
+  productId?: string | null,
+  status?: SwimlaneComponent['status'] | null,
+  signal?: AbortSignal,
+): Promise<SwimlaneComponent[]> {
+  if (productId === 'none') return []
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  const qs = params.toString()
+  const path =
+    productId && productId !== 'all'
+      ? `/api/products/${productId}/swimlane-components`
+      : '/api/swimlane-components'
+  const res = await fetch(`${API_BASE}${path}${qs ? `?${qs}` : ''}`, {
+    headers: { ...authHeaders() },
+    signal,
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return ((await res.json()) as ApiSwimlaneComponent[]).map(normalizeSwimlaneComponent)
+}
+
+export async function createSwimlaneComponentApi(body: {
+  productId: string
+  code: string
+  name: string
+  category?: string | null
+  ownerRole?: string | null
+  description?: string | null
+}): Promise<SwimlaneComponent> {
+  const res = await fetch(`${API_BASE}/api/products/${body.productId}/swimlane-components`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      product_id: body.productId,
+      code: body.code,
+      name: body.name,
+      category: body.category,
+      owner_role: body.ownerRole,
+      description: body.description,
+    }),
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return normalizeSwimlaneComponent((await res.json()) as ApiSwimlaneComponent)
+}
+
+export async function fetchSwimlaneComponentApi(
+  componentId: string,
+  signal?: AbortSignal,
+): Promise<SwimlaneComponent> {
+  const res = await fetch(`${API_BASE}/api/swimlane-components/${componentId}`, {
+    headers: { ...authHeaders() },
+    signal,
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return normalizeSwimlaneComponent((await res.json()) as ApiSwimlaneComponent)
+}
+
+export async function updateSwimlaneComponentApi(
+  componentId: string,
+  body: {
+    code?: string | null
+    name?: string | null
+    category?: string | null
+    ownerRole?: string | null
+    description?: string | null
+    status?: SwimlaneComponent['status']
+  },
+): Promise<SwimlaneComponent> {
+  const res = await fetch(`${API_BASE}/api/swimlane-components/${componentId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      code: body.code,
+      name: body.name,
+      category: body.category,
+      owner_role: body.ownerRole,
+      description: body.description,
+      status: body.status,
+    }),
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return normalizeSwimlaneComponent((await res.json()) as ApiSwimlaneComponent)
+}
+
+export async function archiveSwimlaneComponentApi(
+  componentId: string,
+): Promise<SwimlaneComponent> {
+  const res = await fetch(`${API_BASE}/api/swimlane-components/${componentId}`, {
+    method: 'DELETE',
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return normalizeSwimlaneComponent((await res.json()) as ApiSwimlaneComponent)
+}
+
+export async function saveSwimlaneComponentDraftVersionApi(
+  componentId: string,
+  body: SaveSwimlaneComponentVersionBody,
+): Promise<SwimlaneComponent> {
+  const res = await fetch(`${API_BASE}/api/swimlane-components/${componentId}/draft-version`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(denormalizeSwimlaneVersionBody(body)),
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return normalizeSwimlaneComponent((await res.json()) as ApiSwimlaneComponent)
+}
+
+export async function publishSwimlaneComponentVersionApi(
+  componentId: string,
+  body?: SaveSwimlaneComponentVersionBody,
+): Promise<SwimlaneComponent> {
+  const res = await fetch(`${API_BASE}/api/swimlane-components/${componentId}/versions/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: body ? JSON.stringify(denormalizeSwimlaneVersionBody(body)) : undefined,
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return normalizeSwimlaneComponent((await res.json()) as ApiSwimlaneComponent)
+}
+
+export async function fetchBusinessFlowEditorState(
+  businessFlowId: string,
+  meta?: Pick<BusinessFlowMeta, 'name' | 'code' | 'description'> | null,
+  signal?: AbortSignal,
+): Promise<LocalBusinessFlowCanvas> {
+  const res = await fetch(`${API_BASE}/api/business-flows/${businessFlowId}/editor-state`, {
+    headers: { ...authHeaders() },
+    signal,
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return normalizeBusinessFlowEditorState((await res.json()) as ApiBusinessFlowEditorState, meta)
+}
+
+export async function placeSwimlaneComponentApi(
+  businessFlowId: string,
+  componentVersionId: string,
+  position: CanvasPosition,
+): Promise<LocalBusinessFlowCanvas> {
+  const res = await fetch(`${API_BASE}/api/business-flows/${businessFlowId}/lane-instances`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      component_version_id: componentVersionId,
+      position,
+    }),
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return fetchBusinessFlowEditorState(businessFlowId)
+}
+
+export async function applyBusinessFlowChanges(
+  businessFlowId: string,
+  baseVersion: number,
+  ops: BusinessFlowChangeOpBody[],
+): Promise<{ newVersion: number; summary: string }> {
+  const res = await fetch(`${API_BASE}/api/business-flows/${businessFlowId}/changes`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({
+      base_version: baseVersion,
+      ops: ops.map((op) => ({
+        op_type: op.opType,
+        target_type: op.targetType,
+        target_key: op.targetKey,
+        patch: op.patch ?? {},
+        inverse_patch: op.inversePatch ?? {},
+        summary: op.summary,
+      })),
+    }),
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  const data = (await res.json()) as { new_version: number; summary: string }
+  return { newVersion: data.new_version, summary: data.summary }
+}
+
+export async function fetchBusinessFlowHistory(
+  businessFlowId: string,
+): Promise<BusinessFlowHistoryItem[]> {
+  const res = await fetch(`${API_BASE}/api/business-flows/${businessFlowId}/history`, {
+    headers: { ...authHeaders() },
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return ((await res.json()) as Array<{
+    version: number
+    base_version: number
+    source: string
+    summary?: string | null
+    created_by?: string | null
+    created_at: string
+    ops: Array<{ op_type: string; target_type: string; target_key: string; summary?: string | null }>
+  }>).map((item) => ({
+    version: item.version,
+    baseVersion: item.base_version,
+    source: item.source,
+    summary: item.summary,
+    createdBy: item.created_by,
+    createdAt: item.created_at,
+    ops: item.ops.map((op) => ({
+      opType: op.op_type,
+      targetType: op.target_type,
+      targetKey: op.target_key,
+      summary: op.summary,
+    })),
+  }))
+}
+
+export async function restoreBusinessFlowVersion(
+  businessFlowId: string,
+  targetVersion: number,
+): Promise<LocalBusinessFlowCanvas> {
+  const res = await fetch(`${API_BASE}/api/business-flows/${businessFlowId}/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ target_version: targetVersion }),
+  })
+  if (!res.ok) throw new Error(await apiErrorMessage(res))
+  return fetchBusinessFlowEditorState(businessFlowId)
 }

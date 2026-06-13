@@ -4,12 +4,25 @@ import { getDefaultGraphId } from '@/entities/er-graph/api/graphApi'
 import { DEFAULT_PRODUCT_ID } from '@/shared/api/config'
 import {
   archiveBusinessFlow,
+  archiveSwimlaneComponentApi,
+  applyBusinessFlowChanges,
   createBusinessFlow,
+  createSwimlaneComponentApi,
+  fetchBusinessFlowEditorState,
+  fetchBusinessFlowHistory,
   fetchBusinessFlowMembers,
+  fetchSwimlaneComponentApi,
   listBusinessFlows,
   listBusinessFlowMetas,
+  listSwimlaneComponentsApi,
+  placeSwimlaneComponentApi,
+  publishSwimlaneComponentVersionApi,
   removeBusinessFlowMember,
+  restoreBusinessFlowVersion,
+  saveSwimlaneComponentDraftVersionApi,
   saveBusinessFlow,
+  type BusinessFlowChangeOpBody,
+  type SaveSwimlaneComponentVersionBody,
   type CreateBusinessFlowBody,
   type UpdateBusinessFlowBody,
   updateBusinessFlow,
@@ -17,6 +30,7 @@ import {
   type BusinessFlowMeta,
   type BusinessFlowRecord,
   upsertBusinessFlowMember,
+  updateSwimlaneComponentApi,
 } from './businessFlowApi'
 import { businessFlowKeys } from './queryKeys'
 
@@ -113,6 +127,191 @@ export function useBusinessFlowMembersQuery(
     queryFn: () => fetchBusinessFlowMembers(businessFlowId ?? ''),
     enabled: Boolean(businessFlowId) && (opts.enabled ?? true),
     retry: false,
+  })
+}
+
+export function useSwimlaneComponentsQuery(productId = 'all', status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED' | null) {
+  return useQuery({
+    queryKey: businessFlowKeys.swimlaneComponents(productId, status ?? 'all'),
+    queryFn: ({ signal }) => listSwimlaneComponentsApi(productId, status, signal),
+  })
+}
+
+export function useSwimlaneComponentQuery(componentId: string | null) {
+  return useQuery({
+    queryKey: businessFlowKeys.swimlaneComponent(componentId ?? 'none'),
+    queryFn: ({ signal }) => fetchSwimlaneComponentApi(componentId ?? '', signal),
+    enabled: Boolean(componentId),
+  })
+}
+
+export function useCreateSwimlaneComponentMutation(productId = DEFAULT_PRODUCT_ID) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: createSwimlaneComponentApi,
+    onSuccess: async (component) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: businessFlowKeys.swimlaneComponents(productId, 'all'),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: businessFlowKeys.swimlaneComponents(component.productId, 'all'),
+        }),
+      ])
+    },
+  })
+}
+
+export function useUpdateSwimlaneComponentMutation(productId = DEFAULT_PRODUCT_ID) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      componentId,
+      body,
+    }: {
+      componentId: string
+      body: Parameters<typeof updateSwimlaneComponentApi>[1]
+    }) => updateSwimlaneComponentApi(componentId, body),
+    onSuccess: async (component) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: businessFlowKeys.swimlaneComponent(component.id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: businessFlowKeys.swimlaneComponents(productId, 'all'),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: businessFlowKeys.swimlaneComponents(component.productId, 'all'),
+        }),
+      ])
+    },
+  })
+}
+
+export function useArchiveSwimlaneComponentMutation(productId = DEFAULT_PRODUCT_ID) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: archiveSwimlaneComponentApi,
+    onSuccess: async (component) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: businessFlowKeys.swimlaneComponents(productId, 'all'),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: businessFlowKeys.swimlaneComponents(component.productId, 'all'),
+        }),
+      ])
+    },
+  })
+}
+
+export function useSaveSwimlaneComponentDraftMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      componentId,
+      body,
+    }: {
+      componentId: string
+      body: SaveSwimlaneComponentVersionBody
+    }) => saveSwimlaneComponentDraftVersionApi(componentId, body),
+    onSuccess: async (component) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.swimlaneComponent(component.id) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.swimlaneComponents(component.productId, 'all') }),
+      ])
+    },
+  })
+}
+
+export function usePublishSwimlaneComponentVersionMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      componentId,
+      body,
+    }: {
+      componentId: string
+      body?: SaveSwimlaneComponentVersionBody
+    }) => publishSwimlaneComponentVersionApi(componentId, body),
+    onSuccess: async (component) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.swimlaneComponent(component.id) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.swimlaneComponents(component.productId, 'all') }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.swimlaneComponents(component.productId, 'PUBLISHED') }),
+      ])
+    },
+  })
+}
+
+export function useBusinessFlowEditorStateQuery(
+  businessFlowId: string,
+  meta?: Pick<BusinessFlowMeta, 'name' | 'code' | 'description'> | null,
+) {
+  return useQuery({
+    queryKey: businessFlowKeys.editorState(businessFlowId),
+    queryFn: ({ signal }) => fetchBusinessFlowEditorState(businessFlowId, meta, signal),
+  })
+}
+
+export function usePlaceSwimlaneComponentMutation(businessFlowId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      componentVersionId,
+      position,
+    }: {
+      componentVersionId: string
+      position: { x: number; y: number }
+    }) => placeSwimlaneComponentApi(businessFlowId, componentVersionId, position),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.editorState(businessFlowId) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.history(businessFlowId) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.all }),
+      ])
+    },
+  })
+}
+
+export function useApplyBusinessFlowChangesMutation(businessFlowId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      baseVersion,
+      ops,
+    }: {
+      baseVersion: number
+      ops: BusinessFlowChangeOpBody[]
+    }) => applyBusinessFlowChanges(businessFlowId, baseVersion, ops),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.editorState(businessFlowId) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.history(businessFlowId) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.all }),
+      ])
+    },
+  })
+}
+
+export function useBusinessFlowHistoryQuery(businessFlowId: string) {
+  return useQuery({
+    queryKey: businessFlowKeys.history(businessFlowId),
+    queryFn: () => fetchBusinessFlowHistory(businessFlowId),
+  })
+}
+
+export function useRestoreBusinessFlowVersionMutation(businessFlowId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (targetVersion: number) => restoreBusinessFlowVersion(businessFlowId, targetVersion),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.editorState(businessFlowId) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.history(businessFlowId) }),
+        queryClient.invalidateQueries({ queryKey: businessFlowKeys.all }),
+      ])
+    },
   })
 }
 

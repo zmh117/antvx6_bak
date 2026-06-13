@@ -192,3 +192,30 @@
 }
 
 @import './styles/er-canvas.css';
+
+.business-flow-x6-workbench .x6-port-body {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.business-flow-x6-workbench .x6-node:hover .x6-port-body,
+.business-flow-x6-workbench .x6-port-available .x6-port-body {
+  opacity: 1;
+}
+
+.business-flow-x6-workbench .x6-port-body circle {
+  fill: #ffffff;
+  stroke: #5f95ff;
+  stroke-width: 1.5;
+  cursor: crosshair;
+  pointer-events: all;
+  r: 5;
+}
+
+.business-flow-x6-workbench .x6-port:hover .x6-port-body circle,
+.business-flow-x6-workbench .x6-port-available .x6-port-body circle {
+  fill: #eff4ff;
+  stroke: #2563eb;
+  stroke-width: 2;
+  r: 6;
+}

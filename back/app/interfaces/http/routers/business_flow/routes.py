@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from psycopg.types.json import Jsonb
 
 from app.config import get_settings
 from app.database import db_transaction, get_connection
 from app.interfaces.http.schemas.business_flow import (
+    ApplyBusinessFlowChangesRequest,
+    ApplyBusinessFlowChangesResponse,
     BusinessFlowCreateRequest,
+    BusinessFlowEditorStateResponse,
+    BusinessFlowHistoryItemDTO,
     BusinessFlowMemberResponse,
     BusinessFlowMemberUpsertRequest,
     BusinessFlowMetaResponse,
     BusinessFlowRole,
     BusinessFlowUpdateRequest,
+    PlaceSwimlaneComponentPayload,
+    PlaceSwimlaneComponentResponse,
+    RestoreBusinessFlowRequest,
+    RestoreBusinessFlowResponse,
 )
 from app.services.auth import (
     AuthenticatedUser,
@@ -310,6 +319,1090 @@ def archive_business_flow(
                     detail=f"business flow not found: {business_flow_id}",
                 )
             return meta
+
+
+def _json_value(row: dict, key: str) -> dict:
+    return row.get(key) or {}
+
+
+def _lane_response(row: dict) -> dict:
+    return {
+        **row,
+        "position_x": float(row["position_x"]),
+        "position_y": float(row["position_y"]),
+        "width": float(row["width"]),
+        "height": float(row["height"]),
+        "is_overridden": bool((row.get("override_json") or {})),
+    }
+
+
+def _node_response(row: dict, refs_by_node_id: dict[UUID, list[dict]] | None = None) -> dict:
+    return {
+        **row,
+        "position_x": float(row["position_x"]),
+        "position_y": float(row["position_y"]),
+        "width": float(row["width"]),
+        "height": float(row["height"]),
+        "style_json": _json_value(row, "style_json"),
+        "properties_json": _json_value(row, "properties_json"),
+        "er_refs": (refs_by_node_id or {}).get(row["id"], []),
+    }
+
+
+def _edge_response(row: dict) -> dict:
+    return {
+        **row,
+        "data_contract_json": _json_value(row, "data_contract_json"),
+        "style_json": _json_value(row, "style_json"),
+        "properties_json": _json_value(row, "properties_json"),
+    }
+
+
+def _fetch_business_flow_editor_state(
+    cur,
+    business_flow_id: UUID,
+) -> BusinessFlowEditorStateResponse:
+    cur.execute(
+        """
+        SELECT current_version, collab_revision
+        FROM business_flow
+        WHERE id = %s AND status <> 'ARCHIVED'
+        """,
+        (business_flow_id,),
+    )
+    flow = cur.fetchone()
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"business flow not found: {business_flow_id}",
+        )
+    cur.execute(
+        """
+        SELECT li.id, li.instance_key, li.component_id, li.component_version_id,
+               sc.name AS component_name, scv.version_no AS component_version_no,
+               li.display_name, li.owner_role, li.position_x, li.position_y,
+               li.width, li.height, li.z_index, li.layout_json, li.override_json
+        FROM business_flow_lane_instance li
+        JOIN swimlane_component sc ON sc.id = li.component_id
+        JOIN swimlane_component_version scv ON scv.id = li.component_version_id
+        WHERE li.business_flow_id = %s AND li.status = 'ACTIVE'
+        ORDER BY li.z_index ASC, li.created_at ASC
+        """,
+        (business_flow_id,),
+    )
+    lanes = [_lane_response(row) for row in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT id, business_flow_id, business_flow_node_id, er_diagram_id,
+               er_table_key, er_column_key, ref_type, description
+        FROM business_flow_node_er_ref
+        WHERE business_flow_id = %s
+        ORDER BY created_at ASC
+        """,
+        (business_flow_id,),
+    )
+    refs_by_node_id: dict[UUID, list[dict]] = {}
+    for ref in cur.fetchall():
+        refs_by_node_id.setdefault(ref["business_flow_node_id"], []).append(
+            {
+                "id": ref["id"],
+                "er_diagram_id": ref["er_diagram_id"],
+                "er_table_key": ref["er_table_key"],
+                "er_column_key": ref["er_column_key"],
+                "ref_type": ref["ref_type"],
+                "description": ref["description"],
+            }
+        )
+
+    cur.execute(
+        """
+        SELECT id, lane_instance_id, node_key, origin_component_node_key, node_type,
+               title, description, actor, business_rule, input_summary, output_summary,
+               position_x, position_y, width, height, is_overridden, style_json,
+               properties_json
+        FROM business_flow_node
+        WHERE business_flow_id = %s
+        ORDER BY created_at ASC, node_key ASC
+        """,
+        (business_flow_id,),
+    )
+    nodes = [_node_response(row, refs_by_node_id) for row in cur.fetchall()]
+
+    cur.execute(
+        """
+        SELECT e.id, e.lane_instance_id, e.edge_key, e.source_type,
+               e.source_node_id, sn.node_key AS source_node_key,
+               e.source_lane_instance_id, sli.instance_key AS source_lane_instance_key,
+               e.source_port, e.target_type,
+               e.target_node_id, tn.node_key AS target_node_key,
+               e.target_lane_instance_id, tli.instance_key AS target_lane_instance_key,
+               e.target_port, e.edge_type, e.label, e.condition_text,
+               e.data_contract_json, e.origin_component_edge_key, e.is_overridden,
+               e.style_json, e.properties_json
+        FROM business_flow_edge e
+        LEFT JOIN business_flow_node sn ON sn.id = e.source_node_id
+        LEFT JOIN business_flow_node tn ON tn.id = e.target_node_id
+        LEFT JOIN business_flow_lane_instance sli ON sli.id = e.source_lane_instance_id
+        LEFT JOIN business_flow_lane_instance tli ON tli.id = e.target_lane_instance_id
+        WHERE e.business_flow_id = %s
+        ORDER BY e.created_at ASC, e.edge_key ASC
+        """,
+        (business_flow_id,),
+    )
+    edges = [_edge_response(row) for row in cur.fetchall()]
+
+    semantic_json = {
+        "businessFlowId": str(business_flow_id),
+        "lanes": lanes,
+        "nodes": nodes,
+        "edges": edges,
+    }
+    return BusinessFlowEditorStateResponse(
+        business_flow_id=business_flow_id,
+        current_version=int(flow["current_version"]),
+        collab_revision=int(flow.get("collab_revision") or 1),
+        canvas_json={"semantic": semantic_json},
+        semantic_json=semantic_json,
+        lane_instances=lanes,
+        nodes=nodes,
+        edges=edges,
+    )
+
+
+def _write_business_flow_snapshot(
+    cur,
+    business_flow_id: UUID,
+    version: int,
+    user_id: UUID,
+) -> None:
+    state = _fetch_business_flow_editor_state(cur, business_flow_id)
+    cur.execute(
+        """
+        INSERT INTO business_flow_snapshot (
+            business_flow_id, version, canvas_json, semantic_json, created_by
+        )
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (business_flow_id, version)
+        DO UPDATE SET canvas_json = EXCLUDED.canvas_json,
+                      semantic_json = EXCLUDED.semantic_json,
+                      created_by = EXCLUDED.created_by,
+                      created_at = NOW()
+        """,
+        (
+            business_flow_id,
+            version,
+            Jsonb(state.canvas_json),
+            Jsonb(state.semantic_json),
+            str(user_id),
+        ),
+    )
+
+
+def _append_change_batch(
+    cur,
+    business_flow_id: UUID,
+    base_version: int,
+    new_version: int,
+    source: str,
+    summary: str,
+    ops: list[dict],
+    user_id: UUID,
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO business_flow_change_batch (
+            business_flow_id, base_version, new_version, source, summary, created_by
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (business_flow_id, base_version, new_version, source, summary, str(user_id)),
+    )
+    batch_id = cur.fetchone()["id"]
+    for index, op in enumerate(ops, start=1):
+        cur.execute(
+            """
+            INSERT INTO business_flow_change_op (
+                batch_id, op_seq, op_type, target_type, target_key,
+                patch_json, inverse_patch_json, summary
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                batch_id,
+                index,
+                op["op_type"],
+                op["target_type"],
+                op["target_key"],
+                Jsonb(op.get("patch") or {}),
+                Jsonb(op.get("inverse_patch") or {}),
+                op.get("summary"),
+            ),
+        )
+
+
+def _resolve_node_id(cur, business_flow_id: UUID, node_key: str) -> UUID:
+    cur.execute(
+        """
+        SELECT id
+        FROM business_flow_node
+        WHERE business_flow_id = %s AND node_key = %s
+        """,
+        (business_flow_id, node_key),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"node not found: {node_key}")
+    return row["id"]
+
+
+def _resolve_lane_id(cur, business_flow_id: UUID, instance_key: str) -> UUID:
+    cur.execute(
+        """
+        SELECT id
+        FROM business_flow_lane_instance
+        WHERE business_flow_id = %s AND instance_key = %s AND status = 'ACTIVE'
+        """,
+        (business_flow_id, instance_key),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"lane instance not found: {instance_key}",
+        )
+    return row["id"]
+
+
+def _node_lane_id(cur, business_flow_id: UUID, node_key: str) -> UUID | None:
+    cur.execute(
+        """
+        SELECT lane_instance_id
+        FROM business_flow_node
+        WHERE business_flow_id = %s AND node_key = %s
+        """,
+        (business_flow_id, node_key),
+    )
+    row = cur.fetchone()
+    return row["lane_instance_id"] if row else None
+
+
+def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
+    patch = op.patch or {}
+    target_key = op.target_key
+    if op.op_type in {"MOVE_LANE_INSTANCE", "RESIZE_LANE_INSTANCE", "RENAME_LANE_INSTANCE"}:
+        values: dict[str, object] = {}
+        to = patch.get("to") if isinstance(patch.get("to"), dict) else patch
+        if "x" in to:
+            values["position_x"] = to["x"]
+        if "y" in to:
+            values["position_y"] = to["y"]
+        if "width" in to:
+            values["width"] = to["width"]
+        if "height" in to:
+            values["height"] = to["height"]
+        if "displayName" in patch:
+            values["display_name"] = patch["displayName"]
+        if "ownerRole" in patch:
+            values["owner_role"] = patch["ownerRole"] or None
+        if values:
+            assignments = [f"{field} = %s" for field in values]
+            cur.execute(
+                f"""
+                UPDATE business_flow_lane_instance
+                SET {", ".join(assignments)}, override_json = override_json || %s::jsonb,
+                    updated_at = NOW()
+                WHERE business_flow_id = %s AND instance_key = %s
+                """,
+                [*values.values(), Jsonb(patch), business_flow_id, target_key],
+            )
+        return
+
+    if op.op_type in {"MOVE_NODE", "UPDATE_NODE"}:
+        values = {}
+        to = patch.get("to") if isinstance(patch.get("to"), dict) else patch
+        if "x" in to:
+            values["position_x"] = to["x"]
+        if "y" in to:
+            values["position_y"] = to["y"]
+        if "width" in to:
+            values["width"] = to["width"]
+        if "height" in to:
+            values["height"] = to["height"]
+        mapping = {
+            "title": "title",
+            "description": "description",
+            "actor": "actor",
+            "businessRule": "business_rule",
+            "inputSummary": "input_summary",
+            "outputSummary": "output_summary",
+        }
+        for client_key, field in mapping.items():
+            if client_key in patch:
+                values[field] = patch[client_key] or None
+        if values:
+            assignments = [f"{field} = %s" for field in values]
+            cur.execute(
+                f"""
+                UPDATE business_flow_node
+                SET {", ".join(assignments)}, is_overridden = TRUE, updated_at = NOW()
+                WHERE business_flow_id = %s AND node_key = %s
+                """,
+                [*values.values(), business_flow_id, target_key],
+            )
+        return
+
+    if op.op_type == "ADD_NODE":
+        lane_id = _resolve_lane_id(cur, business_flow_id, patch["laneInstanceKey"])
+        cur.execute(
+            """
+            INSERT INTO business_flow_node (
+                business_flow_id, lane_instance_id, node_key, node_type, title,
+                description, actor, business_rule, input_summary, output_summary,
+                position_x, position_y, width, height, is_overridden,
+                style_json, properties_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+            ON CONFLICT (business_flow_id, node_key) DO NOTHING
+            """,
+            (
+                business_flow_id,
+                lane_id,
+                target_key,
+                patch.get("nodeType", "TASK"),
+                patch.get("title") or "任务",
+                patch.get("description"),
+                patch.get("actor"),
+                patch.get("businessRule"),
+                patch.get("inputSummary"),
+                patch.get("outputSummary"),
+                patch.get("x", 0),
+                patch.get("y", 0),
+                patch.get("width", 120),
+                patch.get("height", 60),
+                Jsonb(patch.get("styleJson") or {}),
+                Jsonb(patch.get("propertiesJson") or {}),
+            ),
+        )
+        return
+
+    if op.op_type == "REMOVE_NODE":
+        cur.execute(
+            """
+            DELETE FROM business_flow_node
+            WHERE business_flow_id = %s AND node_key = %s
+            """,
+            (business_flow_id, target_key),
+        )
+        return
+
+    if op.op_type == "ADD_EDGE":
+        source_node_key = patch.get("sourceNodeKey") or patch.get("source_node_key")
+        target_node_key = patch.get("targetNodeKey") or patch.get("target_node_key")
+        if not source_node_key or not target_node_key:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ADD_EDGE requires node endpoints")
+        source_node_id = _resolve_node_id(cur, business_flow_id, source_node_key)
+        target_node_id = _resolve_node_id(cur, business_flow_id, target_node_key)
+        source_lane_id = _node_lane_id(cur, business_flow_id, source_node_key)
+        target_lane_id = _node_lane_id(cur, business_flow_id, target_node_key)
+        lane_instance_id = source_lane_id if source_lane_id == target_lane_id else None
+        cur.execute(
+            """
+            INSERT INTO business_flow_edge (
+                business_flow_id, lane_instance_id, edge_key, source_type,
+                source_node_id, source_port, target_type, target_node_id, target_port,
+                edge_type, label, condition_text, data_contract_json, is_overridden,
+                style_json, properties_json
+            )
+            VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+            ON CONFLICT (business_flow_id, edge_key) DO UPDATE
+            SET lane_instance_id = EXCLUDED.lane_instance_id,
+                source_type = EXCLUDED.source_type,
+                source_node_id = EXCLUDED.source_node_id,
+                source_lane_instance_id = EXCLUDED.source_lane_instance_id,
+                source_port = EXCLUDED.source_port,
+                target_type = EXCLUDED.target_type,
+                target_node_id = EXCLUDED.target_node_id,
+                target_lane_instance_id = EXCLUDED.target_lane_instance_id,
+                target_port = EXCLUDED.target_port,
+                label = EXCLUDED.label,
+                edge_type = EXCLUDED.edge_type,
+                condition_text = EXCLUDED.condition_text,
+                updated_at = NOW()
+            """,
+            (
+                business_flow_id,
+                lane_instance_id,
+                target_key,
+                source_node_id,
+                patch.get("sourcePort") or patch.get("source_port"),
+                target_node_id,
+                patch.get("targetPort") or patch.get("target_port"),
+                patch.get("edgeType") or patch.get("edge_type") or ("DEPENDENCY" if lane_instance_id is None else "SEQUENCE"),
+                patch.get("label"),
+                patch.get("conditionText") or patch.get("condition_text"),
+                Jsonb(patch.get("dataContractJson") or patch.get("data_contract_json") or {}),
+                Jsonb(patch.get("styleJson") or {}),
+                Jsonb(patch.get("propertiesJson") or {}),
+            ),
+        )
+        return
+
+    if op.op_type == "UPDATE_EDGE":
+        values = {}
+        if "label" in patch:
+            values["label"] = patch["label"] or None
+        if "edgeType" in patch:
+            values["edge_type"] = patch["edgeType"]
+        if "conditionText" in patch:
+            values["condition_text"] = patch["conditionText"] or None
+        if values:
+            assignments = [f"{field} = %s" for field in values]
+            cur.execute(
+                f"""
+                UPDATE business_flow_edge
+                SET {", ".join(assignments)}, is_overridden = TRUE, updated_at = NOW()
+                WHERE business_flow_id = %s AND edge_key = %s
+                """,
+                [*values.values(), business_flow_id, target_key],
+            )
+        return
+
+    if op.op_type == "REMOVE_EDGE":
+        cur.execute(
+            """
+            DELETE FROM business_flow_edge
+            WHERE business_flow_id = %s AND edge_key = %s
+            """,
+            (business_flow_id, target_key),
+        )
+        return
+
+    if op.op_type == "ADD_NODE_ER_REF":
+        node_id = _resolve_node_id(cur, business_flow_id, patch["nodeKey"])
+        cur.execute(
+            """
+            INSERT INTO business_flow_node_er_ref (
+                business_flow_id, business_flow_node_id, er_diagram_id,
+                er_table_key, er_column_key, ref_type, description
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                business_flow_id,
+                node_id,
+                patch["erDiagramId"],
+                patch["erTableKey"],
+                patch.get("erColumnKey"),
+                patch.get("refType", "READ"),
+                patch.get("description"),
+            ),
+        )
+        return
+
+    if op.op_type == "REMOVE_NODE_ER_REF":
+        cur.execute(
+            """
+            DELETE FROM business_flow_node_er_ref
+            WHERE business_flow_id = %s AND id = %s
+            """,
+            (business_flow_id, target_key),
+        )
+        return
+
+    if op.op_type == "UPDATE_NODE_ER_REF":
+        values = {}
+        if "refType" in patch:
+            values["ref_type"] = patch["refType"]
+        if "description" in patch:
+            values["description"] = patch["description"] or None
+        if values:
+            assignments = [f"{field} = %s" for field in values]
+            cur.execute(
+                f"""
+                UPDATE business_flow_node_er_ref
+                SET {", ".join(assignments)}
+                WHERE business_flow_id = %s AND id = %s
+                """,
+                [*values.values(), business_flow_id, target_key],
+            )
+        return
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unsupported op_type: {op.op_type}")
+
+
+@router.get("/{business_flow_id}/editor-state", response_model=BusinessFlowEditorStateResponse)
+def get_business_flow_editor_state(
+    business_flow_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> BusinessFlowEditorStateResponse:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_flow_role(cur, business_flow_id, user.id, "viewer")
+            return _fetch_business_flow_editor_state(cur, business_flow_id)
+
+
+@router.post("/{business_flow_id}/lane-instances", response_model=PlaceSwimlaneComponentResponse)
+def place_swimlane_component(
+    business_flow_id: UUID,
+    body: PlaceSwimlaneComponentPayload,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> PlaceSwimlaneComponentResponse:
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            ensure_business_flow_role(cur, business_flow_id, user.id, "editor")
+            cur.execute(
+                """
+                SELECT id, product_id, current_version
+                FROM business_flow
+                WHERE id = %s AND status <> 'ARCHIVED'
+                FOR UPDATE
+                """,
+                (business_flow_id,),
+            )
+            flow = cur.fetchone()
+            if not flow:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"business flow not found: {business_flow_id}",
+                )
+            cur.execute(
+                """
+                SELECT sc.id AS component_id, sc.name, sc.owner_role, sc.product_id,
+                       scv.id AS version_id, scv.version_no
+                FROM swimlane_component_version scv
+                JOIN swimlane_component sc ON sc.id = scv.component_id
+                WHERE scv.id = %s
+                  AND scv.status = 'PUBLISHED'
+                  AND sc.status = 'PUBLISHED'
+                  AND sc.deleted_at IS NULL
+                """,
+                (body.component_version_id,),
+            )
+            component = cur.fetchone()
+            if not component:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="published swimlane component version not found")
+            if component["product_id"] != flow["product_id"]:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="swimlane component product mismatch")
+
+            cur.execute(
+                """
+                SELECT node_key, node_type, title, description, actor, business_rule,
+                       input_summary, output_summary, position_x, position_y, width, height,
+                       style_json, properties_json
+                FROM swimlane_component_node
+                WHERE component_version_id = %s
+                ORDER BY created_at ASC, node_key ASC
+                """,
+                (body.component_version_id,),
+            )
+            component_nodes = cur.fetchall()
+            cur.execute(
+                """
+                SELECT edge_key, source_node_key, target_node_key, source_port, target_port,
+                       edge_type, label, condition_text, data_contract_json, style_json,
+                       properties_json
+                FROM swimlane_component_edge
+                WHERE component_version_id = %s
+                ORDER BY created_at ASC, edge_key ASC
+                """,
+                (body.component_version_id,),
+            )
+            component_edges = cur.fetchall()
+
+            lane_key = f"lane_{uuid4().hex[:14]}"
+            x = float(body.position.get("x", 0))
+            y = float(body.position.get("y", 0))
+            max_x = max(
+                [float(node["position_x"]) + float(node["width"]) for node in component_nodes],
+                default=304,
+            )
+            max_y = max(
+                [float(node["position_y"]) + float(node["height"]) for node in component_nodes],
+                default=264,
+            )
+            width = max(360, max_x + 56)
+            height = max(360, max_y + 96)
+            cur.execute(
+                """
+                SELECT COALESCE(MAX(z_index), 0) + 1 AS next_z
+                FROM business_flow_lane_instance
+                WHERE business_flow_id = %s
+                """,
+                (business_flow_id,),
+            )
+            z_index = int(cur.fetchone()["next_z"])
+            cur.execute(
+                """
+                INSERT INTO business_flow_lane_instance (
+                    business_flow_id, instance_key, component_id, component_version_id,
+                    display_name, owner_role, position_x, position_y, width, height,
+                    z_index, created_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    business_flow_id,
+                    lane_key,
+                    component["component_id"],
+                    component["version_id"],
+                    component["name"],
+                    component["owner_role"],
+                    x,
+                    y,
+                    width,
+                    height,
+                    z_index,
+                    str(user.id),
+                ),
+            )
+            lane_id = cur.fetchone()["id"]
+            node_key_map: dict[str, str] = {}
+            node_id_map: dict[str, UUID] = {}
+            for component_node in component_nodes:
+                node_key = f"{lane_key}_{component_node['node_key']}"
+                node_key_map[component_node["node_key"]] = node_key
+                cur.execute(
+                    """
+                    INSERT INTO business_flow_node (
+                        business_flow_id, lane_instance_id, node_key,
+                        origin_component_node_key, node_type, title, description,
+                        actor, business_rule, input_summary, output_summary,
+                        position_x, position_y, width, height, style_json, properties_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        business_flow_id,
+                        lane_id,
+                        node_key,
+                        component_node["node_key"],
+                        component_node["node_type"],
+                        component_node["title"],
+                        component_node["description"],
+                        component_node["actor"],
+                        component_node["business_rule"],
+                        component_node["input_summary"],
+                        component_node["output_summary"],
+                        x + 24 + float(component_node["position_x"]),
+                        y + 46 + float(component_node["position_y"]),
+                        float(component_node["width"]),
+                        float(component_node["height"]),
+                        Jsonb(component_node.get("style_json") or {}),
+                        Jsonb(component_node.get("properties_json") or {}),
+                    ),
+                )
+                node_id_map[component_node["node_key"]] = cur.fetchone()["id"]
+            for component_edge in component_edges:
+                source_node_key = node_key_map.get(component_edge["source_node_key"])
+                target_node_key = node_key_map.get(component_edge["target_node_key"])
+                source_node_id = node_id_map.get(component_edge["source_node_key"])
+                target_node_id = node_id_map.get(component_edge["target_node_key"])
+                if not source_node_key or not target_node_key or not source_node_id or not target_node_id:
+                    continue
+                cur.execute(
+                    """
+                    INSERT INTO business_flow_edge (
+                        business_flow_id, lane_instance_id, edge_key, source_type,
+                        source_node_id, source_port, target_type, target_node_id,
+                        target_port, edge_type, label, condition_text, data_contract_json,
+                        origin_component_edge_key, style_json, properties_json
+                    )
+                    VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        business_flow_id,
+                        lane_id,
+                        f"{lane_key}_{component_edge['edge_key']}",
+                        source_node_id,
+                        component_edge["source_port"],
+                        target_node_id,
+                        component_edge["target_port"],
+                        component_edge["edge_type"],
+                        component_edge["label"],
+                        component_edge["condition_text"],
+                        Jsonb(component_edge.get("data_contract_json") or {}),
+                        component_edge["edge_key"],
+                        Jsonb(component_edge.get("style_json") or {}),
+                        Jsonb(component_edge.get("properties_json") or {}),
+                    ),
+                )
+
+            base_version = int(flow["current_version"])
+            new_version = base_version + 1
+            cur.execute(
+                """
+                UPDATE business_flow
+                SET current_version = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_version, business_flow_id),
+            )
+            _append_change_batch(
+                cur,
+                business_flow_id,
+                base_version,
+                new_version,
+                "USER",
+                f"添加泳道：{component['name']}",
+                [
+                    {
+                        "op_type": "ADD_LANE_INSTANCE",
+                        "target_type": "LANE_INSTANCE",
+                        "target_key": lane_key,
+                        "patch": {
+                            "componentVersionId": str(body.component_version_id),
+                            "x": x,
+                            "y": y,
+                        },
+                        "inverse_patch": {"removeLaneInstanceKey": lane_key},
+                        "summary": f"添加泳道：{component['name']}",
+                    }
+                ],
+                user.id,
+            )
+            _write_business_flow_snapshot(cur, business_flow_id, new_version, user.id)
+            state = _fetch_business_flow_editor_state(cur, business_flow_id)
+            lane = next(item for item in state.lane_instances if item.id == lane_id)
+            nodes = [node for node in state.nodes if node.lane_instance_id == lane_id]
+            node_ids = {node.id for node in nodes}
+            edges = [
+                edge
+                for edge in state.edges
+                if edge.lane_instance_id == lane_id
+                or edge.source_node_id in node_ids
+                or edge.target_node_id in node_ids
+            ]
+            return PlaceSwimlaneComponentResponse(
+                lane_instance=lane,
+                nodes=nodes,
+                edges=edges,
+                new_version=new_version,
+            )
+
+
+@router.patch("/{business_flow_id}/changes", response_model=ApplyBusinessFlowChangesResponse)
+def apply_business_flow_changes(
+    business_flow_id: UUID,
+    body: ApplyBusinessFlowChangesRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> ApplyBusinessFlowChangesResponse:
+    if not body.ops:
+        return ApplyBusinessFlowChangesResponse(new_version=body.base_version, summary="无变更")
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            ensure_business_flow_role(cur, business_flow_id, user.id, "editor")
+            cur.execute(
+                """
+                SELECT current_version
+                FROM business_flow
+                WHERE id = %s AND status <> 'ARCHIVED'
+                FOR UPDATE
+                """,
+                (business_flow_id,),
+            )
+            flow = cur.fetchone()
+            if not flow:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"business flow not found: {business_flow_id}")
+            current_version = int(flow["current_version"])
+            if current_version != body.base_version:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"business flow version conflict: current={current_version}, base={body.base_version}",
+                )
+            for op in body.ops:
+                _apply_business_flow_op(cur, business_flow_id, op)
+            new_version = current_version + 1
+            summary = f"更新了 {len(body.ops)} 项内容"
+            cur.execute(
+                """
+                UPDATE business_flow
+                SET current_version = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_version, business_flow_id),
+            )
+            _append_change_batch(
+                cur,
+                business_flow_id,
+                current_version,
+                new_version,
+                body.source,
+                summary,
+                [op.model_dump(mode="json") for op in body.ops],
+                user.id,
+            )
+            _write_business_flow_snapshot(cur, business_flow_id, new_version, user.id)
+            return ApplyBusinessFlowChangesResponse(new_version=new_version, summary=summary)
+
+
+@router.get("/{business_flow_id}/history", response_model=list[BusinessFlowHistoryItemDTO])
+def get_business_flow_history(
+    business_flow_id: UUID,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> list[BusinessFlowHistoryItemDTO]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_flow_role(cur, business_flow_id, user.id, "viewer")
+            cur.execute(
+                """
+                SELECT id, base_version, new_version, source, summary, created_by, created_at
+                FROM business_flow_change_batch
+                WHERE business_flow_id = %s
+                ORDER BY new_version DESC
+                LIMIT 100
+                """,
+                (business_flow_id,),
+            )
+            batches = cur.fetchall()
+            results = []
+            for batch in batches:
+                cur.execute(
+                    """
+                    SELECT op_type, target_type, target_key, summary
+                    FROM business_flow_change_op
+                    WHERE batch_id = %s
+                    ORDER BY op_seq ASC
+                    """,
+                    (batch["id"],),
+                )
+                results.append(
+                    {
+                        "version": int(batch["new_version"]),
+                        "base_version": int(batch["base_version"]),
+                        "source": batch["source"],
+                        "summary": batch["summary"],
+                        "created_by": batch["created_by"],
+                        "created_at": batch["created_at"].isoformat(),
+                        "ops": cur.fetchall(),
+                    }
+                )
+            return results
+
+
+@router.post("/{business_flow_id}/restore", response_model=RestoreBusinessFlowResponse)
+def restore_business_flow(
+    business_flow_id: UUID,
+    body: RestoreBusinessFlowRequest,
+    user: AuthenticatedUser = Depends(get_current_user_from_header),
+) -> RestoreBusinessFlowResponse:
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            ensure_business_flow_role(cur, business_flow_id, user.id, "editor")
+            cur.execute(
+                """
+                SELECT current_version
+                FROM business_flow
+                WHERE id = %s AND status <> 'ARCHIVED'
+                FOR UPDATE
+                """,
+                (business_flow_id,),
+            )
+            flow = cur.fetchone()
+            if not flow:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"business flow not found: {business_flow_id}")
+            cur.execute(
+                """
+                SELECT semantic_json
+                FROM business_flow_snapshot
+                WHERE business_flow_id = %s AND version = %s
+                """,
+                (business_flow_id, body.target_version),
+            )
+            snapshot = cur.fetchone()
+            if not snapshot:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"snapshot not found: {body.target_version}")
+            semantic = snapshot.get("semantic_json") or {}
+            lanes = semantic.get("lanes") or []
+            nodes = semantic.get("nodes") or []
+            edges = semantic.get("edges") or []
+            cur.execute("DELETE FROM business_flow_edge WHERE business_flow_id = %s", (business_flow_id,))
+            cur.execute("DELETE FROM business_flow_node_er_ref WHERE business_flow_id = %s", (business_flow_id,))
+            cur.execute("DELETE FROM business_flow_node WHERE business_flow_id = %s", (business_flow_id,))
+            cur.execute("DELETE FROM business_flow_lane_instance WHERE business_flow_id = %s", (business_flow_id,))
+            lane_id_by_old_id: dict[str, UUID] = {}
+            lane_id_by_key: dict[str, UUID] = {}
+            for lane in lanes:
+                cur.execute(
+                    """
+                    INSERT INTO business_flow_lane_instance (
+                        business_flow_id, instance_key, component_id, component_version_id,
+                        display_name, owner_role, position_x, position_y, width, height,
+                        z_index, layout_json, override_json, status, created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'ACTIVE', %s)
+                    RETURNING id
+                    """,
+                    (
+                        business_flow_id,
+                        lane["instance_key"],
+                        lane["component_id"],
+                        lane["component_version_id"],
+                        lane["display_name"],
+                        lane.get("owner_role"),
+                        lane.get("position_x", 0),
+                        lane.get("position_y", 0),
+                        lane.get("width", 360),
+                        lane.get("height", 360),
+                        lane.get("z_index", 0),
+                        Jsonb(lane.get("layout_json") or {}),
+                        Jsonb(lane.get("override_json") or {}),
+                        str(user.id),
+                    ),
+                )
+                new_lane_id = cur.fetchone()["id"]
+                lane_id_by_old_id[str(lane["id"])] = new_lane_id
+                lane_id_by_key[lane["instance_key"]] = new_lane_id
+            node_id_by_old_id: dict[str, UUID] = {}
+            node_id_by_key: dict[str, UUID] = {}
+            for node in nodes:
+                lane_id = lane_id_by_old_id.get(str(node.get("lane_instance_id") or "")) or lane_id_by_key.get(node.get("lane_instance_key") or "")
+                cur.execute(
+                    """
+                    INSERT INTO business_flow_node (
+                        business_flow_id, lane_instance_id, node_key, origin_component_node_key,
+                        node_type, title, description, actor, business_rule, input_summary,
+                        output_summary, position_x, position_y, width, height, is_overridden,
+                        style_json, properties_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        business_flow_id,
+                        lane_id,
+                        node["node_key"],
+                        node.get("origin_component_node_key"),
+                        node["node_type"],
+                        node["title"],
+                        node.get("description"),
+                        node.get("actor"),
+                        node.get("business_rule"),
+                        node.get("input_summary"),
+                        node.get("output_summary"),
+                        node.get("position_x", 0),
+                        node.get("position_y", 0),
+                        node.get("width", 120),
+                        node.get("height", 60),
+                        bool(node.get("is_overridden")),
+                        Jsonb(node.get("style_json") or {}),
+                        Jsonb(node.get("properties_json") or {}),
+                    ),
+                )
+                new_node_id = cur.fetchone()["id"]
+                node_id_by_old_id[str(node["id"])] = new_node_id
+                node_id_by_key[node["node_key"]] = new_node_id
+                for ref in node.get("er_refs") or []:
+                    cur.execute(
+                        """
+                        INSERT INTO business_flow_node_er_ref (
+                            business_flow_id, business_flow_node_id, er_diagram_id,
+                            er_table_key, er_column_key, ref_type, description, created_by
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            business_flow_id,
+                            new_node_id,
+                            ref["er_diagram_id"],
+                            ref["er_table_key"],
+                            ref.get("er_column_key"),
+                            ref.get("ref_type", "READ"),
+                            ref.get("description"),
+                            str(user.id),
+                        ),
+                    )
+            for edge in edges:
+                source_node_id = node_id_by_old_id.get(str(edge.get("source_node_id") or "")) or node_id_by_key.get(edge.get("source_node_key") or "")
+                target_node_id = node_id_by_old_id.get(str(edge.get("target_node_id") or "")) or node_id_by_key.get(edge.get("target_node_key") or "")
+                if edge["source_type"] == "NODE" and not source_node_id:
+                    continue
+                if edge["target_type"] == "NODE" and not target_node_id:
+                    continue
+                source_lane_id = lane_id_by_old_id.get(str(edge.get("source_lane_instance_id") or "")) or lane_id_by_key.get(edge.get("source_lane_instance_key") or "")
+                target_lane_id = lane_id_by_old_id.get(str(edge.get("target_lane_instance_id") or "")) or lane_id_by_key.get(edge.get("target_lane_instance_key") or "")
+                lane_id = lane_id_by_old_id.get(str(edge.get("lane_instance_id") or ""))
+                cur.execute(
+                    """
+                    INSERT INTO business_flow_edge (
+                        business_flow_id, lane_instance_id, edge_key, source_type,
+                        source_node_id, source_lane_instance_id, source_port, target_type,
+                        target_node_id, target_lane_instance_id, target_port, edge_type,
+                        label, condition_text, data_contract_json, origin_component_edge_key,
+                        is_overridden, style_json, properties_json
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        business_flow_id,
+                        lane_id,
+                        edge["edge_key"],
+                        edge["source_type"],
+                        source_node_id,
+                        source_lane_id,
+                        edge.get("source_port"),
+                        edge["target_type"],
+                        target_node_id,
+                        target_lane_id,
+                        edge.get("target_port"),
+                        edge.get("edge_type", "SEQUENCE"),
+                        edge.get("label"),
+                        edge.get("condition_text"),
+                        Jsonb(edge.get("data_contract_json") or {}),
+                        edge.get("origin_component_edge_key"),
+                        bool(edge.get("is_overridden")),
+                        Jsonb(edge.get("style_json") or {}),
+                        Jsonb(edge.get("properties_json") or {}),
+                    ),
+                )
+            base_version = int(flow["current_version"])
+            new_version = base_version + 1
+            cur.execute(
+                """
+                UPDATE business_flow
+                SET current_version = %s, collab_revision = collab_revision + 1,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_version, business_flow_id),
+            )
+            cur.execute(
+                """
+                DELETE FROM collab_document
+                WHERE owner_type = 'BUSINESS_FLOW' AND owner_id = %s
+                """,
+                (business_flow_id,),
+            )
+            _append_change_batch(
+                cur,
+                business_flow_id,
+                base_version,
+                new_version,
+                "RESTORE",
+                f"恢复到版本 {body.target_version}",
+                [
+                    {
+                        "op_type": "RESTORE_SNAPSHOT",
+                        "target_type": "CANVAS",
+                        "target_key": str(business_flow_id),
+                        "patch": {"targetVersion": body.target_version},
+                        "inverse_patch": {"fromVersion": base_version},
+                        "summary": f"恢复到版本 {body.target_version}",
+                    }
+                ],
+                user.id,
+            )
+            _write_business_flow_snapshot(cur, business_flow_id, new_version, user.id)
+            state = _fetch_business_flow_editor_state(cur, business_flow_id)
+            return RestoreBusinessFlowResponse(
+                new_version=new_version,
+                restored_from_version=body.target_version,
+                summary=f"已恢复到版本 {body.target_version}",
+                editor_state=state,
+            )
 
 
 def _ensure_active_business_flow(cur, business_flow_id: UUID) -> None:

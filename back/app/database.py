@@ -67,5 +67,9 @@ def run_migrations() -> None:
                 encoding="utf-8"
             )
             cur.execute(product_members_sql)
+            business_flow_collab_revision_sql = (
+                migrations_dir / "011_business_flow_collab_revision.sql"
+            ).read_text(encoding="utf-8")
+            cur.execute(business_flow_collab_revision_sql)
             database_connection_service.seed_env_target_connection(cur)
         conn.commit()

@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   GripVertical,
   Layers3,
-  Save,
   X,
 } from 'lucide-react'
 
@@ -19,14 +18,22 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
-import { useBusinessFlowMetasQuery } from '@/entities/business-flow/api'
-import type { LocalBusinessFlowCanvas, SwimlaneComponentListItem } from '@/entities/business-flow'
 import {
-  ensureBusinessFlowCanvas,
-  listPublishedSwimlaneComponentItems,
-  placeSwimlaneComponent,
-  saveBusinessFlowCanvas,
-} from '@/features/business-flow/domain/localBusinessFlowStore'
+  useApplyBusinessFlowChangesMutation,
+  useBusinessFlowEditorStateQuery,
+  useBusinessFlowHistoryQuery,
+  useBusinessFlowMetasQuery,
+  usePlaceSwimlaneComponentMutation,
+  useRestoreBusinessFlowVersionMutation,
+  useSwimlaneComponentsQuery,
+} from '@/entities/business-flow/api'
+import type {
+  BusinessFlowChangeOpBody,
+  BusinessFlowEdgeRecord,
+  BusinessFlowNodeRecord,
+  LocalBusinessFlowCanvas,
+  SwimlaneComponentListItem,
+} from '@/entities/business-flow'
 import {
   createBusinessFlowGraph,
   flowDraftFromGraph,
@@ -56,55 +63,91 @@ export function BusinessFlowEditor({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<LocalBusinessFlowCanvas | null>(null)
   const persistTimer = useRef<number | null>(null)
-  const [canvas, setCanvas] = useState<LocalBusinessFlowCanvas>(() =>
-    ensureBusinessFlowCanvas({
-      id: businessFlowId,
-      name: meta?.name ?? businessFlowId,
-      code: meta?.code ?? null,
-      description: meta?.description ?? null,
-    }),
-  )
-  const [palette, setPalette] = useState<SwimlaneComponentListItem[]>([])
+  const renderingRef = useRef(false)
+  const editorQuery = useBusinessFlowEditorStateQuery(businessFlowId, meta)
+  const placeComponentMutation = usePlaceSwimlaneComponentMutation(businessFlowId)
+  const applyChangesMutation = useApplyBusinessFlowChangesMutation(businessFlowId)
+  const historyQuery = useBusinessFlowHistoryQuery(businessFlowId)
+  const restoreMutation = useRestoreBusinessFlowVersionMutation(businessFlowId)
+  const [canvas, setCanvas] = useState<LocalBusinessFlowCanvas | null>(null)
+  const publishedComponentsQuery = useSwimlaneComponentsQuery(meta?.product_id ?? 'none', 'PUBLISHED')
+  const palette: SwimlaneComponentListItem[] = (publishedComponentsQuery.data ?? []).flatMap((component) => {
+    const version =
+      component.versions.find((item) => item.status === 'PUBLISHED' && item.versionNo === component.currentVersionNo)
+      ?? component.versions.filter((item) => item.status === 'PUBLISHED').at(-1)
+    if (!version) return []
+    return [{
+      componentId: component.id,
+      componentVersionId: version.id,
+      productId: component.productId,
+      name: component.name,
+      category: component.category,
+      ownerRole: component.ownerRole,
+      versionNo: version.versionNo,
+      thumbnailUrl: version.thumbnailUrl,
+    }]
+  })
   const [selected, setSelected] = useState<SelectedBusinessCell>(null)
+  const selectedRef = useRef<SelectedBusinessCell>(null)
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [savedAt, setSavedAt] = useState<string | null>(null)
-  canvasRef.current = canvas
+  const [showHistory, setShowHistory] = useState(false)
   const businessFlowProductId = meta?.product_id ?? null
 
   useEffect(() => {
-    const next = ensureBusinessFlowCanvas({
-      id: businessFlowId,
-      name: meta?.name ?? canvas.name,
-      code: meta?.code ?? canvas.code,
-      description: meta?.description ?? canvas.description,
-    })
-    setCanvas(next)
-    canvasRef.current = next
-  }, [businessFlowId, canvas.code, canvas.description, canvas.name, meta?.code, meta?.description, meta?.name])
+    selectedRef.current = selected
+  }, [selected])
 
-  const persistCanvas = useCallback(() => {
+  useEffect(() => {
+    if (!editorQuery.data) return
+    canvasRef.current = editorQuery.data
+    setCanvas(editorQuery.data)
     const graph = graphRef.current
-    const current = canvasRef.current
-    if (!graph || !current) return
-    const draft = flowDraftFromGraph(graph, current)
-    const saved = saveBusinessFlowCanvas(draft)
-    canvasRef.current = saved
-    setCanvas(saved)
-    setSavedAt(new Date().toLocaleTimeString())
-  }, [])
+    if (graph) {
+      renderingRef.current = true
+      renderBusinessFlowCanvas(graph, editorQuery.data)
+      renderingRef.current = false
+    }
+  }, [editorQuery.data])
+
+  const persistCanvas = useCallback(async () => {
+    const graph = graphRef.current
+    const previous = canvasRef.current
+    if (!graph || !previous || renderingRef.current) return
+    const draft = flowDraftFromGraph(graph, previous)
+    const ops = buildBusinessFlowOps(previous, draft)
+    if (ops.length === 0) return
+    setSaveState('saving')
+    try {
+      await applyChangesMutation.mutateAsync({
+        baseVersion: previous.version,
+        ops,
+      })
+      const refreshed = await editorQuery.refetch()
+      if (refreshed.data) {
+        canvasRef.current = refreshed.data
+        setCanvas(refreshed.data)
+      }
+      setSaveState('saved')
+      setSavedAt(new Date().toLocaleTimeString())
+    } catch {
+      setSaveState('error')
+    }
+  }, [applyChangesMutation, editorQuery])
 
   const schedulePersist = useCallback(() => {
     if (persistTimer.current != null) window.clearTimeout(persistTimer.current)
     persistTimer.current = window.setTimeout(() => {
       persistTimer.current = null
-      persistCanvas()
-    }, 120)
+      void persistCanvas()
+    }, 550)
   }, [persistCanvas])
 
   useEffect(() => {
     if (!containerRef.current) return
     const graph = createBusinessFlowGraph(containerRef.current)
     graphRef.current = graph
-    renderBusinessFlowCanvas(graph, canvasRef.current ?? ensureBusinessFlowCanvas({ id: businessFlowId }))
+    if (canvasRef.current) renderBusinessFlowCanvas(graph, canvasRef.current)
 
     graph.on('cell:click', ({ cell }) => setSelected(readSelectedBusinessCell(cell)))
     graph.on('blank:click', () => setSelected(null))
@@ -124,45 +167,60 @@ export function BusinessFlowEditor({
     })
     graph.on('edge:removed', schedulePersist)
     graph.on('node:removed', schedulePersist)
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return
+      const selectedCells = graph.getSelectedCells()
+      if (!selectedCells.length && selectedRef.current?.cell) selectedCells.push(selectedRef.current.cell)
+      if (!selectedCells.length) return
+      event.preventDefault()
+      selectedCells.forEach((cell) => {
+        if (readCellData(cell).cellRole === 'LANE_INSTANCE') return
+        cell.remove()
+      })
+      setSelected(null)
+      schedulePersist()
+    }
+    window.addEventListener('keydown', handleKeyDown)
     return () => {
       if (persistTimer.current != null) window.clearTimeout(persistTimer.current)
+      window.removeEventListener('keydown', handleKeyDown)
       graph.dispose()
       graphRef.current = null
     }
   }, [businessFlowId, schedulePersist])
 
-  useEffect(() => {
-    setPalette(
-      businessFlowProductId
-        ? listPublishedSwimlaneComponentItems(businessFlowProductId)
-        : [],
-    )
-  }, [businessFlowProductId])
-
-  function dropComponent(event: React.DragEvent<HTMLDivElement>) {
+  async function dropComponent(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault()
     const graph = graphRef.current
     if (!graph) return
     const componentVersionId = event.dataTransfer.getData('application/x-swimlane-component')
     if (!componentVersionId) return
     const point = graphPointFromEvent(graph, event.nativeEvent)
-    const result = placeSwimlaneComponent(businessFlowId, componentVersionId, {
-      x: point.x - 160,
-      y: point.y - 28,
-    })
-    if (!result) return
-    canvasRef.current = result.canvas
-    setCanvas(result.canvas)
-    renderBusinessFlowCanvas(graph, result.canvas)
-    setSavedAt(new Date().toLocaleTimeString())
-  }
-
-  function forceSave() {
-    persistCanvas()
+    setSaveState('saving')
+    try {
+      await placeComponentMutation.mutateAsync({
+        componentVersionId,
+        position: {
+          x: point.x - 160,
+          y: point.y - 28,
+        },
+      })
+      const refreshed = await editorQuery.refetch()
+      if (refreshed.data) {
+        canvasRef.current = refreshed.data
+        setCanvas(refreshed.data)
+      }
+      setSaveState('saved')
+      setSavedAt(new Date().toLocaleTimeString())
+    } catch {
+      setSaveState('error')
+    }
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <section className="business-flow-x6-workbench flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3">
         <div className="flex min-w-0 items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onBack}>
@@ -171,21 +229,28 @@ export function BusinessFlowEditor({
           </Button>
           <Separator orientation="vertical" className="h-5" />
           <div className="min-w-0">
-            <div className="truncate text-xs font-medium">{canvas.name}</div>
-            <div className="truncate text-[11px] text-muted-foreground">{canvas.code || businessFlowId}</div>
+            <div className="truncate text-xs font-medium">{canvas?.name ?? meta?.name ?? businessFlowId}</div>
+            <div className="truncate text-[11px] text-muted-foreground">{canvas?.code || meta?.code || businessFlowId}</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="hidden sm:inline-flex">
-            {canvas.laneInstances.length} 泳道
+            {canvas?.laneInstances.length ?? 0} 泳道
           </Badge>
           <Badge variant="secondary" className="hidden sm:inline-flex">
-            {canvas.edges.filter((edge) => edge.isCrossLane).length} 跨泳道线
+            {canvas?.edges.filter((edge) => edge.isCrossLane).length ?? 0} 跨泳道线
           </Badge>
-          {savedAt ? <span className="text-xs text-muted-foreground">已保存 {savedAt}</span> : null}
-          <Button size="sm" onClick={forceSave}>
-            <Save className="size-4" />
-            保存
+          <span className="text-xs text-muted-foreground">
+            {saveState === 'saving'
+              ? '保存中...'
+              : saveState === 'error'
+                ? '保存失败'
+                : savedAt
+                  ? `已保存 ${savedAt}`
+                  : '自动保存'}
+          </span>
+          <Button size="sm" variant="outline" onClick={() => setShowHistory((value) => !value)}>
+            历史
           </Button>
         </div>
       </div>
@@ -198,7 +263,7 @@ export function BusinessFlowEditor({
             onDrop={dropComponent}
           >
             <div ref={containerRef} className="h-full w-full" />
-            {canvas.laneInstances.length === 0 ? (
+            {!editorQuery.isLoading && (canvas?.laneInstances.length ?? 0) === 0 ? (
               <div className="pointer-events-none absolute left-1/2 top-10 w-80 -translate-x-1/2 rounded-md border border-dashed border-border bg-card/85 px-4 py-3 text-center text-xs text-muted-foreground shadow-sm">
                 从左侧拖入泳道组件，生成业务图中的泳道实例。
               </div>
@@ -215,9 +280,86 @@ export function BusinessFlowEditor({
               }}
             />
           ) : null}
+          {showHistory ? (
+            <BusinessHistoryDrawer
+              loading={historyQuery.isLoading || restoreMutation.isPending}
+              items={historyQuery.data ?? []}
+              onClose={() => setShowHistory(false)}
+              onRestore={async (version) => {
+                setSaveState('saving')
+                try {
+                  await restoreMutation.mutateAsync(version)
+                  const refreshed = await editorQuery.refetch()
+                  if (refreshed.data) {
+                    canvasRef.current = refreshed.data
+                    setCanvas(refreshed.data)
+                  }
+                  setSaveState('saved')
+                  setSavedAt(new Date().toLocaleTimeString())
+                } catch {
+                  setSaveState('error')
+                }
+              }}
+            />
+          ) : null}
         </section>
       </div>
     </section>
+  )
+}
+
+function BusinessHistoryDrawer({
+  items,
+  loading,
+  onClose,
+  onRestore,
+}: {
+  items: Array<{
+    version: number
+    summary?: string | null
+    createdAt: string
+    ops: Array<{ summary?: string | null }>
+  }>
+  loading: boolean
+  onClose: () => void
+  onRestore: (version: number) => Promise<void>
+}) {
+  return (
+    <BusinessPanelShell title="历史记录" onClose={onClose}>
+      <div className="space-y-2">
+        {loading ? <div className="text-xs text-muted-foreground">处理中...</div> : null}
+        {items.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+            暂无历史记录。
+          </div>
+        ) : null}
+        {items.map((item) => (
+          <div key={item.version} className="rounded-md border border-border bg-background p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold">版本 {item.version}</div>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                disabled={loading}
+                onClick={() => void onRestore(item.version)}
+              >
+                恢复
+              </Button>
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{item.summary || '业务图更新'}</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">{item.createdAt}</div>
+            {item.ops.length ? (
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {item.ops.slice(0, 4).map((op, index) => (
+                  <li key={index}>{op.summary || '更新内容'}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </BusinessPanelShell>
   )
 }
 
@@ -331,6 +473,183 @@ function SwimlaneComponentPalette({
       </ScrollArea>
     </aside>
   )
+}
+
+function buildBusinessFlowOps(
+  previous: LocalBusinessFlowCanvas,
+  draft: ReturnType<typeof flowDraftFromGraph>,
+): BusinessFlowChangeOpBody[] {
+  const ops: BusinessFlowChangeOpBody[] = []
+  const prevLanes = new Map(previous.laneInstances.map((lane) => [lane.instanceKey, lane]))
+  const nextLanes = new Map(draft.laneInstances.map((lane) => [lane.instanceKey, lane]))
+  nextLanes.forEach((lane, key) => {
+    const prev = prevLanes.get(key)
+    if (!prev) return
+    if (
+      prev.position.x !== lane.position.x ||
+      prev.position.y !== lane.position.y ||
+      prev.size.width !== lane.size.width ||
+      prev.size.height !== lane.size.height
+    ) {
+      ops.push({
+        opType: 'MOVE_LANE_INSTANCE',
+        targetType: 'LANE_INSTANCE',
+        targetKey: key,
+        patch: {
+          to: {
+            x: lane.position.x,
+            y: lane.position.y,
+            width: lane.size.width,
+            height: lane.size.height,
+          },
+        },
+        summary: `移动泳道：${lane.displayName}`,
+      })
+    }
+    if (prev.displayName !== lane.displayName || (prev.ownerRole ?? '') !== (lane.ownerRole ?? '')) {
+      ops.push({
+        opType: 'RENAME_LANE_INSTANCE',
+        targetType: 'LANE_INSTANCE',
+        targetKey: key,
+        patch: {
+          displayName: lane.displayName,
+          ownerRole: lane.ownerRole ?? null,
+        },
+        summary: `更新泳道：${lane.displayName}`,
+      })
+    }
+  })
+
+  const prevNodes = new Map(previous.nodes.map((node) => [node.nodeKey, node]))
+  const nextNodes = new Map(draft.nodes.map((node) => [node.nodeKey, node]))
+  prevNodes.forEach((node, key) => {
+    if (!nextNodes.has(key)) {
+      ops.push({
+        opType: 'REMOVE_NODE',
+        targetType: 'NODE',
+        targetKey: key,
+        patch: { title: node.title },
+        summary: `删除节点：${node.title}`,
+      })
+    }
+  })
+  nextNodes.forEach((node, key) => {
+    const prev = prevNodes.get(key)
+    if (!prev) {
+      ops.push({
+        opType: 'ADD_NODE',
+        targetType: 'NODE',
+        targetKey: key,
+        patch: {
+          laneInstanceKey: laneKeyForNode(draft, node),
+          nodeType: node.nodeType,
+          title: node.title,
+          x: node.position.x,
+          y: node.position.y,
+          width: node.size.width,
+          height: node.size.height,
+          description: node.description,
+          actor: node.actor,
+          businessRule: node.businessRule,
+        },
+        summary: `新增节点：${node.title}`,
+      })
+      return
+    }
+    const patch: Record<string, unknown> = {}
+    if (
+      prev.position.x !== node.position.x ||
+      prev.position.y !== node.position.y ||
+      prev.size.width !== node.size.width ||
+      prev.size.height !== node.size.height
+    ) {
+      patch.to = {
+        x: node.position.x,
+        y: node.position.y,
+        width: node.size.width,
+        height: node.size.height,
+      }
+    }
+    if (prev.title !== node.title) patch.title = node.title
+    if ((prev.description ?? '') !== (node.description ?? '')) patch.description = node.description ?? null
+    if ((prev.actor ?? '') !== (node.actor ?? '')) patch.actor = node.actor ?? null
+    if ((prev.businessRule ?? '') !== (node.businessRule ?? '')) patch.businessRule = node.businessRule ?? null
+    if (Object.keys(patch).length > 0) {
+      ops.push({
+        opType: 'UPDATE_NODE',
+        targetType: 'NODE',
+        targetKey: key,
+        patch,
+        summary: `更新节点：${node.title}`,
+      })
+    }
+  })
+
+  const prevEdges = new Map(previous.edges.map((edge) => [edge.edgeKey, edge]))
+  const nextEdges = new Map(draft.edges.map((edge) => [edge.edgeKey, edge]))
+  prevEdges.forEach((edge, key) => {
+    if (!nextEdges.has(key)) {
+      ops.push({
+        opType: 'REMOVE_EDGE',
+        targetType: 'EDGE',
+        targetKey: key,
+        patch: { label: edge.label },
+        summary: `删除连线：${edge.label || key}`,
+      })
+    }
+  })
+  nextEdges.forEach((edge, key) => {
+    const prev = prevEdges.get(key)
+    if (!prev) {
+      ops.push({
+        opType: 'ADD_EDGE',
+        targetType: 'EDGE',
+        targetKey: key,
+        patch: edgePatch(edge),
+        summary: `新增连线：${edge.label || key}`,
+      })
+      return
+    }
+    if (
+      prev.label !== edge.label ||
+      prev.edgeType !== edge.edgeType ||
+      prev.sourceNodeKey !== edge.sourceNodeKey ||
+      prev.targetNodeKey !== edge.targetNodeKey ||
+      prev.sourcePort !== edge.sourcePort ||
+      prev.targetPort !== edge.targetPort
+    ) {
+      ops.push({
+        opType:
+          prev.sourceNodeKey !== edge.sourceNodeKey || prev.targetNodeKey !== edge.targetNodeKey
+            ? 'ADD_EDGE'
+            : 'UPDATE_EDGE',
+        targetType: 'EDGE',
+        targetKey: key,
+        patch: edgePatch(edge),
+        summary: `更新连线：${edge.label || key}`,
+      })
+    }
+  })
+  return ops
+}
+
+function laneKeyForNode(
+  draft: ReturnType<typeof flowDraftFromGraph>,
+  node: BusinessFlowNodeRecord,
+) {
+  return draft.laneInstances.find((lane) => lane.laneInstanceId === node.laneInstanceId)?.instanceKey
+}
+
+function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
+  return {
+    sourceNodeKey: edge.sourceNodeKey,
+    targetNodeKey: edge.targetNodeKey,
+    sourcePort: edge.sourcePort,
+    targetPort: edge.targetPort,
+    edgeType: edge.edgeType,
+    label: edge.label,
+    conditionText: edge.conditionText,
+  }
 }
 
 function BusinessInspector({

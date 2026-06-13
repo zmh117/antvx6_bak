@@ -79,17 +79,20 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import type { BusinessFlowNodeType, SwimlaneComponent } from '@/entities/business-flow'
+import {
+  useArchiveSwimlaneComponentMutation,
+  useCreateSwimlaneComponentMutation,
+  usePublishSwimlaneComponentVersionMutation,
+  useSaveSwimlaneComponentDraftMutation,
+  useSwimlaneComponentQuery,
+  useSwimlaneComponentsQuery,
+  useUpdateSwimlaneComponentMutation,
+} from '@/entities/business-flow/api'
 import { useProductsQuery, type ProductMeta } from '@/entities/product'
 import {
   createLocalId,
-  createSwimlaneComponent,
   getCurrentComponentVersion,
-  getSwimlaneComponent,
-  listSwimlaneComponents,
   newComponentNodeDraft,
-  removeSwimlaneComponent,
-  saveSwimlaneComponentVersion,
-  updateSwimlaneComponentMeta,
 } from '@/features/business-flow/domain/localBusinessFlowStore'
 import {
   addComponentNode,
@@ -407,7 +410,6 @@ export function SwimlaneComponentListPage({
     pageIndex: 0,
     pageSize: 10,
   })
-  const [components, setComponents] = useState<SwimlaneComponent[]>(() => listSwimlaneComponents())
   const [formMode, setFormMode] = useState<SwimlaneComponentFormMode | null>(null)
   const [editingComponent, setEditingComponent] = useState<SwimlaneComponent | null>(null)
   const [formInitialValues, setFormInitialValues] = useState<SwimlaneComponentFormValues>(() =>
@@ -415,6 +417,12 @@ export function SwimlaneComponentListPage({
   )
   const [deleteTarget, setDeleteTarget] = useState<SwimlaneComponent | null>(null)
   const products = productsQuery.data ?? []
+  const componentsQuery = useSwimlaneComponentsQuery(productFilter)
+  const createMutation = useCreateSwimlaneComponentMutation(productFilter === 'all' ? undefined : productFilter)
+  const updateMutation = useUpdateSwimlaneComponentMutation(productFilter === 'all' ? undefined : productFilter)
+  const archiveMutation = useArchiveSwimlaneComponentMutation(productFilter === 'all' ? undefined : productFilter)
+  const components = componentsQuery.data ?? []
+  const formPending = createMutation.isPending || updateMutation.isPending
   const productNameById = useMemo(
     () => new Map(products.map((product) => [product.id, product.name])),
     [products],
@@ -577,7 +585,7 @@ export function SwimlaneComponentListPage({
   })
 
   function refreshComponents() {
-    setComponents(listSwimlaneComponents())
+    void componentsQuery.refetch()
   }
 
   function openCreateDialog() {
@@ -596,8 +604,7 @@ export function SwimlaneComponentListPage({
 
   async function submitForm(values: SwimlaneComponentFormSubmitValues) {
     if (formMode === 'create') {
-      const component = createSwimlaneComponent(values.productId)
-      updateSwimlaneComponentMeta(component.id, {
+      const component = await createMutation.mutateAsync({
         productId: values.productId,
         code: values.code,
         name: values.name,
@@ -611,13 +618,15 @@ export function SwimlaneComponentListPage({
       return
     }
     if (formMode === 'edit' && editingComponent) {
-      updateSwimlaneComponentMeta(editingComponent.id, {
-        productId: values.productId,
+      await updateMutation.mutateAsync({
+        componentId: editingComponent.id,
+        body: {
         code: values.code,
         name: values.name,
         category: values.category || null,
         ownerRole: values.ownerRole || null,
         description: values.description || null,
+        },
       })
       refreshComponents()
       setFormMode(null)
@@ -627,9 +636,12 @@ export function SwimlaneComponentListPage({
 
   function confirmDelete() {
     if (!deleteTarget) return
-    removeSwimlaneComponent(deleteTarget.id)
-    refreshComponents()
-    setDeleteTarget(null)
+    archiveMutation.mutate(deleteTarget.id, {
+      onSuccess: () => {
+        refreshComponents()
+        setDeleteTarget(null)
+      },
+    })
   }
 
   return (
@@ -657,6 +669,12 @@ export function SwimlaneComponentListPage({
           <div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             <AlertCircle className="size-4" />
             {productsQuery.error instanceof Error ? productsQuery.error.message : '产品加载失败'}
+          </div>
+        ) : null}
+        {componentsQuery.error ? (
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <AlertCircle className="size-4" />
+            {componentsQuery.error instanceof Error ? componentsQuery.error.message : '泳道组件加载失败'}
           </div>
         ) : null}
         <div className="mb-3 grid gap-2 md:grid-cols-[minmax(220px,1fr)_180px_120px]">
@@ -712,7 +730,7 @@ export function SwimlaneComponentListPage({
         <DataTable
           table={table}
           columnsLength={columns.length}
-          loading={productsQuery.isLoading}
+          loading={productsQuery.isLoading || componentsQuery.isLoading}
           minWidth={1120}
           emptyTitle="暂无泳道组件"
           emptyDescription="可以新建泳道组件，或调整筛选条件。"
@@ -728,7 +746,7 @@ export function SwimlaneComponentListPage({
           key={`${formMode}-${editingComponent?.id ?? 'new'}`}
           mode={formMode}
           initialValues={formInitialValues}
-          pending={false}
+          pending={formPending}
           products={products}
           onClose={() => {
             setFormMode(null)
@@ -748,7 +766,7 @@ export function SwimlaneComponentListPage({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={confirmDelete}>
+            <AlertDialogAction variant="destructive" onClick={confirmDelete} disabled={archiveMutation.isPending}>
               删除
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -767,28 +785,27 @@ export function SwimlaneComponentEditorPage({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const graphRef = useRef<Graph | null>(null)
-  const [componentSnapshot, setComponentSnapshot] = useState<SwimlaneComponent | null>(() =>
-    getSwimlaneComponent(componentId),
-  )
-  const component = componentSnapshot
-  const currentVersion = component ? getCurrentComponentVersion(component) : null
+  const componentQuery = useSwimlaneComponentQuery(componentId)
+  const saveDraftMutation = useSaveSwimlaneComponentDraftMutation()
+  const publishMutation = usePublishSwimlaneComponentVersionMutation()
+  const component = componentQuery.data ?? null
+  const currentVersion = component
+    ? component.versions.find((version) => version.status === 'DRAFT')
+      ?? getCurrentComponentVersion(component)
+    : null
   const [selected, setSelected] = useState<SelectedComponentCell>(null)
   const [savedAt, setSavedAt] = useState<string | null>(null)
 
   useEffect(() => {
-    const nextComponent = getSwimlaneComponent(componentId)
-    setComponentSnapshot(nextComponent)
     setSavedAt(null)
     setSelected(null)
   }, [componentId])
 
   useEffect(() => {
-    const initialComponent = getSwimlaneComponent(componentId)
-    const initialVersion = initialComponent ? getCurrentComponentVersion(initialComponent) : null
-    if (!containerRef.current || !initialVersion) return
+    if (!containerRef.current || !currentVersion) return
     const graph = createBusinessFlowGraph(containerRef.current)
     graphRef.current = graph
-    renderComponentVersion(graph, initialVersion)
+    renderComponentVersion(graph, currentVersion)
 
     graph.on('cell:click', ({ cell }) => setSelected(readSelectedCell(cell)))
     graph.on('blank:click', () => setSelected(null))
@@ -805,12 +822,12 @@ export function SwimlaneComponentEditorPage({
       graph.dispose()
       graphRef.current = null
     }
-  }, [componentId])
+  }, [componentId, currentVersion?.id])
 
   if (!component || !currentVersion) {
     return (
       <section className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-        未找到泳道组件
+        {componentQuery.isLoading ? '正在加载泳道组件...' : '未找到泳道组件'}
       </section>
     )
   }
@@ -828,26 +845,36 @@ export function SwimlaneComponentEditorPage({
     graph.select(node)
   }
 
-  function saveComponent() {
+  function buildVersionBody() {
     const graph = graphRef.current
-    if (!graph) return
+    if (!graph || !component) return null
     const draft = componentDraftFromGraph(graph)
-    const latestComponent = getSwimlaneComponent(componentId)
-    if (!latestComponent) return
-    const saved = saveSwimlaneComponentVersion(componentId, {
-      name: latestComponent.name,
-      category: latestComponent.category,
-      ownerRole: latestComponent.ownerRole,
-      description: latestComponent.description,
+    return {
+      name: component.name,
+      category: component.category,
+      ownerRole: component.ownerRole,
+      description: component.description,
       nodes: draft.nodes,
       edges: draft.edges,
-    })
-    if (saved) setComponentSnapshot(saved)
+    }
+  }
+
+  async function saveComponent() {
+    const body = buildVersionBody()
+    if (!body) return
+    await saveDraftMutation.mutateAsync({ componentId, body })
+    setSavedAt(new Date().toLocaleTimeString())
+  }
+
+  async function publishComponent() {
+    const body = buildVersionBody()
+    if (!body) return
+    await publishMutation.mutateAsync({ componentId, body })
     setSavedAt(new Date().toLocaleTimeString())
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <section className="business-flow-x6-workbench flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-3">
         <div className="flex min-w-0 items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onBack}>
@@ -859,9 +886,13 @@ export function SwimlaneComponentEditorPage({
         </div>
         <div className="flex items-center gap-2">
           {savedAt ? <span className="text-xs text-muted-foreground">已保存 {savedAt}</span> : null}
-          <Button size="sm" onClick={saveComponent}>
+          <Button size="sm" variant="outline" onClick={saveComponent} disabled={saveDraftMutation.isPending}>
             <Save className="size-4" />
-            保存组件
+            保存草稿
+          </Button>
+          <Button size="sm" onClick={publishComponent} disabled={publishMutation.isPending}>
+            <Save className="size-4" />
+            发布
           </Button>
         </div>
       </div>
