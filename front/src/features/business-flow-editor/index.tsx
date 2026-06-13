@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Graph, type Cell, type Edge } from '@antv/x6'
+import { Graph, Node, type Cell, type Edge } from '@antv/x6'
 import {
   ArrowLeft,
   GripVertical,
@@ -36,9 +36,12 @@ import type {
 } from '@/entities/business-flow'
 import {
   createBusinessFlowGraph,
+  fitLaneToChildren,
   flowDraftFromGraph,
   graphPointFromEvent,
+  normalizeBusinessFlowLanes,
   readCellData,
+  rememberManualLaneSize,
   renderBusinessFlowCanvas,
   updateEdgeText,
   updateNodeText,
@@ -64,6 +67,7 @@ export function BusinessFlowEditor({
   const canvasRef = useRef<LocalBusinessFlowCanvas | null>(null)
   const persistTimer = useRef<number | null>(null)
   const renderingRef = useRef(false)
+  const normalizingRef = useRef(false)
   const editorQuery = useBusinessFlowEditorStateQuery(businessFlowId, meta)
   const placeComponentMutation = usePlaceSwimlaneComponentMutation(businessFlowId)
   const applyChangesMutation = useApplyBusinessFlowChangesMutation(businessFlowId)
@@ -151,8 +155,26 @@ export function BusinessFlowEditor({
 
     graph.on('cell:click', ({ cell }) => setSelected(readSelectedBusinessCell(cell)))
     graph.on('blank:click', () => setSelected(null))
-    graph.on('node:moved', schedulePersist)
-    graph.on('node:resized', schedulePersist)
+    graph.on('node:change:position', ({ node }) => {
+      if (renderingRef.current || normalizingRef.current) return
+      if (readCellData(node).cellRole !== 'FLOW_NODE') return
+      const parent = node.getParent()
+      if (!(parent instanceof Node) || readCellData(parent).cellRole !== 'LANE_INSTANCE') return
+      normalizingRef.current = true
+      fitLaneToChildren(parent, { preserveManualSize: true })
+      normalizingRef.current = false
+    })
+    graph.on('node:moved', () => {
+      if (!renderingRef.current) schedulePersist()
+    })
+    graph.on('node:resized', ({ node }) => {
+      if (renderingRef.current || readCellData(node).cellRole !== 'LANE_INSTANCE') return
+      normalizingRef.current = true
+      rememberManualLaneSize(node)
+      fitLaneToChildren(node, { preserveManualSize: true })
+      normalizingRef.current = false
+      schedulePersist()
+    })
     graph.on('edge:connected', ({ edge }) => {
       const data = readCellData(edge)
       edge.setData({
@@ -166,7 +188,13 @@ export function BusinessFlowEditor({
       schedulePersist()
     })
     graph.on('edge:removed', schedulePersist)
-    graph.on('node:removed', schedulePersist)
+    graph.on('node:removed', () => {
+      if (renderingRef.current) return
+      normalizingRef.current = true
+      normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
+      normalizingRef.current = false
+      schedulePersist()
+    })
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       if (target?.closest('input, textarea, [contenteditable="true"]')) return
@@ -489,7 +517,8 @@ function buildBusinessFlowOps(
       prev.position.x !== lane.position.x ||
       prev.position.y !== lane.position.y ||
       prev.size.width !== lane.size.width ||
-      prev.size.height !== lane.size.height
+      prev.size.height !== lane.size.height ||
+      stableJson(prev.layoutJson ?? null) !== stableJson(lane.layoutJson ?? null)
     ) {
       ops.push({
         opType: 'MOVE_LANE_INSTANCE',
@@ -502,6 +531,7 @@ function buildBusinessFlowOps(
             width: lane.size.width,
             height: lane.size.height,
           },
+          layoutJson: lane.layoutJson ?? null,
         },
         summary: `移动泳道：${lane.displayName}`,
       })
@@ -631,6 +661,10 @@ function buildBusinessFlowOps(
     }
   })
   return ops
+}
+
+function stableJson(value: unknown) {
+  return JSON.stringify(value ?? null)
 }
 
 function laneKeyForNode(

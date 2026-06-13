@@ -1,6 +1,7 @@
-import { Edge, Graph, Node, Shape, type Cell, type ValidateConnectionArgs } from '@antv/x6'
+import { Edge, Graph, Node, Shape, Transform, type Cell, type ValidateConnectionArgs } from '@antv/x6'
 import type {
   BusinessFlowEdgeRecord,
+  BusinessFlowJson,
   BusinessFlowNodeRecord,
   BusinessFlowNodeType,
   LocalBusinessFlowCanvas,
@@ -45,14 +46,25 @@ export type FlowCellData = {
   description?: string | null
   actor?: string | null
   businessRule?: string | null
+  layoutJson?: BusinessFlowJson | null
 }
 
 type Point = { x: number; y: number }
 type TerminalData = ReturnType<Edge['getSource']>
 
+export const BUSINESS_FLOW_LANE_LAYOUT = {
+  paddingLeft: 24,
+  paddingRight: 32,
+  headerHeight: 46,
+  paddingBottom: 32,
+  minWidth: 360,
+  minHeight: 360,
+}
+
 const LANE_Z_INDEX_BASE = 10
 const EDGE_Z_INDEX = 200
 const FLOW_NODE_Z_INDEX = 300
+const UNBOUNDED_DRAG_SIZE = 100000
 
 function portGroup(position: 'top' | 'right' | 'bottom' | 'left') {
   return {
@@ -293,6 +305,21 @@ export function createBusinessFlowGraph(container: HTMLElement) {
       minScale: 0.35,
       maxScale: 2.4,
     },
+    translating: {
+      restrict(view) {
+        const cell = view?.cell
+        if (!cell || !cell.isNode() || readCellData(cell).cellRole !== 'FLOW_NODE') return null
+        const parent = cell.getParent()
+        if (!(parent instanceof Node) || readCellData(parent).cellRole !== 'LANE_INSTANCE') return null
+        const parentPosition = parent.position()
+        return {
+          x: parentPosition.x + BUSINESS_FLOW_LANE_LAYOUT.paddingLeft,
+          y: parentPosition.y + BUSINESS_FLOW_LANE_LAYOUT.headerHeight,
+          width: UNBOUNDED_DRAG_SIZE,
+          height: UNBOUNDED_DRAG_SIZE,
+        }
+      },
+    },
     connecting: {
       router: { name: 'manhattan' },
       connector: { name: 'rounded', args: { radius: 8 } },
@@ -324,6 +351,24 @@ export function createBusinessFlowGraph(container: HTMLElement) {
       },
     },
   })
+  graph.use(
+    new Transform({
+      resizing: {
+        enabled(node) {
+          return readCellData(node).cellRole === 'LANE_INSTANCE'
+        },
+        minWidth(node) {
+          return minLaneSize(node).width
+        },
+        minHeight(node) {
+          return minLaneSize(node).height
+        },
+        orthogonal: true,
+        allowReverse: false,
+      },
+      rotating: false,
+    }),
+  )
   return graph
 }
 
@@ -432,6 +477,7 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
 export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlowCanvas) {
   graph.clearCells()
   const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
   canvas.laneInstances.forEach((lane) => {
     graph.addNode({
       id: lane.instanceKey,
@@ -453,13 +499,23 @@ export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlow
         componentId: lane.componentId,
         componentVersionId: lane.componentVersionId,
         title: lane.displayName,
+        layoutJson: lane.layoutJson ?? null,
       } satisfies FlowCellData,
       zIndex: LANE_Z_INDEX_BASE + lane.zIndex,
     })
   })
   canvas.nodes.forEach((node) => {
-    const x6Node = addFlowNode(graph, node)
     const laneKey = laneKeyById.get(node.laneInstanceId)
+    const laneRecord = laneById.get(node.laneInstanceId)
+    const x6Node = addFlowNode(graph, {
+      ...node,
+      position: laneRecord
+        ? {
+            x: laneRecord.position.x + node.position.x,
+            y: laneRecord.position.y + node.position.y,
+          }
+        : node.position,
+    })
     const lane = laneKey ? graph.getCellById(laneKey) : null
     if (lane instanceof Node) {
       lane.addChild(x6Node)
@@ -472,6 +528,7 @@ export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlow
       )
     }
   })
+  normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
   canvas.edges.forEach((edge) => {
     if (!edge.sourceNodeKey || !edge.targetNodeKey) return
     graph.addEdge({
@@ -493,6 +550,71 @@ export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlow
     })
   })
   graph.zoomToFit({ maxScale: 1, minScale: 0.7, padding: 40 })
+}
+
+export function normalizeBusinessFlowLanes(
+  graph: Graph,
+  options: { preserveManualSize?: boolean } = {},
+) {
+  let changed = false
+  graph.getNodes().forEach((node) => {
+    if (readCellData(node).cellRole !== 'LANE_INSTANCE') return
+    changed = fitLaneToChildren(node, options) || changed
+  })
+  return changed
+}
+
+export function fitLaneToChildren(
+  lane: Node,
+  options: { preserveManualSize?: boolean } = {},
+) {
+  const children = flowNodeChildren(lane)
+  const layout = BUSINESS_FLOW_LANE_LAYOUT
+  let changed = false
+  let maxRight = layout.paddingLeft
+  let maxBottom = layout.headerHeight
+
+  children.forEach((child) => {
+    const relativePosition = child.position({ relative: true })
+    const size = child.size()
+    const nextX = Math.max(layout.paddingLeft, relativePosition.x)
+    const nextY = Math.max(layout.headerHeight, relativePosition.y)
+    if (nextX !== relativePosition.x || nextY !== relativePosition.y) {
+      child.position(nextX, nextY, { relative: true })
+      changed = true
+    }
+    maxRight = Math.max(maxRight, nextX + size.width)
+    maxBottom = Math.max(maxBottom, nextY + size.height)
+  })
+
+  const sizePolicy = readLaneSizePolicy(lane)
+  const requiredWidth = Math.max(
+    layout.minWidth,
+    maxRight + layout.paddingRight,
+    options.preserveManualSize ? sizePolicy.manualWidth ?? 0 : 0,
+  )
+  const requiredHeight = Math.max(
+    layout.minHeight,
+    maxBottom + layout.paddingBottom,
+    options.preserveManualSize ? sizePolicy.manualHeight ?? 0 : 0,
+  )
+  const currentSize = lane.size()
+  if (currentSize.width !== requiredWidth || currentSize.height !== requiredHeight) {
+    lane.resize(requiredWidth, requiredHeight)
+    changed = true
+  }
+  return changed
+}
+
+export function rememberManualLaneSize(lane: Node) {
+  const currentSize = lane.size()
+  const minimum = minLaneSize(lane)
+  const manualWidth = Math.max(currentSize.width, minimum.width)
+  const manualHeight = Math.max(currentSize.height, minimum.height)
+  if (manualWidth !== currentSize.width || manualHeight !== currentSize.height) {
+    lane.resize(manualWidth, manualHeight)
+  }
+  setLaneSizePolicy(lane, { manualWidth, manualHeight })
 }
 
 export function componentDraftFromGraph(graph: Graph) {
@@ -567,7 +689,7 @@ export function flowDraftFromGraph(
         position,
         size,
         zIndex: index + 1,
-        layoutJson: null,
+        layoutJson: (data.layoutJson as BusinessFlowJson | null | undefined) ?? null,
         overrideJson: null,
         status: 'ACTIVE' as const,
         createdAt: timestamp,
@@ -581,9 +703,12 @@ export function flowDraftFromGraph(
     .filter((node) => readCellData(node).cellRole === 'FLOW_NODE')
     .map((node) => {
       const data = readCellData(node)
-      const position = node.position()
-      const size = node.size()
       const parent = node.getParent()
+      const position =
+        parent instanceof Node && readCellData(parent).cellRole === 'LANE_INSTANCE'
+          ? node.position({ relative: true })
+          : node.position()
+      const size = node.size()
       const laneKey = data.laneInstanceKey ?? parent?.id
       nodeLaneKey.set(node.id, laneKey)
       return {
@@ -678,6 +803,64 @@ export function updateEdgeText(edge: Edge, label: string) {
 export function readCellData(cell: Cell): Partial<FlowCellData> {
   const data = cell.getData() as Partial<FlowCellData> | null
   return data ?? {}
+}
+
+function flowNodeChildren(lane: Node) {
+  return (
+    lane
+      .getChildren()
+      ?.filter((child): child is Node => child instanceof Node && readCellData(child).cellRole === 'FLOW_NODE') ?? []
+  )
+}
+
+function minLaneSize(lane: Node) {
+  const layout = BUSINESS_FLOW_LANE_LAYOUT
+  let maxRight = layout.paddingLeft
+  let maxBottom = layout.headerHeight
+  flowNodeChildren(lane).forEach((child) => {
+    const position = child.position({ relative: true })
+    const size = child.size()
+    maxRight = Math.max(maxRight, Math.max(layout.paddingLeft, position.x) + size.width)
+    maxBottom = Math.max(maxBottom, Math.max(layout.headerHeight, position.y) + size.height)
+  })
+  return {
+    width: Math.max(layout.minWidth, maxRight + layout.paddingRight),
+    height: Math.max(layout.minHeight, maxBottom + layout.paddingBottom),
+  }
+}
+
+function readLaneSizePolicy(lane: Node): { manualWidth?: number; manualHeight?: number } {
+  const layoutJson = readCellData(lane).layoutJson
+  const sizePolicy =
+    layoutJson && typeof layoutJson === 'object' && 'sizePolicy' in layoutJson
+      ? (layoutJson.sizePolicy as Record<string, unknown>)
+      : null
+  const manualWidth = Number(sizePolicy?.manualWidth)
+  const manualHeight = Number(sizePolicy?.manualHeight)
+  return {
+    manualWidth: Number.isFinite(manualWidth) ? manualWidth : undefined,
+    manualHeight: Number.isFinite(manualHeight) ? manualHeight : undefined,
+  }
+}
+
+function setLaneSizePolicy(
+  lane: Node,
+  policy: { manualWidth?: number; manualHeight?: number },
+) {
+  const data = readCellData(lane)
+  const previousLayoutJson = data.layoutJson ?? {}
+  const previousSizePolicy =
+    'sizePolicy' in previousLayoutJson
+      ? (previousLayoutJson.sizePolicy as Record<string, unknown>)
+      : {}
+  const layoutJson = {
+    ...previousLayoutJson,
+    sizePolicy: {
+      ...previousSizePolicy,
+      ...policy,
+    },
+  }
+  lane.setData({ ...data, layoutJson })
 }
 
 function edgeAttrs(crossLane: boolean) {

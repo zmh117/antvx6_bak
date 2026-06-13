@@ -39,6 +39,14 @@ def _default_product_id() -> UUID:
     return UUID(get_settings().default_product_id)
 
 
+LANE_PADDING_LEFT = 24.0
+LANE_PADDING_RIGHT = 32.0
+LANE_HEADER_HEIGHT = 46.0
+LANE_PADDING_BOTTOM = 32.0
+LANE_MIN_WIDTH = 360.0
+LANE_MIN_HEIGHT = 360.0
+
+
 BUSINESS_FLOW_META_SELECT = """
 WITH lane_counts AS (
     SELECT business_flow_id, COUNT(*) AS lane_instance_count
@@ -333,6 +341,8 @@ def _lane_response(row: dict) -> dict:
         "width": float(row["width"]),
         "height": float(row["height"]),
         "is_overridden": bool((row.get("override_json") or {})),
+        "layout_json": _json_value(row, "layout_json"),
+        "override_json": _json_value(row, "override_json"),
     }
 
 
@@ -477,6 +487,7 @@ def _write_business_flow_snapshot(
     user_id: UUID,
 ) -> None:
     state = _fetch_business_flow_editor_state(cur, business_flow_id)
+    snapshot = state.model_dump(mode="json")
     cur.execute(
         """
         INSERT INTO business_flow_snapshot (
@@ -492,8 +503,8 @@ def _write_business_flow_snapshot(
         (
             business_flow_id,
             version,
-            Jsonb(state.canvas_json),
-            Jsonb(state.semantic_json),
+            Jsonb(snapshot["canvas_json"]),
+            Jsonb(snapshot["semantic_json"]),
             str(user_id),
         ),
     )
@@ -588,6 +599,86 @@ def _node_lane_id(cur, business_flow_id: UUID, node_key: str) -> UUID | None:
     return row["lane_instance_id"] if row else None
 
 
+def _size_policy(layout_json: dict | None) -> dict:
+    size_policy = (layout_json or {}).get("sizePolicy")
+    return size_policy if isinstance(size_policy, dict) else {}
+
+
+def _manual_dimension(size_policy: dict, key: str) -> float | None:
+    value = size_policy.get(key)
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _normalize_business_flow_lane_bounds(cur, business_flow_id: UUID) -> None:
+    cur.execute(
+        """
+        SELECT id, width, height, layout_json
+        FROM business_flow_lane_instance
+        WHERE business_flow_id = %s AND status = 'ACTIVE'
+        FOR UPDATE
+        """,
+        (business_flow_id,),
+    )
+    lanes = cur.fetchall()
+    for lane in lanes:
+        cur.execute(
+            """
+            SELECT id, position_x, position_y, width, height
+            FROM business_flow_node
+            WHERE business_flow_id = %s AND lane_instance_id = %s
+            FOR UPDATE
+            """,
+            (business_flow_id, lane["id"]),
+        )
+        nodes = cur.fetchall()
+        max_right = LANE_PADDING_LEFT
+        max_bottom = LANE_HEADER_HEIGHT
+        for node in nodes:
+            next_x = max(LANE_PADDING_LEFT, float(node["position_x"]))
+            next_y = max(LANE_HEADER_HEIGHT, float(node["position_y"]))
+            if next_x != float(node["position_x"]) or next_y != float(node["position_y"]):
+                cur.execute(
+                    """
+                    UPDATE business_flow_node
+                    SET position_x = %s, position_y = %s, is_overridden = TRUE,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (next_x, next_y, node["id"]),
+                )
+            max_right = max(max_right, next_x + float(node["width"]))
+            max_bottom = max(max_bottom, next_y + float(node["height"]))
+
+        size_policy = _size_policy(lane.get("layout_json") or {})
+        manual_width = _manual_dimension(size_policy, "manualWidth")
+        manual_height = _manual_dimension(size_policy, "manualHeight")
+        required_width = max(
+            LANE_MIN_WIDTH,
+            max_right + LANE_PADDING_RIGHT,
+            manual_width or 0,
+        )
+        required_height = max(
+            LANE_MIN_HEIGHT,
+            max_bottom + LANE_PADDING_BOTTOM,
+            manual_height or 0,
+        )
+        if required_width != float(lane["width"]) or required_height != float(lane["height"]):
+            cur.execute(
+                """
+                UPDATE business_flow_lane_instance
+                SET width = %s, height = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (required_width, required_height, lane["id"]),
+            )
+
+
 def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
     patch = op.patch or {}
     target_key = op.target_key
@@ -606,8 +697,11 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             values["display_name"] = patch["displayName"]
         if "ownerRole" in patch:
             values["owner_role"] = patch["ownerRole"] or None
-        if values:
+        layout_json = patch.get("layoutJson") if isinstance(patch.get("layoutJson"), dict) else None
+        if values or layout_json is not None:
             assignments = [f"{field} = %s" for field in values]
+            if layout_json is not None:
+                assignments.append("layout_json = layout_json || %s::jsonb")
             cur.execute(
                 f"""
                 UPDATE business_flow_lane_instance
@@ -615,7 +709,13 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                     updated_at = NOW()
                 WHERE business_flow_id = %s AND instance_key = %s
                 """,
-                [*values.values(), Jsonb(patch), business_flow_id, target_key],
+                [
+                    *values.values(),
+                    *([Jsonb(layout_json)] if layout_json is not None else []),
+                    Jsonb(patch),
+                    business_flow_id,
+                    target_key,
+                ],
             )
         return
 
@@ -914,6 +1014,8 @@ def place_swimlane_component(
             lane_key = f"lane_{uuid4().hex[:14]}"
             x = float(body.position.get("x", 0))
             y = float(body.position.get("y", 0))
+            min_x = min([float(node["position_x"]) for node in component_nodes], default=0)
+            min_y = min([float(node["position_y"]) for node in component_nodes], default=0)
             max_x = max(
                 [float(node["position_x"]) + float(node["width"]) for node in component_nodes],
                 default=304,
@@ -922,8 +1024,16 @@ def place_swimlane_component(
                 [float(node["position_y"]) + float(node["height"]) for node in component_nodes],
                 default=264,
             )
-            width = max(360, max_x + 56)
-            height = max(360, max_y + 96)
+            content_width = max(0, max_x - min_x)
+            content_height = max(0, max_y - min_y)
+            width = max(LANE_MIN_WIDTH, content_width + LANE_PADDING_LEFT + LANE_PADDING_RIGHT)
+            height = max(LANE_MIN_HEIGHT, content_height + LANE_HEADER_HEIGHT + LANE_PADDING_BOTTOM)
+            layout_json = {
+                "sizePolicy": {
+                    "autoWidth": width,
+                    "autoHeight": height,
+                }
+            }
             cur.execute(
                 """
                 SELECT COALESCE(MAX(z_index), 0) + 1 AS next_z
@@ -938,9 +1048,9 @@ def place_swimlane_component(
                 INSERT INTO business_flow_lane_instance (
                     business_flow_id, instance_key, component_id, component_version_id,
                     display_name, owner_role, position_x, position_y, width, height,
-                    z_index, created_by
+                    z_index, layout_json, created_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -955,6 +1065,7 @@ def place_swimlane_component(
                     width,
                     height,
                     z_index,
+                    Jsonb(layout_json),
                     str(user.id),
                 ),
             )
@@ -987,8 +1098,8 @@ def place_swimlane_component(
                         component_node["business_rule"],
                         component_node["input_summary"],
                         component_node["output_summary"],
-                        x + 24 + float(component_node["position_x"]),
-                        y + 46 + float(component_node["position_y"]),
+                        LANE_PADDING_LEFT + (float(component_node["position_x"]) - min_x),
+                        LANE_HEADER_HEIGHT + (float(component_node["position_y"]) - min_y),
                         float(component_node["width"]),
                         float(component_node["height"]),
                         Jsonb(component_node.get("style_json") or {}),
@@ -1031,6 +1142,7 @@ def place_swimlane_component(
                     ),
                 )
 
+            _normalize_business_flow_lane_bounds(cur, business_flow_id)
             base_version = int(flow["current_version"])
             new_version = base_version + 1
             cur.execute(
@@ -1115,6 +1227,7 @@ def apply_business_flow_changes(
                 )
             for op in body.ops:
                 _apply_business_flow_op(cur, business_flow_id, op)
+            _normalize_business_flow_lane_bounds(cur, business_flow_id)
             new_version = current_version + 1
             summary = f"更新了 {len(body.ops)} 项内容"
             cur.execute(
@@ -1358,6 +1471,7 @@ def restore_business_flow(
                         Jsonb(edge.get("properties_json") or {}),
                     ),
                 )
+            _normalize_business_flow_lane_bounds(cur, business_flow_id)
             base_version = int(flow["current_version"])
             new_version = base_version + 1
             cur.execute(

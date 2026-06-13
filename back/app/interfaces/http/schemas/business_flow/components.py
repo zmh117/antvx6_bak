@@ -162,6 +162,8 @@ class BusinessFlowLaneInstanceDTO(BaseModel):
     height: float = 600
     z_index: int = 0
     is_overridden: bool = False
+    layout_json: dict[str, Any] = Field(default_factory=dict)
+    override_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class BusinessFlowNodeErRefDTO(BaseModel):
