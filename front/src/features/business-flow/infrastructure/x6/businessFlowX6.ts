@@ -309,9 +309,9 @@ export function createBusinessFlowGraph(container: HTMLElement) {
       restrict(view) {
         const cell = view?.cell
         if (!cell || !cell.isNode() || readCellData(cell).cellRole !== 'FLOW_NODE') return null
-        const parent = cell.getParent()
-        if (!(parent instanceof Node) || readCellData(parent).cellRole !== 'LANE_INSTANCE') return null
-        const parentPosition = parent.position()
+        const lane = findFlowNodeLane(cell, view.graph)
+        if (!lane) return null
+        const parentPosition = lane.position()
         return {
           x: parentPosition.x + BUSINESS_FLOW_LANE_LAYOUT.paddingLeft,
           y: parentPosition.y + BUSINESS_FLOW_LANE_LAYOUT.headerHeight,
@@ -516,17 +516,13 @@ export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlow
           }
         : node.position,
     })
-    const lane = laneKey ? graph.getCellById(laneKey) : null
-    if (lane instanceof Node) {
-      lane.addChild(x6Node)
-      x6Node.setData(
-        {
-          ...readCellData(x6Node),
-          laneInstanceKey: laneKey,
-        },
-        { silent: true },
-      )
-    }
+    x6Node.setData(
+      {
+        ...readCellData(x6Node),
+        laneInstanceKey: laneKey,
+      },
+      { silent: true },
+    )
   })
   normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
   canvas.edges.forEach((edge) => {
@@ -563,7 +559,7 @@ export function normalizeBusinessFlowLanes(
   let changed = false
   graph.getNodes().forEach((node) => {
     if (readCellData(node).cellRole !== 'LANE_INSTANCE') return
-    changed = fitLaneToChildren(node, options) || changed
+    changed = fitLaneToChildren(node, { ...options, graph }) || changed
   })
   return changed
 }
@@ -571,29 +567,36 @@ export function normalizeBusinessFlowLanes(
 export function fitLaneToChildren(
   lane: Node,
   options: {
+    graph?: Graph
     preserveManualSize?: boolean
     clampChildren?: boolean
     shrinkToFit?: boolean
   } = {},
 ) {
-  const children = flowNodeChildren(lane)
+  const graph = options.graph ?? graphForNode(lane)
+  const children = graph ? flowNodeChildren(graph, lane) : []
   const layout = BUSINESS_FLOW_LANE_LAYOUT
   let changed = false
   let maxRight = layout.paddingLeft
   let maxBottom = layout.headerHeight
 
   children.forEach((child) => {
-    const relativePosition = child.position({ relative: true })
+    const lanePosition = lane.position()
+    const absolutePosition = child.position()
+    const position = {
+      x: absolutePosition.x - lanePosition.x,
+      y: absolutePosition.y - lanePosition.y,
+    }
     const size = child.size()
     const shouldClampChildren = options.clampChildren ?? true
     const nextX = shouldClampChildren
-      ? Math.max(layout.paddingLeft, relativePosition.x)
-      : relativePosition.x
+      ? Math.max(layout.paddingLeft, position.x)
+      : position.x
     const nextY = shouldClampChildren
-      ? Math.max(layout.headerHeight, relativePosition.y)
-      : relativePosition.y
-    if (nextX !== relativePosition.x || nextY !== relativePosition.y) {
-      child.position(nextX, nextY, { relative: true })
+      ? Math.max(layout.headerHeight, position.y)
+      : position.y
+    if (nextX !== position.x || nextY !== position.y) {
+      child.position(lanePosition.x + nextX, lanePosition.y + nextY)
       changed = true
     }
     maxRight = Math.max(maxRight, nextX + size.width)
@@ -717,19 +720,23 @@ export function flowDraftFromGraph(
       }
     })
   const laneIdByKey = new Map(lanes.map((lane) => [lane.instanceKey, lane.laneInstanceId]))
+  const laneByKey = new Map(lanes.map((lane) => [lane.instanceKey, lane]))
   const nodeLaneKey = new Map<string, string | undefined>()
   const nodes = graph
     .getNodes()
     .filter((node) => readCellData(node).cellRole === 'FLOW_NODE')
     .map((node) => {
       const data = readCellData(node)
-      const parent = node.getParent()
-      const position =
-        parent instanceof Node && readCellData(parent).cellRole === 'LANE_INSTANCE'
-          ? node.position({ relative: true })
-          : node.position()
+      const absolutePosition = node.position()
       const size = node.size()
-      const laneKey = data.laneInstanceKey ?? parent?.id
+      const laneKey = data.laneInstanceKey ?? findLaneKeyByGeometry(graph, node)
+      const lane = laneByKey.get(laneKey ?? '')
+      const position = lane
+        ? {
+            x: absolutePosition.x - lane.position.x,
+            y: absolutePosition.y - lane.position.y,
+          }
+        : absolutePosition
       nodeLaneKey.set(node.id, laneKey)
       return {
         kind: 'BUSINESS_FLOW_NODE' as const,
@@ -825,20 +832,32 @@ export function readCellData(cell: Cell): Partial<FlowCellData> {
   return data ?? {}
 }
 
-function flowNodeChildren(lane: Node) {
-  return (
-    lane
-      .getChildren()
-      ?.filter((child): child is Node => child instanceof Node && readCellData(child).cellRole === 'FLOW_NODE') ?? []
-  )
+function flowNodeChildren(graph: Graph, lane: Node) {
+  const laneKey = readCellData(lane).laneInstanceKey ?? lane.id
+  return graph
+    .getNodes()
+    .filter((child) => readCellData(child).cellRole === 'FLOW_NODE')
+    .filter((child) => readCellData(child).laneInstanceKey === laneKey)
 }
 
 function minLaneSize(lane: Node) {
+  const graph = graphForNode(lane)
   const layout = BUSINESS_FLOW_LANE_LAYOUT
   let maxRight = layout.paddingLeft
   let maxBottom = layout.headerHeight
-  flowNodeChildren(lane).forEach((child) => {
-    const position = child.position({ relative: true })
+  if (!graph) {
+    return {
+      width: layout.minWidth,
+      height: layout.minHeight,
+    }
+  }
+  const lanePosition = lane.position()
+  flowNodeChildren(graph, lane).forEach((child) => {
+    const absolutePosition = child.position()
+    const position = {
+      x: absolutePosition.x - lanePosition.x,
+      y: absolutePosition.y - lanePosition.y,
+    }
     const size = child.size()
     maxRight = Math.max(maxRight, Math.max(layout.paddingLeft, position.x) + size.width)
     maxBottom = Math.max(maxBottom, Math.max(layout.headerHeight, position.y) + size.height)
@@ -847,6 +866,49 @@ function minLaneSize(lane: Node) {
     width: Math.max(layout.minWidth, maxRight + layout.paddingRight),
     height: Math.max(layout.minHeight, maxBottom + layout.paddingBottom),
   }
+}
+
+function graphForNode(node: Node) {
+  return (node.model as { graph?: Graph } | undefined)?.graph
+}
+
+export function findFlowNodeLane(node: Node, graph: Graph) {
+  const laneKey = readCellData(node).laneInstanceKey
+  const lane = laneKey ? graph.getCellById(laneKey) : null
+  return lane instanceof Node && readCellData(lane).cellRole === 'LANE_INSTANCE'
+    ? lane
+    : null
+}
+
+export function moveLaneFlowNodes(graph: Graph, lane: Node, delta: Point) {
+  if (delta.x === 0 && delta.y === 0) return
+  flowNodeChildren(graph, lane).forEach((child) => {
+    const position = child.position()
+    child.position(position.x + delta.x, position.y + delta.y)
+  })
+}
+
+function findLaneKeyByGeometry(graph: Graph, node: Node) {
+  const position = node.position()
+  const size = node.size()
+  const center = {
+    x: position.x + size.width / 2,
+    y: position.y + size.height / 2,
+  }
+  const lane = graph
+    .getNodes()
+    .find((candidate) => {
+      if (readCellData(candidate).cellRole !== 'LANE_INSTANCE') return false
+      const lanePosition = candidate.position()
+      const laneSize = candidate.size()
+      return (
+        center.x >= lanePosition.x &&
+        center.x <= lanePosition.x + laneSize.width &&
+        center.y >= lanePosition.y &&
+        center.y <= lanePosition.y + laneSize.height
+      )
+    })
+  return lane ? readCellData(lane).laneInstanceKey ?? lane.id : undefined
 }
 
 function readLaneSizePolicy(lane: Node): { manualWidth?: number; manualHeight?: number } {

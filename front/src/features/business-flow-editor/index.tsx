@@ -29,9 +29,11 @@ import type {
 } from '@/entities/business-flow'
 import {
   createBusinessFlowGraph,
+  findFlowNodeLane,
   fitLaneToChildren,
   flowDraftFromGraph,
   graphPointFromEvent,
+  moveLaneFlowNodes,
   normalizeBusinessFlowLanes,
   readCellData,
   rememberManualLaneSize,
@@ -71,6 +73,7 @@ export function BusinessFlowEditor({
   const persistQueuedRef = useRef(false)
   const persistCanvasRef = useRef<() => Promise<void>>(async () => {})
   const loadedFlowIdRef = useRef<string | null>(null)
+  const lanePositionRef = useRef(new Map<string, { x: number; y: number }>())
   const renderingRef = useRef(false)
   const normalizingRef = useRef(false)
   const editorQuery = useBusinessFlowEditorStateQuery(businessFlowId, meta)
@@ -135,6 +138,7 @@ export function BusinessFlowEditor({
       renderingRef.current = true
       try {
         renderBusinessFlowCanvas(graph, nextCanvas)
+        syncLanePositionCache(graph, lanePositionRef.current)
         loadedFlowIdRef.current = businessFlowId
       } finally {
         renderingRef.current = false
@@ -228,6 +232,7 @@ export function BusinessFlowEditor({
       renderingRef.current = true
       try {
         renderBusinessFlowCanvas(graph, canvasRef.current)
+        syncLanePositionCache(graph, lanePositionRef.current)
         loadedFlowIdRef.current = businessFlowId
       } finally {
         renderingRef.current = false
@@ -238,22 +243,43 @@ export function BusinessFlowEditor({
       setSelected(readSelectedBusinessCell(cell)),
     )
     graph.on('blank:click', () => setSelected(null))
-    graph.on('node:change:position', ({ node }) => {
+    graph.on('node:change:position', (args) => {
+      const { node } = args as {
+        node: Node
+        current?: { x: number; y: number }
+        previous?: { x: number; y: number }
+      }
       if (renderingRef.current || normalizingRef.current) return
-      if (readCellData(node).cellRole !== 'FLOW_NODE') return
-      const parent = node.getParent()
-      if (
-        !(parent instanceof Node) ||
-        readCellData(parent).cellRole !== 'LANE_INSTANCE'
-      )
+      const role = readCellData(node).cellRole
+      if (role === 'LANE_INSTANCE') {
+        const current = args.current ?? node.position()
+        const previous =
+          args.previous ?? lanePositionRef.current.get(node.id) ?? current
+        lanePositionRef.current.set(node.id, current)
+        const delta = {
+          x: current.x - previous.x,
+          y: current.y - previous.y,
+        }
+        if (delta.x === 0 && delta.y === 0) return
+        normalizingRef.current = true
+        try {
+          graph.batchUpdate(() => {
+            moveLaneFlowNodes(graph, node, delta)
+          })
+        } finally {
+          normalizingRef.current = false
+        }
         return
+      }
+      if (role !== 'FLOW_NODE') return
+      const lane = findFlowNodeLane(node, graph)
+      if (!lane) return
       normalizingRef.current = true
       try {
         graph.batchUpdate(() => {
-          fitLaneToChildren(parent, {
+          fitLaneToChildren(lane, {
             preserveManualSize: true,
             clampChildren: false,
-            shrinkToFit: false,
           })
         })
       } finally {
@@ -263,15 +289,12 @@ export function BusinessFlowEditor({
     graph.on('node:moved', ({ node }) => {
       if (renderingRef.current) return
       if (readCellData(node).cellRole === 'FLOW_NODE') {
-        const parent = node.getParent()
-        if (
-          parent instanceof Node &&
-          readCellData(parent).cellRole === 'LANE_INSTANCE'
-        ) {
+        const lane = findFlowNodeLane(node, graph)
+        if (lane) {
           normalizingRef.current = true
           try {
             graph.batchUpdate(() => {
-              fitLaneToChildren(parent, {
+              fitLaneToChildren(lane, {
                 preserveManualSize: true,
                 clampChildren: true,
               })
@@ -298,6 +321,7 @@ export function BusinessFlowEditor({
       } finally {
         normalizingRef.current = false
       }
+      lanePositionRef.current.set(node.id, node.position())
       schedulePersist()
     })
     graph.on('edge:connected', ({ edge }) => {
@@ -349,6 +373,7 @@ export function BusinessFlowEditor({
       graph.dispose()
       graphRef.current = null
       loadedFlowIdRef.current = null
+      lanePositionRef.current.clear()
     }
   }, [businessFlowId, schedulePersist])
 
@@ -850,6 +875,17 @@ function buildBusinessFlowOps(
 
 function stableJson(value: unknown) {
   return JSON.stringify(value ?? null)
+}
+
+function syncLanePositionCache(
+  graph: Graph,
+  cache: Map<string, { x: number; y: number }>,
+) {
+  cache.clear()
+  graph.getNodes().forEach((node) => {
+    if (readCellData(node).cellRole !== 'LANE_INSTANCE') return
+    cache.set(node.id, node.position())
+  })
 }
 
 function isLayoutOnlyBusinessFlowOps(ops: BusinessFlowChangeOpBody[]) {
