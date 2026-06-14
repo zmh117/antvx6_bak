@@ -73,6 +73,8 @@ export function BusinessFlowEditor({
   const loadedFlowIdRef = useRef<string | null>(null)
   const renderingRef = useRef(false)
   const normalizingRef = useRef(false)
+  const laneDraggingRef = useRef<{ laneId: string } | null>(null)
+  const laneDragReleaseFrameRef = useRef<number | null>(null)
   const editorQuery = useBusinessFlowEditorStateQuery(businessFlowId, meta)
   const placeComponentMutation =
     usePlaceSwimlaneComponentMutation(businessFlowId)
@@ -238,8 +240,18 @@ export function BusinessFlowEditor({
       setSelected(readSelectedBusinessCell(cell)),
     )
     graph.on('blank:click', () => setSelected(null))
+    graph.on('node:moving', ({ node }) => {
+      if (renderingRef.current) return
+      if (readCellData(node).cellRole !== 'LANE_INSTANCE') return
+      if (laneDragReleaseFrameRef.current != null) {
+        window.cancelAnimationFrame(laneDragReleaseFrameRef.current)
+        laneDragReleaseFrameRef.current = null
+      }
+      laneDraggingRef.current = { laneId: node.id }
+    })
     graph.on('node:change:position', ({ node }) => {
       if (renderingRef.current || normalizingRef.current) return
+      if (laneDraggingRef.current) return
       if (readCellData(node).cellRole !== 'FLOW_NODE') return
       const parent = node.getParent()
       if (
@@ -262,7 +274,23 @@ export function BusinessFlowEditor({
     })
     graph.on('node:moved', ({ node }) => {
       if (renderingRef.current) return
-      if (readCellData(node).cellRole === 'FLOW_NODE') {
+      const role = readCellData(node).cellRole
+      if (role === 'LANE_INSTANCE') {
+        if (laneDragReleaseFrameRef.current != null) {
+          window.cancelAnimationFrame(laneDragReleaseFrameRef.current)
+        }
+        laneDraggingRef.current = { laneId: node.id }
+        laneDragReleaseFrameRef.current = window.requestAnimationFrame(() => {
+          laneDragReleaseFrameRef.current = null
+          if (laneDraggingRef.current?.laneId === node.id) {
+            laneDraggingRef.current = null
+          }
+        })
+        schedulePersist()
+        return
+      }
+      if (laneDraggingRef.current) return
+      if (role === 'FLOW_NODE') {
         const parent = node.getParent()
         if (
           parent instanceof Node &&
@@ -345,6 +373,11 @@ export function BusinessFlowEditor({
     return () => {
       if (persistTimer.current != null)
         window.clearTimeout(persistTimer.current)
+      if (laneDragReleaseFrameRef.current != null) {
+        window.cancelAnimationFrame(laneDragReleaseFrameRef.current)
+        laneDragReleaseFrameRef.current = null
+      }
+      laneDraggingRef.current = null
       window.removeEventListener('keydown', handleKeyDown)
       graph.dispose()
       graphRef.current = null
