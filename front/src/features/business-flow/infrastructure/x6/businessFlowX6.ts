@@ -477,82 +477,134 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
   graph.centerContent()
 }
 
+function addLaneInstanceCell(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+  lane: LocalBusinessFlowCanvas['laneInstances'][number],
+) {
+  graph.addNode({
+    id: lane.instanceKey,
+    shape: 'bf-lane',
+    x: lane.position.x,
+    y: lane.position.y,
+    width: lane.size.width,
+    height: lane.size.height,
+    attrs: {
+      label: { text: lane.displayName },
+      owner: { text: lane.ownerRole ?? '' },
+    },
+    data: {
+      boundedContext: 'business-flow',
+      cellRole: 'LANE_INSTANCE',
+      businessFlowId: canvas.businessFlowId,
+      laneInstanceId: lane.laneInstanceId,
+      laneInstanceKey: lane.instanceKey,
+      componentId: lane.componentId,
+      componentVersionId: lane.componentVersionId,
+      title: lane.displayName,
+      layoutJson: lane.layoutJson ?? null,
+    } satisfies FlowCellData,
+    zIndex: LANE_Z_INDEX_BASE + lane.zIndex,
+  })
+}
+
+function addFlowNodeCell(
+  graph: Graph,
+  node: BusinessFlowNodeRecord,
+  laneById: Map<string, LocalBusinessFlowCanvas['laneInstances'][number]>,
+  laneKeyById: Map<string, string>,
+) {
+  const laneKey = laneKeyById.get(node.laneInstanceId)
+  const laneRecord = laneById.get(node.laneInstanceId)
+  const x6Node = addFlowNode(graph, {
+    ...node,
+    position: laneRecord
+      ? {
+          x: laneRecord.position.x + node.position.x,
+          y: laneRecord.position.y + node.position.y,
+        }
+      : node.position,
+  })
+  const lane = laneKey ? graph.getCellById(laneKey) : null
+  if (lane instanceof Node) {
+    lane.addChild(x6Node)
+    x6Node.setData(
+      {
+        ...readCellData(x6Node),
+        laneInstanceKey: laneKey,
+      },
+      { silent: true },
+    )
+  }
+}
+
+function addFlowEdgeCell(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+  edge: LocalBusinessFlowCanvas['edges'][number],
+) {
+  if (!edge.sourceNodeKey || !edge.targetNodeKey) return
+  graph.addEdge({
+    id: edge.edgeKey,
+    source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
+    target: { cell: edge.targetNodeKey, port: edge.targetPort ?? undefined },
+    attrs: edgeAttrs(edge.isCrossLane),
+    labels: edgeLabels(edge.label),
+    data: {
+      boundedContext: 'business-flow',
+      cellRole: 'FLOW_EDGE',
+      businessFlowId: canvas.businessFlowId,
+      laneInstanceId: edge.laneInstanceId ?? undefined,
+      edgeKey: edge.edgeKey,
+      originComponentEdgeKey: edge.originComponentEdgeKey,
+      title: edge.label ?? '',
+    } satisfies FlowCellData,
+    zIndex: EDGE_Z_INDEX,
+  })
+}
+
 export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlowCanvas) {
   graph.clearCells()
   const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
   const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  canvas.laneInstances.forEach((lane) => addLaneInstanceCell(graph, canvas, lane))
+  canvas.nodes.forEach((node) => addFlowNodeCell(graph, node, laneById, laneKeyById))
+  normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
+  canvas.edges.forEach((edge) => addFlowEdgeCell(graph, canvas, edge))
+  graph.zoomToFit({ maxScale: 1, minScale: 0.7, padding: 40 })
+}
+
+/**
+ * 增量挂载画布中尚未渲染的 cell（按 id 去重），不触碰已有 cell 的视图。
+ * 用于放置新泳道等场景，避免对已挂载画布做 clearCells + 全量重建（会在 X6 复用
+ * id 的视图上留下拖动残影）。返回是否有新增。
+ */
+export function addMissingBusinessFlowCells(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+): boolean {
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  let added = false
   canvas.laneInstances.forEach((lane) => {
-    graph.addNode({
-      id: lane.instanceKey,
-      shape: 'bf-lane',
-      x: lane.position.x,
-      y: lane.position.y,
-      width: lane.size.width,
-      height: lane.size.height,
-      attrs: {
-        label: { text: lane.displayName },
-        owner: { text: lane.ownerRole ?? '' },
-      },
-      data: {
-        boundedContext: 'business-flow',
-        cellRole: 'LANE_INSTANCE',
-        businessFlowId: canvas.businessFlowId,
-        laneInstanceId: lane.laneInstanceId,
-        laneInstanceKey: lane.instanceKey,
-        componentId: lane.componentId,
-        componentVersionId: lane.componentVersionId,
-        title: lane.displayName,
-        layoutJson: lane.layoutJson ?? null,
-      } satisfies FlowCellData,
-      zIndex: LANE_Z_INDEX_BASE + lane.zIndex,
-    })
+    if (graph.getCellById(lane.instanceKey)) return
+    addLaneInstanceCell(graph, canvas, lane)
+    added = true
   })
   canvas.nodes.forEach((node) => {
-    const laneKey = laneKeyById.get(node.laneInstanceId)
-    const laneRecord = laneById.get(node.laneInstanceId)
-    const x6Node = addFlowNode(graph, {
-      ...node,
-      position: laneRecord
-        ? {
-            x: laneRecord.position.x + node.position.x,
-            y: laneRecord.position.y + node.position.y,
-          }
-        : node.position,
-    })
-    const lane = laneKey ? graph.getCellById(laneKey) : null
-    if (lane instanceof Node) {
-      lane.addChild(x6Node)
-      x6Node.setData(
-        {
-          ...readCellData(x6Node),
-          laneInstanceKey: laneKey,
-        },
-        { silent: true },
-      )
-    }
+    if (graph.getCellById(node.nodeKey)) return
+    addFlowNodeCell(graph, node, laneById, laneKeyById)
+    added = true
   })
-  normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
+  if (added) {
+    normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
+  }
   canvas.edges.forEach((edge) => {
     if (!edge.sourceNodeKey || !edge.targetNodeKey) return
-    graph.addEdge({
-      id: edge.edgeKey,
-      source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
-      target: { cell: edge.targetNodeKey, port: edge.targetPort ?? undefined },
-      attrs: edgeAttrs(edge.isCrossLane),
-      labels: edgeLabels(edge.label),
-      data: {
-        boundedContext: 'business-flow',
-        cellRole: 'FLOW_EDGE',
-        businessFlowId: canvas.businessFlowId,
-        laneInstanceId: edge.laneInstanceId ?? undefined,
-        edgeKey: edge.edgeKey,
-        originComponentEdgeKey: edge.originComponentEdgeKey,
-        title: edge.label ?? '',
-      } satisfies FlowCellData,
-      zIndex: EDGE_Z_INDEX,
-    })
+    if (graph.getCellById(edge.edgeKey)) return
+    addFlowEdgeCell(graph, canvas, edge)
   })
-  graph.zoomToFit({ maxScale: 1, minScale: 0.7, padding: 40 })
+  return added
 }
 
 export function normalizeBusinessFlowLanes(

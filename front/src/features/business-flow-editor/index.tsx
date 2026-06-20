@@ -28,6 +28,7 @@ import type {
   SwimlaneComponentListItem,
 } from '@/entities/business-flow'
 import {
+  addMissingBusinessFlowCells,
   createBusinessFlowGraph,
   fitLaneToChildren,
   flowDraftFromGraph,
@@ -142,6 +143,32 @@ export function BusinessFlowEditor({
       }
     },
     [businessFlowId, queryClient],
+  )
+
+  // 放置新泳道后只增量挂载新 cell，避免对已挂载画布做 clearCells 全量重建
+  // （否则 X6 会在复用 id 的视图上留下拖动残影）。
+  const appendCanvasIntoGraph = useCallback(
+    (nextCanvas: LocalBusinessFlowCanvas) => {
+      canvasRef.current = nextCanvas
+      setCanvas(nextCanvas)
+      queryClient.setQueryData(
+        businessFlowKeys.editorState(businessFlowId),
+        nextCanvas,
+      )
+      const graph = graphRef.current
+      if (!graph) {
+        loadCanvasIntoGraph(nextCanvas)
+        return
+      }
+      renderingRef.current = true
+      try {
+        addMissingBusinessFlowCells(graph, nextCanvas)
+        loadedFlowIdRef.current = businessFlowId
+      } finally {
+        renderingRef.current = false
+      }
+    },
+    [businessFlowId, loadCanvasIntoGraph, queryClient],
   )
 
   useEffect(() => {
@@ -382,7 +409,7 @@ export function BusinessFlowEditor({
       })
       const refreshed = await editorQuery.refetch()
       if (refreshed.data) {
-        loadCanvasIntoGraph(refreshed.data)
+        appendCanvasIntoGraph(refreshed.data)
       }
       setSaveState('saved')
       setSavedAt(new Date().toLocaleTimeString())
