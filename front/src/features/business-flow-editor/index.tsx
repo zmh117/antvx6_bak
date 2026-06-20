@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Graph, Node } from '@antv/x6'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, GripVertical, Layers3, X } from 'lucide-react'
+import { ArrowLeft, GripVertical, Layers3, Trash2, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,6 +29,7 @@ import type {
 } from '@/entities/business-flow'
 import {
   addMissingBusinessFlowCells,
+  bindBusinessFlowDeleteKeys,
   createBusinessFlowGraph,
   fitLaneToChildren,
   flowDraftFromGraph,
@@ -36,6 +37,7 @@ import {
   normalizeBusinessFlowLanes,
   readCellData,
   rememberManualLaneSize,
+  removeBusinessFlowCells,
   renderBusinessFlowCanvas,
   updateEdgeText,
   updateNodeText,
@@ -123,6 +125,16 @@ export function BusinessFlowEditor({
   useEffect(() => {
     selectedRef.current = selected
   }, [selected])
+
+  const removeSelectedCell = useCallback(() => {
+    const graph = graphRef.current
+    const cell = selectedRef.current?.cell
+    if (!graph || !cell) return
+    const removedCells = removeBusinessFlowCells(graph, [cell])
+    if (!removedCells.length) return
+    setSelected(null)
+    schedulePersistRef.current()
+  }, [])
 
   const loadCanvasIntoGraph = useCallback(
     (nextCanvas: LocalBusinessFlowCanvas) => {
@@ -359,27 +371,17 @@ export function BusinessFlowEditor({
       }
       schedulePersistRef.current()
     })
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
-      if (target?.closest('input, textarea, [contenteditable="true"]')) return
-      if (event.key !== 'Delete' && event.key !== 'Backspace') return
-      const selectedCells = graph.getSelectedCells()
-      if (!selectedCells.length && selectedRef.current?.cell)
-        selectedCells.push(selectedRef.current.cell)
-      if (!selectedCells.length) return
-      event.preventDefault()
-      selectedCells.forEach((cell) => {
-        if (readCellData(cell).cellRole === 'LANE_INSTANCE') return
-        cell.remove()
-      })
-      setSelected(null)
-      schedulePersistRef.current()
-    }
-    window.addEventListener('keydown', handleKeyDown)
+    const unbindDeleteKeys = bindBusinessFlowDeleteKeys(graph, {
+      getFallbackCell: () => selectedRef.current?.cell ?? null,
+      onDeleted: () => {
+        setSelected(null)
+        schedulePersistRef.current()
+      },
+    })
     return () => {
       if (persistTimer.current != null)
         window.clearTimeout(persistTimer.current)
-      window.removeEventListener('keydown', handleKeyDown)
+      unbindDeleteKeys()
       graph.dispose()
       graphRef.current = null
       loadedFlowIdRef.current = null
@@ -487,6 +489,7 @@ export function BusinessFlowEditor({
               selected={selected}
               erGraphs={erGraphOptions}
               onChange={setSelected}
+              onDelete={removeSelectedCell}
               onPersist={schedulePersist}
               onClose={() => {
                 graphRef.current?.cleanSelection()
@@ -589,12 +592,14 @@ function BusinessInspectorDrawer({
   selected,
   erGraphs,
   onChange,
+  onDelete,
   onPersist,
   onClose,
 }: {
   selected: Exclude<SelectedBusinessCell, null>
   erGraphs: ErGraphOption[]
   onChange: (selected: SelectedBusinessCell) => void
+  onDelete: () => void
   onPersist: () => void
   onClose: () => void
 }) {
@@ -604,8 +609,20 @@ function BusinessInspectorDrawer({
       : selected.kind === 'edge'
         ? '连线字段'
         : '节点字段'
+  const action =
+    selected.kind === 'lane' ? null : (
+      <Button
+        type="button"
+        variant="destructive"
+        size="xs"
+        onClick={onDelete}
+      >
+        <Trash2 className="size-3" />
+        删除
+      </Button>
+    )
   return (
-    <BusinessPanelShell title={title} onClose={onClose}>
+    <BusinessPanelShell title={title} action={action} onClose={onClose}>
       <BusinessInspector
         selected={selected}
         erGraphs={erGraphs}
@@ -619,10 +636,12 @@ function BusinessInspectorDrawer({
 function BusinessPanelShell({
   title,
   children,
+  action,
   onClose,
 }: {
   title: string
   children: ReactNode
+  action?: ReactNode
   onClose: () => void
 }) {
   return (
@@ -635,16 +654,19 @@ function BusinessPanelShell({
         <h2 className="text-sm font-semibold tracking-tight text-foreground">
           {title}
         </h2>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 text-muted-foreground hover:text-foreground"
-          onClick={onClose}
-          aria-label="关闭"
-        >
-          <X className="size-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          {action}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
       </header>
       <ScrollArea className="min-h-0 flex-1">
         <section className="space-y-4 p-4">{children}</section>

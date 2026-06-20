@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Graph, type Cell, type Edge } from '@antv/x6'
 import {
   createColumnHelper,
@@ -96,10 +96,12 @@ import {
 } from '@/features/business-flow/domain/localBusinessFlowStore'
 import {
   addComponentNode,
+  bindBusinessFlowDeleteKeys,
   componentDraftFromGraph,
   createBusinessFlowGraph,
   graphPointFromEvent,
   readCellData,
+  removeBusinessFlowCells,
   renderComponentVersion,
   updateEdgeText,
   updateNodeText,
@@ -794,12 +796,26 @@ export function SwimlaneComponentEditorPage({
       ?? getCurrentComponentVersion(component)
     : null
   const [selected, setSelected] = useState<SelectedComponentCell>(null)
+  const selectedRef = useRef<SelectedComponentCell>(null)
   const [savedAt, setSavedAt] = useState<string | null>(null)
+
+  useEffect(() => {
+    selectedRef.current = selected
+  }, [selected])
 
   useEffect(() => {
     setSavedAt(null)
     setSelected(null)
   }, [componentId])
+
+  const removeSelectedCell = useCallback(() => {
+    const graph = graphRef.current
+    const cell = selectedRef.current?.cell
+    if (!graph || !cell) return
+    const removedCells = removeBusinessFlowCells(graph, [cell])
+    if (!removedCells.length) return
+    setSelected(null)
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current || !currentVersion) return
@@ -818,7 +834,12 @@ export function SwimlaneComponentEditorPage({
       })
       setSelected(readSelectedCell(edge))
     })
+    const unbindDeleteKeys = bindBusinessFlowDeleteKeys(graph, {
+      getFallbackCell: () => selectedRef.current?.cell ?? null,
+      onDeleted: () => setSelected(null),
+    })
     return () => {
+      unbindDeleteKeys()
       graph.dispose()
       graphRef.current = null
     }
@@ -943,6 +964,7 @@ export function SwimlaneComponentEditorPage({
             <ComponentInspectorDrawer
               selected={selected}
               onChange={setSelected}
+              onDelete={removeSelectedCell}
               onClose={() => {
                 graphRef.current?.cleanSelection()
                 setSelected(null)
@@ -958,15 +980,28 @@ export function SwimlaneComponentEditorPage({
 function ComponentInspectorDrawer({
   selected,
   onChange,
+  onDelete,
   onClose,
 }: {
   selected: Exclude<SelectedComponentCell, null>
   onChange: (selected: SelectedComponentCell) => void
+  onDelete: () => void
   onClose: () => void
 }) {
   return (
     <ComponentPanelShell
       title={selected.kind === 'edge' ? '连线属性' : '节点属性'}
+      action={
+        <Button
+          type="button"
+          variant="destructive"
+          size="xs"
+          onClick={onDelete}
+        >
+          <Trash2 className="size-3" />
+          删除
+        </Button>
+      }
       onClose={onClose}
     >
       <ComponentInspector selected={selected} onChange={onChange} />
@@ -977,10 +1012,12 @@ function ComponentInspectorDrawer({
 function ComponentPanelShell({
   title,
   children,
+  action,
   onClose,
 }: {
   title: string
   children: ReactNode
+  action?: ReactNode
   onClose: () => void
 }) {
   return (
@@ -991,16 +1028,19 @@ function ComponentPanelShell({
     >
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-3">
         <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 text-muted-foreground hover:text-foreground"
-          onClick={onClose}
-          aria-label="关闭"
-        >
-          <X className="size-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          {action}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
       </header>
       <ScrollArea className="min-h-0 flex-1">
         <section className="space-y-4 p-4">{children}</section>

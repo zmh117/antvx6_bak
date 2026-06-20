@@ -300,7 +300,7 @@ export function createBusinessFlowGraph(container: HTMLElement) {
     autoResize: true,
     background: { color: '#f7f8fb' },
     grid: { visible: true, type: 'dot', args: { color: '#e1e7f0' } },
-    panning: { enabled: true, eventTypes: ['rightMouseDown'] },
+    panning: { enabled: true, eventTypes: ['leftMouseDown', 'rightMouseDown'] },
     mousewheel: {
       enabled: true,
       modifiers: 'ctrl',
@@ -372,6 +372,89 @@ export function createBusinessFlowGraph(container: HTMLElement) {
     }),
   )
   return graph
+}
+
+export function isDeletableBusinessFlowCell(cell: Cell) {
+  const role = readCellData(cell).cellRole
+  return (
+    role === 'FLOW_NODE' ||
+    role === 'FLOW_EDGE' ||
+    role === 'COMPONENT_NODE' ||
+    role === 'COMPONENT_EDGE'
+  )
+}
+
+export function removeBusinessFlowCells(
+  graph: Graph,
+  cells: Cell[],
+  canDelete: (cell: Cell) => boolean = isDeletableBusinessFlowCell,
+) {
+  const removed: Cell[] = []
+  const seen = new Set<string>()
+  const candidates = cells.filter((cell) => {
+    if (seen.has(cell.id)) return false
+    seen.add(cell.id)
+    return canDelete(cell)
+  })
+  if (!candidates.length) return removed
+
+  graph.batchUpdate(() => {
+    candidates.forEach((cell) => {
+      const liveCell = graph.getCellById(cell.id)
+      if (!liveCell) return
+      liveCell.remove()
+      removed.push(liveCell)
+    })
+  })
+  return removed
+}
+
+export function removeSelectedBusinessFlowCells(
+  graph: Graph,
+  options: {
+    getFallbackCell?: () => Cell | null | undefined
+    canDelete?: (cell: Cell) => boolean
+  } = {},
+) {
+  const selectedCells = graph.getSelectedCells()
+  const fallbackCell = options.getFallbackCell?.()
+  if (!selectedCells.length && fallbackCell) selectedCells.push(fallbackCell)
+  return removeBusinessFlowCells(graph, selectedCells, options.canDelete)
+}
+
+export function bindBusinessFlowDeleteKeys(
+  graph: Graph,
+  options: {
+    getFallbackCell?: () => Cell | null | undefined
+    canDelete?: (cell: Cell) => boolean
+    onDeleted?: (cells: Cell[]) => void
+  } = {},
+) {
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (isEditingTarget(event.target)) return
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return
+
+    const removed = removeSelectedBusinessFlowCells(graph, {
+      getFallbackCell: options.getFallbackCell,
+      canDelete: options.canDelete,
+    })
+    if (!removed.length) return
+
+    event.preventDefault()
+    options.onDeleted?.(removed)
+  }
+
+  window.addEventListener('keydown', handleKeyDown)
+  return () => window.removeEventListener('keydown', handleKeyDown)
+}
+
+function isEditingTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false
+  return Boolean(
+    target.closest(
+      'input, textarea, select, [contenteditable="true"], [role="textbox"]',
+    ),
+  )
 }
 
 function allowMultiplePortEdges() {
