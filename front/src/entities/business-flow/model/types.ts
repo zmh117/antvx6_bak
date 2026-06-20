@@ -50,6 +50,7 @@ export type SwimlaneComponentNode = {
   outputSummary?: string | null
   position: CanvasPosition
   size: CanvasSize
+  erRefs?: BusinessFlowNodeErRef[]
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
 }

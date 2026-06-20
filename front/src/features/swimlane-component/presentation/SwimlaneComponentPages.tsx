@@ -78,7 +78,11 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
-import type { BusinessFlowNodeType, SwimlaneComponent } from '@/entities/business-flow'
+import type {
+  BusinessFlowNodeErRef,
+  BusinessFlowNodeType,
+  SwimlaneComponent,
+} from '@/entities/business-flow'
 import {
   useArchiveSwimlaneComponentMutation,
   useCreateSwimlaneComponentMutation,
@@ -88,6 +92,7 @@ import {
   useSwimlaneComponentsQuery,
   useUpdateSwimlaneComponentMutation,
 } from '@/entities/business-flow/api'
+import { useGraphsQuery } from '@/entities/er-graph/api'
 import { useProductsQuery, type ProductMeta } from '@/entities/product'
 import {
   createLocalId,
@@ -106,6 +111,10 @@ import {
   updateEdgeText,
   updateNodeText,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
+import {
+  NodeErBindingEditor,
+  type ErGraphOption,
+} from '@/features/business-flow/presentation/components/NodeErBindingEditor'
 import { formatDateTime } from '@/shared/lib/date'
 import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
 import { EntityTitleCell } from '@/shared/ui/entity-title-cell'
@@ -125,7 +134,15 @@ const NODE_TOOLS: Array<{
 ]
 
 type SelectedComponentCell =
-  | { kind: 'node'; cell: Cell; title: string; description: string; actor: string; businessRule: string }
+  | {
+      kind: 'node'
+      cell: Cell
+      title: string
+      description: string
+      actor: string
+      businessRule: string
+      erRefs: BusinessFlowNodeErRef[]
+    }
   | { kind: 'edge'; cell: Edge; label: string }
   | null
 
@@ -791,6 +808,10 @@ export function SwimlaneComponentEditorPage({
   const saveDraftMutation = useSaveSwimlaneComponentDraftMutation()
   const publishMutation = usePublishSwimlaneComponentVersionMutation()
   const component = componentQuery.data ?? null
+  const erGraphsQuery = useGraphsQuery(component?.productId ?? 'all')
+  const erGraphOptions: ErGraphOption[] = (erGraphsQuery.data ?? []).map(
+    (graph) => ({ id: graph.id, name: graph.name }),
+  )
   const currentVersion = component
     ? component.versions.find((version) => version.status === 'DRAFT')
       ?? getCurrentComponentVersion(component)
@@ -963,6 +984,7 @@ export function SwimlaneComponentEditorPage({
           {selected ? (
             <ComponentInspectorDrawer
               selected={selected}
+              erGraphs={erGraphOptions}
               onChange={setSelected}
               onDelete={removeSelectedCell}
               onClose={() => {
@@ -979,11 +1001,13 @@ export function SwimlaneComponentEditorPage({
 
 function ComponentInspectorDrawer({
   selected,
+  erGraphs,
   onChange,
   onDelete,
   onClose,
 }: {
   selected: Exclude<SelectedComponentCell, null>
+  erGraphs: ErGraphOption[]
   onChange: (selected: SelectedComponentCell) => void
   onDelete: () => void
   onClose: () => void
@@ -1004,7 +1028,7 @@ function ComponentInspectorDrawer({
       }
       onClose={onClose}
     >
-      <ComponentInspector selected={selected} onChange={onChange} />
+      <ComponentInspector selected={selected} erGraphs={erGraphs} onChange={onChange} />
     </ComponentPanelShell>
   )
 }
@@ -1051,9 +1075,11 @@ function ComponentPanelShell({
 
 function ComponentInspector({
   selected,
+  erGraphs,
   onChange,
 }: {
   selected: SelectedComponentCell
+  erGraphs: ErGraphOption[]
   onChange: (selected: SelectedComponentCell) => void
 }) {
   if (!selected) {
@@ -1132,6 +1158,14 @@ function ComponentInspector({
           />
         </Field>
       </FieldGroup>
+      <NodeErBindingEditor
+        erRefs={selected.erRefs}
+        erGraphs={erGraphs}
+        onChange={(erRefs) => {
+          selected.cell.setData({ ...readCellData(selected.cell), erRefs })
+          onChange({ ...selected, erRefs })
+        }}
+      />
     </div>
   )
 }
@@ -1153,6 +1187,7 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       description: data.description ?? '',
       actor: data.actor ?? '',
       businessRule: data.businessRule ?? '',
+      erRefs: data.erRefs ?? [],
     }
   }
   return null

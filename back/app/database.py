@@ -71,5 +71,9 @@ def run_migrations() -> None:
                 migrations_dir / "011_business_flow_collab_revision.sql"
             ).read_text(encoding="utf-8")
             cur.execute(business_flow_collab_revision_sql)
+            swimlane_component_er_refs_sql = (
+                migrations_dir / "012_swimlane_component_node_er_ref.sql"
+            ).read_text(encoding="utf-8")
+            cur.execute(swimlane_component_er_refs_sql)
             database_connection_service.seed_env_target_connection(cur)
         conn.commit()

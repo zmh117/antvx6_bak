@@ -5,6 +5,7 @@ BUSINESS_FLOW_TABLES: tuple[str, ...] = (
     "swimlane_component",
     "swimlane_component_version",
     "swimlane_component_node",
+    "swimlane_component_node_er_ref",
     "swimlane_component_edge",
     "business_flow",
     "business_flow_member",

@@ -2,6 +2,7 @@ import { authHeaders } from '@/entities/auth'
 import { API_BASE, DEFAULT_GRAPH_ID, DEFAULT_PRODUCT_ID } from '@/shared/api/config'
 import type {
   BusinessFlowEdgeRecord,
+  BusinessFlowErRefType,
   BusinessFlowJson,
   BusinessFlowNodeType,
   CanvasPosition,
@@ -95,6 +96,14 @@ type ApiSwimlaneComponentNode = {
   position_y: number
   width: number
   height: number
+  er_refs?: Array<{
+    id?: string
+    er_diagram_id: string
+    er_table_key: string
+    er_column_key?: string | null
+    ref_type: BusinessFlowErRefType
+    description?: string | null
+  }>
   style_json?: BusinessFlowJson | null
   properties_json?: BusinessFlowJson | null
 }
@@ -165,6 +174,14 @@ export type SaveSwimlaneComponentVersionBody = {
     outputSummary?: string | null
     position: CanvasPosition
     size: { width: number; height: number }
+    erRefs?: Array<{
+      id?: string
+      erDiagramId: string
+      erTableKey: string
+      erColumnKey?: string | null
+      refType: BusinessFlowErRefType
+      description?: string | null
+    }>
     styleJson?: BusinessFlowJson | null
     propertiesJson?: BusinessFlowJson | null
   }>
@@ -315,6 +332,14 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     outputSummary: node.output_summary ?? null,
     position: { x: Number(node.position_x), y: Number(node.position_y) },
     size: { width: Number(node.width), height: Number(node.height) },
+    erRefs: (node.er_refs ?? []).map((ref) => ({
+      id: ref.id,
+      erDiagramId: ref.er_diagram_id,
+      erTableKey: ref.er_table_key,
+      erColumnKey: ref.er_column_key ?? null,
+      refType: ref.ref_type,
+      description: ref.description ?? null,
+    })),
     styleJson: node.style_json ?? null,
     propertiesJson: node.properties_json ?? null,
   }
@@ -391,6 +416,14 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
       position_y: node.position.y,
       width: node.size.width,
       height: node.size.height,
+      er_refs: (node.erRefs ?? []).map((ref) => ({
+        id: ref.id,
+        er_diagram_id: ref.erDiagramId,
+        er_table_key: ref.erTableKey,
+        er_column_key: ref.erColumnKey ?? null,
+        ref_type: ref.refType,
+        description: ref.description ?? null,
+      })),
       style_json: node.styleJson ?? {},
       properties_json: node.propertiesJson ?? {},
     })),

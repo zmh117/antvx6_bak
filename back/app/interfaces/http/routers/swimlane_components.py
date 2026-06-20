@@ -48,6 +48,7 @@ def _node_response(row: dict) -> dict:
         "position_y": float(row["position_y"]),
         "width": float(row["width"]),
         "height": float(row["height"]),
+        "er_refs": row.get("er_refs") or [],
         "style_json": row.get("style_json") or {},
         "properties_json": row.get("properties_json") or {},
     }
@@ -60,6 +61,37 @@ def _edge_response(row: dict) -> dict:
         "style_json": row.get("style_json") or {},
         "properties_json": row.get("properties_json") or {},
     }
+
+
+def _component_node_er_refs_by_node_id(
+    cur,
+    node_ids: list[UUID],
+) -> dict[UUID, list[dict]]:
+    if not node_ids:
+        return {}
+    cur.execute(
+        """
+        SELECT id, swimlane_component_node_id, er_diagram_id, er_table_key,
+               er_column_key, ref_type, description
+        FROM swimlane_component_node_er_ref
+        WHERE swimlane_component_node_id = ANY(%s)
+        ORDER BY created_at ASC, er_table_key ASC, er_column_key ASC
+        """,
+        (node_ids,),
+    )
+    refs_by_node_id: dict[UUID, list[dict]] = {}
+    for ref in cur.fetchall():
+        refs_by_node_id.setdefault(ref["swimlane_component_node_id"], []).append(
+            {
+                "id": ref["id"],
+                "er_diagram_id": ref["er_diagram_id"],
+                "er_table_key": ref["er_table_key"],
+                "er_column_key": ref["er_column_key"],
+                "ref_type": ref["ref_type"],
+                "description": ref["description"],
+            }
+        )
+    return refs_by_node_id
 
 
 def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
@@ -104,7 +136,15 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
             """,
             (version["id"],),
         )
-        nodes = [_node_response(row) for row in cur.fetchall()]
+        node_rows = cur.fetchall()
+        refs_by_node_id = _component_node_er_refs_by_node_id(
+            cur,
+            [row["id"] for row in node_rows],
+        )
+        nodes = [
+            _node_response({**row, "er_refs": refs_by_node_id.get(row["id"], [])})
+            for row in node_rows
+        ]
         cur.execute(
             """
             SELECT id, component_version_id, edge_key, source_node_key, target_node_key,
@@ -210,6 +250,7 @@ def _insert_version_payload(
                 position_x, position_y, width, height, style_json, properties_json
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 version_id,
@@ -229,6 +270,27 @@ def _insert_version_payload(
                 Jsonb(node.properties_json),
             ),
         )
+        node_id = cur.fetchone()["id"]
+        for ref in node.er_refs:
+            cur.execute(
+                """
+                INSERT INTO swimlane_component_node_er_ref (
+                    component_version_id, swimlane_component_node_id, er_diagram_id,
+                    er_table_key, er_column_key, ref_type, description, created_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    version_id,
+                    node_id,
+                    ref.er_diagram_id,
+                    ref.er_table_key,
+                    ref.er_column_key,
+                    ref.ref_type,
+                    ref.description,
+                    str(user_id),
+                ),
+            )
     for edge in body.edges:
         cur.execute(
             """
@@ -514,7 +576,7 @@ def publish_swimlane_component_version(
                     )
                 cur.execute(
                     """
-                    SELECT node_key, node_type, title, description, actor, business_rule,
+                    SELECT id, node_key, node_type, title, description, actor, business_rule,
                            input_summary, output_summary, position_x, position_y, width, height,
                            style_json, properties_json
                     FROM swimlane_component_node
@@ -523,18 +585,25 @@ def publish_swimlane_component_version(
                     """,
                     (draft["id"],),
                 )
-                nodes = [
-                    {
-                        **row,
-                        "position_x": float(row["position_x"]),
-                        "position_y": float(row["position_y"]),
-                        "width": float(row["width"]),
-                        "height": float(row["height"]),
-                        "style_json": row.get("style_json") or {},
-                        "properties_json": row.get("properties_json") or {},
-                    }
-                    for row in cur.fetchall()
-                ]
+                node_rows = cur.fetchall()
+                refs_by_node_id = _component_node_er_refs_by_node_id(
+                    cur,
+                    [row["id"] for row in node_rows],
+                )
+                nodes = []
+                for row in node_rows:
+                    nodes.append(
+                        {
+                            **row,
+                            "position_x": float(row["position_x"]),
+                            "position_y": float(row["position_y"]),
+                            "width": float(row["width"]),
+                            "height": float(row["height"]),
+                            "er_refs": refs_by_node_id.get(row["id"], []),
+                            "style_json": row.get("style_json") or {},
+                            "properties_json": row.get("properties_json") or {},
+                        }
+                    )
                 cur.execute(
                     """
                     SELECT edge_key, source_node_key, target_node_key, source_port, target_port,

@@ -2,6 +2,7 @@ import type {
   BusinessFlowEdgeRecord,
   BusinessFlowEdgeType,
   BusinessFlowLaneInstance,
+  BusinessFlowNodeErRef,
   BusinessFlowNodeRecord,
   BusinessFlowNodeType,
   CanvasPosition,
@@ -31,6 +32,7 @@ export type ComponentEditorNodeDraft = {
   description?: string | null
   actor?: string | null
   businessRule?: string | null
+  erRefs?: BusinessFlowNodeErRef[]
   position: CanvasPosition
   size: CanvasSize
 }
@@ -106,6 +108,7 @@ function makeComponentNode(
     businessRule: null,
     inputSummary: null,
     outputSummary: null,
+    erRefs: [],
     position,
     size,
     styleJson: null,
@@ -460,6 +463,7 @@ export function saveSwimlaneComponentVersion(
         businessRule: node.businessRule ?? null,
         inputSummary: null,
         outputSummary: null,
+        erRefs: node.erRefs ?? [],
         position: node.position,
         size: node.size,
         styleJson: null,
@@ -631,7 +635,7 @@ export function placeSwimlaneComponent(
       description: node.description,
       actor: node.actor,
       businessRule: node.businessRule,
-      erRefs: [],
+      erRefs: node.erRefs ?? [],
       position: {
         x: position.x + 24 + node.position.x,
         y: position.y + 46 + node.position.y,

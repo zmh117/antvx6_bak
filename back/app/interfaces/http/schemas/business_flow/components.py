@@ -18,6 +18,15 @@ class SwimlaneComponentListItemDTO(BaseModel):
     thumbnail_url: str | None = None
 
 
+class BusinessFlowNodeErRefDTO(BaseModel):
+    id: UUID | None = None
+    er_diagram_id: UUID
+    er_table_key: str
+    er_column_key: str | None = None
+    ref_type: str = "READ"
+    description: str | None = None
+
+
 class SwimlaneComponentNodeDTO(BaseModel):
     id: UUID
     component_version_id: UUID
@@ -33,6 +42,7 @@ class SwimlaneComponentNodeDTO(BaseModel):
     position_y: float = 0
     width: float = 120
     height: float = 60
+    er_refs: list[BusinessFlowNodeErRefDTO] = Field(default_factory=list)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -117,6 +127,7 @@ class SwimlaneComponentNodeInput(BaseModel):
     position_y: float = 0
     width: float = 120
     height: float = 60
+    er_refs: list[BusinessFlowNodeErRefDTO] = Field(default_factory=list)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -164,15 +175,6 @@ class BusinessFlowLaneInstanceDTO(BaseModel):
     is_overridden: bool = False
     layout_json: dict[str, Any] = Field(default_factory=dict)
     override_json: dict[str, Any] = Field(default_factory=dict)
-
-
-class BusinessFlowNodeErRefDTO(BaseModel):
-    id: UUID | None = None
-    er_diagram_id: UUID
-    er_table_key: str
-    er_column_key: str | None = None
-    ref_type: str = "READ"
-    description: str | None = None
 
 
 class BusinessFlowNodeDTO(BaseModel):

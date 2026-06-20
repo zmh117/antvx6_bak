@@ -504,6 +504,7 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       description: draft.description ?? null,
       actor: draft.actor ?? null,
       businessRule: draft.businessRule ?? null,
+      erRefs: draft.erRefs ?? [],
     } satisfies FlowCellData,
     zIndex: FLOW_NODE_Z_INDEX,
   })
@@ -790,6 +791,7 @@ export function componentDraftFromGraph(graph: Graph) {
         description: data.description ?? null,
         actor: data.actor ?? null,
         businessRule: data.businessRule ?? null,
+        erRefs: data.erRefs ?? [],
         position,
         size,
       }

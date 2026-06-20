@@ -74,6 +74,7 @@ class SwimlaneComponentNode:
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
+    er_refs: list[ErReference] = field(default_factory=list)
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
 

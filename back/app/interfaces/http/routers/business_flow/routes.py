@@ -988,7 +988,7 @@ def place_swimlane_component(
 
             cur.execute(
                 """
-                SELECT node_key, node_type, title, description, actor, business_rule,
+                SELECT id, node_key, node_type, title, description, actor, business_rule,
                        input_summary, output_summary, position_x, position_y, width, height,
                        style_json, properties_json
                 FROM swimlane_component_node
@@ -998,6 +998,23 @@ def place_swimlane_component(
                 (body.component_version_id,),
             )
             component_nodes = cur.fetchall()
+            refs_by_component_node_id: dict[UUID, list[dict]] = {}
+            if component_nodes:
+                cur.execute(
+                    """
+                    SELECT swimlane_component_node_id, er_diagram_id, er_table_key,
+                           er_column_key, ref_type, description
+                    FROM swimlane_component_node_er_ref
+                    WHERE swimlane_component_node_id = ANY(%s)
+                    ORDER BY created_at ASC, er_table_key ASC, er_column_key ASC
+                    """,
+                    ([node["id"] for node in component_nodes],),
+                )
+                for ref in cur.fetchall():
+                    refs_by_component_node_id.setdefault(
+                        ref["swimlane_component_node_id"],
+                        [],
+                    ).append(ref)
             cur.execute(
                 """
                 SELECT edge_key, source_node_key, target_node_key, source_port, target_port,
@@ -1106,7 +1123,28 @@ def place_swimlane_component(
                         Jsonb(component_node.get("properties_json") or {}),
                     ),
                 )
-                node_id_map[component_node["node_key"]] = cur.fetchone()["id"]
+                node_id = cur.fetchone()["id"]
+                node_id_map[component_node["node_key"]] = node_id
+                for ref in refs_by_component_node_id.get(component_node["id"], []):
+                    cur.execute(
+                        """
+                        INSERT INTO business_flow_node_er_ref (
+                            business_flow_id, business_flow_node_id, er_diagram_id,
+                            er_table_key, er_column_key, ref_type, description, created_by
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            business_flow_id,
+                            node_id,
+                            ref["er_diagram_id"],
+                            ref["er_table_key"],
+                            ref["er_column_key"],
+                            ref["ref_type"],
+                            ref["description"],
+                            str(user.id),
+                        ),
+                    )
             for component_edge in component_edges:
                 source_node_key = node_key_map.get(component_edge["source_node_key"])
                 target_node_key = node_key_map.get(component_edge["target_node_key"])
