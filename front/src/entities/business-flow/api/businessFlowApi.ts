@@ -244,6 +244,7 @@ type ApiBusinessFlowNode = {
   height: number
   is_overridden: boolean
   er_refs?: Array<{
+    id: string
     er_diagram_id: string
     er_table_key: string
     er_column_key?: string | null
@@ -456,6 +457,7 @@ function normalizeBusinessFlowEditorState(
       actor: node.actor ?? null,
       businessRule: node.business_rule ?? null,
       erRefs: (node.er_refs ?? []).map((ref) => ({
+        id: ref.id,
         erDiagramId: ref.er_diagram_id,
         erTableKey: ref.er_table_key,
         erColumnKey: ref.er_column_key ?? null,

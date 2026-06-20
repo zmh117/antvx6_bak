@@ -2,6 +2,7 @@ import { Edge, Graph, Node, Shape, Transform, type Cell, type ValidateConnection
 import type {
   BusinessFlowEdgeRecord,
   BusinessFlowJson,
+  BusinessFlowNodeErRef,
   BusinessFlowNodeRecord,
   BusinessFlowNodeType,
   LocalBusinessFlowCanvas,
@@ -46,6 +47,7 @@ export type FlowCellData = {
   description?: string | null
   actor?: string | null
   businessRule?: string | null
+  erRefs?: BusinessFlowNodeErRef[]
   layoutJson?: BusinessFlowJson | null
 }
 
@@ -447,6 +449,7 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       description: record.description ?? null,
       actor: record.actor ?? null,
       businessRule: record.businessRule ?? null,
+      erRefs: record.erRefs ?? [],
     } satisfies FlowCellData,
     zIndex: FLOW_NODE_Z_INDEX,
   })
@@ -743,7 +746,7 @@ export function flowDraftFromGraph(
         description: data.description ?? null,
         actor: data.actor ?? null,
         businessRule: data.businessRule ?? null,
-        erRefs: [],
+        erRefs: data.erRefs ?? [],
         position,
         size,
         inputSummary: null,

@@ -30,7 +30,10 @@ from app.interfaces.http.schemas.graph import (
     SyncFullRequest,
     SyncResponse,
 )
-from app.services.agent import build_agent_context
+from app.application.business_flow.queries import (
+    GetAgentContextQuery,
+    handle_get_agent_context,
+)
 from app.services.auth import (
     AuthenticatedUser,
     ensure_graph_role,
@@ -590,7 +593,9 @@ def agent_context(
         with conn.cursor() as cur:
             ensure_graph_role(cur, graph_id, user.id, "viewer")
             try:
-                data = build_agent_context(cur, graph_id, q)
+                data = handle_get_agent_context(
+                    cur, GetAgentContextQuery(graph_id=graph_id, query=q)
+                )
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
     return AgentContextResponse(

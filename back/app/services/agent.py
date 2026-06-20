@@ -1,49 +1,28 @@
-"""Agent retrieval index and validation helpers."""
+"""Agent retrieval index and validation helpers.
+
+历史检索/校验入口，现已收敛到 DDD：
+- 上下文组装委托给 ``app.application.agent_context_service``。
+- 业务图文档（legacy 与泳道）统一写入 ``er_search_document``，与 ER 检索层一致。
+本模块仅保留检索索引重建、校验，以及向后兼容的薄封装。
+"""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from uuid import UUID
 
 import psycopg
-from psycopg.types.json import Jsonb
 
-RELATION_TYPE_LABELS = {
-    "identifier_match": "标识匹配",
-    "ownership": "归属关系",
-    "lookup": "码值/维表映射",
-    "same_meaning": "同义字段",
-    "hierarchy": "层级关系",
-    "derived": "派生关系",
-    "business_process": "业务流程关联",
-    "semantic_related": "语义相关",
-    "logical_relation": "逻辑关系",
-    "foreign_key": "外键关系",
-    "business_relation": "业务关系",
-    "lookup_relation": "查询关系",
-    "derived_relation": "派生关系",
-    "unknown": "未知",
-}
-
-MATCH_OPERATOR_LABELS = {
-    "eq": "等于",
-    "contains": "包含",
-    "included_in": "被包含",
-    "prefix_match": "前缀匹配",
-    "pattern_match": "模式匹配",
-    "range_match": "区间匹配",
-    "mapping": "映射转换",
-    "semantic_match": "语义适配",
-}
-
-
-def _relation_type_label(value: str | None) -> str:
-    return RELATION_TYPE_LABELS.get(value or "", value or "标识匹配")
-
-
-def _match_operator_label(value: str | None) -> str:
-    return MATCH_OPERATOR_LABELS.get(value or "", value or "等于")
+from app.application.agent_context_service import (
+    agent_context_service,
+    fetch_business_flow_documents,
+    legacy_binding_doc_from_row,
+    legacy_flow_doc_from_row,
+    swimlane_binding_doc_from_row,
+    swimlane_flow_doc_from_row,
+)
+from app.infrastructure.db.repositories import agent_context_repository as repo
+from app.services.agent_labels import match_operator_label, relation_type_label
 
 
 def run_validation(cur: psycopg.Cursor, graph_id: UUID) -> list[str]:
@@ -84,6 +63,95 @@ def run_validation(cur: psycopg.Cursor, graph_id: UUID) -> list[str]:
     return warnings
 
 
+def _insert_search_document(
+    cur: psycopg.Cursor,
+    graph_id: UUID,
+    *,
+    doc_key: str,
+    doc_type: str,
+    title: str,
+    content: str,
+    ref_table_key: str | None = None,
+    ref_column_key: str | None = None,
+    ref_relation_key: str | None = None,
+    tags: list[str] | None = None,
+) -> None:
+    cur.execute(
+        """
+        INSERT INTO er_search_document (
+            graph_id, doc_key, doc_type, ref_table_key, ref_column_key,
+            ref_relation_key, title, content, tags
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            graph_id,
+            doc_key,
+            doc_type,
+            ref_table_key,
+            ref_column_key,
+            ref_relation_key,
+            title,
+            content,
+            tags or [],
+        ),
+    )
+
+
+def _index_business_flow_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
+    """把业务图（legacy er_business_flow 与泳道 business_flow）写入检索文档层。"""
+    legacy_flows = repo.fetch_legacy_business_flow_rows(cur, graph_id)
+    legacy_bindings = repo.fetch_legacy_business_flow_bindings(
+        cur, graph_id, [flow["flow_key"] for flow in legacy_flows]
+    )
+    for flow in legacy_flows:
+        doc = legacy_flow_doc_from_row(flow)
+        _insert_search_document(
+            cur,
+            graph_id,
+            doc_key=f"business_flow:{flow['flow_key']}",
+            doc_type="business_flow",
+            title=doc["title"],
+            content=doc["content"],
+        )
+        for binding in legacy_bindings.get(flow["flow_key"], []):
+            binding_doc = legacy_binding_doc_from_row(flow, binding)
+            _insert_search_document(
+                cur,
+                graph_id,
+                doc_key=f"business_flow_binding:{flow['flow_key']}:{binding['step_key']}",
+                doc_type="business_flow_binding",
+                title=binding_doc["title"],
+                content=binding_doc["content"],
+                ref_table_key=binding_doc.get("ref_table_key"),
+                ref_column_key=binding_doc.get("ref_column_key"),
+                ref_relation_key=binding_doc.get("ref_relation_key"),
+            )
+
+    for flow in repo.fetch_swimlane_business_flow_rows(cur, graph_id):
+        doc = swimlane_flow_doc_from_row(cur, flow)
+        _insert_search_document(
+            cur,
+            graph_id,
+            doc_key=f"swimlane_business_flow:{flow['id']}",
+            doc_type="business_flow",
+            title=doc["title"],
+            content=doc["content"],
+        )
+        for ref in repo.fetch_swimlane_flow_er_refs(cur, flow["id"]):
+            binding_doc = swimlane_binding_doc_from_row(flow, ref)
+            _insert_search_document(
+                cur,
+                graph_id,
+                doc_key=f"swimlane_business_flow_binding:{flow['id']}:{ref['node_key']}:{ref['id']}",
+                doc_type="business_flow_binding",
+                title=binding_doc["title"],
+                content=binding_doc["content"],
+                ref_table_key=binding_doc.get("ref_table_key"),
+                ref_column_key=binding_doc.get("ref_column_key"),
+            )
+
+
 def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
     cur.execute("DELETE FROM er_search_document WHERE graph_id = %s", (graph_id,))
 
@@ -104,12 +172,15 @@ def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
                 ],
             )
         )
-        cur.execute(
-            """
-            INSERT INTO er_search_document (graph_id, doc_key, doc_type, ref_table_key, title, content, tags)
-            VALUES (%s, %s, 'table', %s, %s, %s, %s)
-            """,
-            (graph_id, f"table:{t['table_key']}", t["table_key"], title, content, t.get("tags") or []),
+        _insert_search_document(
+            cur,
+            graph_id,
+            doc_key=f"table:{t['table_key']}",
+            doc_type="table",
+            title=title,
+            content=content,
+            ref_table_key=t["table_key"],
+            tags=t.get("tags") or [],
         )
 
     cur.execute(
@@ -151,12 +222,15 @@ def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
                 ],
             )
         )
-        cur.execute(
-            """
-            INSERT INTO er_search_document (graph_id, doc_key, doc_type, ref_table_key, ref_column_key, title, content)
-            VALUES (%s, %s, 'column', %s, %s, %s, %s)
-            """,
-            (graph_id, f"column:{title}", c["table_key"], c["column_key"], title, content),
+        _insert_search_document(
+            cur,
+            graph_id,
+            doc_key=f"column:{title}",
+            doc_type="column",
+            title=title,
+            content=content,
+            ref_table_key=c["table_key"],
+            ref_column_key=c["column_key"],
         )
 
     cur.execute(
@@ -170,12 +244,15 @@ def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
     for e in cur.fetchall():
         doc_key = f"enum:{e['table_key']}.{e['column_key']}:{e['value']}"
         content = f"{e['value']} = {e['label']}" + (f"（{e['description']}）" if e.get("description") else "")
-        cur.execute(
-            """
-            INSERT INTO er_search_document (graph_id, doc_key, doc_type, ref_table_key, ref_column_key, title, content)
-            VALUES (%s, %s, 'enum', %s, %s, %s, %s)
-            """,
-            (graph_id, doc_key, e["table_key"], e["column_key"], doc_key, content),
+        _insert_search_document(
+            cur,
+            graph_id,
+            doc_key=doc_key,
+            doc_type="enum",
+            title=doc_key,
+            content=content,
+            ref_table_key=e["table_key"],
+            ref_column_key=e["column_key"],
         )
 
     cur.execute(
@@ -193,8 +270,8 @@ def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
                 None,
                 [
                     f"逻辑关联 {r['source_table_key']}.{r['source_column_key']} -> {r['target_table_key']}.{r['target_column_key']}",
-                    f"业务关系 {_relation_type_label(r.get('relation_type'))}",
-                    f"匹配方式 {_match_operator_label(r.get('match_operator'))}",
+                    f"业务关系 {relation_type_label(r.get('relation_type'))}",
+                    f"匹配方式 {match_operator_label(r.get('match_operator'))}",
                     f"条件 {r.get('join_condition') or ''}",
                     f"说明 {r.get('description') or ''}",
                     f"置信度 {r.get('confidence')}",
@@ -202,379 +279,23 @@ def rebuild_search_documents(cur: psycopg.Cursor, graph_id: UUID) -> None:
                 ],
             )
         )
-        cur.execute(
-            """
-            INSERT INTO er_search_document (graph_id, doc_key, doc_type, ref_relation_key, title, content)
-            VALUES (%s, %s, 'relation', %s, %s, %s)
-            """,
-            (graph_id, f"relation:{title}", r["relation_key"], title, content),
+        _insert_search_document(
+            cur,
+            graph_id,
+            doc_key=f"relation:{title}",
+            doc_type="relation",
+            title=title,
+            content=content,
+            ref_relation_key=r["relation_key"],
         )
 
-
-def _normalize_agent_query(query: str | None) -> str | None:
-    if not query:
-        return None
-    q = query.strip()
-    if len(q) >= 2 and q[0] == q[-1] and q[0] in "'\"":
-        q = q[1:-1].strip()
-    return q or None
-
-
-def _relation_doc_from_row(r: dict[str, Any]) -> dict[str, Any]:
-    title = r["relation_key"]
-    content = "\n".join(
-        filter(
-            None,
-            [
-                f"逻辑关联 {r['source_table_key']}.{r['source_column_key']} -> {r['target_table_key']}.{r['target_column_key']}",
-                f"业务关系 {_relation_type_label(r.get('relation_type'))}",
-                f"匹配方式 {_match_operator_label(r.get('match_operator'))}",
-                f"条件 {r.get('join_condition') or ''}",
-                f"说明 {r.get('description') or ''}",
-                f"置信度 {r.get('confidence')}",
-                "已校验" if r.get("verified") else "未校验",
-            ],
-        )
-    )
-    return {
-        "doc_type": "relation",
-        "title": title,
-        "content": content,
-        "ref_table_key": None,
-        "ref_column_key": None,
-        "ref_relation_key": r["relation_key"],
-        "join_condition": r.get("join_condition"),
-        "relation_type": r.get("relation_type"),
-        "match_operator": r.get("match_operator"),
-        "relationship": r.get("relationship"),
-        "confidence": r.get("confidence"),
-        "verified": r.get("verified"),
-    }
-
-
-def _fetch_relations_for_column(
-    cur: psycopg.Cursor, graph_id: UUID, table_key: str, column_key: str
-) -> list[dict[str, Any]]:
-    cur.execute(
-        """
-        SELECT relation_key, source_table_key, source_column_key, target_table_key, target_column_key,
-               relation_type, match_operator, relationship, join_condition, description, confidence, verified
-        FROM er_relation
-        WHERE graph_id = %s AND deleted_at IS NULL
-          AND (
-            (source_table_key = %s AND source_column_key = %s)
-            OR (target_table_key = %s AND target_column_key = %s)
-          )
-        ORDER BY relation_key
-        """,
-        (graph_id, table_key, column_key, table_key, column_key),
-    )
-    return [_relation_doc_from_row(dict(r)) for r in cur.fetchall()]
-
-
-def _fetch_relations_by_keys(
-    cur: psycopg.Cursor, graph_id: UUID, relation_keys: list[str]
-) -> list[dict[str, Any]]:
-    if not relation_keys:
-        return []
-    cur.execute(
-        """
-        SELECT relation_key, source_table_key, source_column_key, target_table_key, target_column_key,
-               relation_type, match_operator, relationship, join_condition, description, confidence, verified
-        FROM er_relation
-        WHERE graph_id = %s AND deleted_at IS NULL AND relation_key = ANY(%s)
-        ORDER BY relation_key
-        """,
-        (graph_id, relation_keys),
-    )
-    return [_relation_doc_from_row(dict(r)) for r in cur.fetchall()]
-
-
-def _enrich_relation_documents(
-    cur: psycopg.Cursor, graph_id: UUID, docs: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    relation_keys = [
-        str(doc["ref_relation_key"])
-        for doc in docs
-        if doc.get("doc_type") == "relation" and doc.get("ref_relation_key")
-    ]
-    full_docs = {
-        doc["ref_relation_key"]: doc
-        for doc in _fetch_relations_by_keys(cur, graph_id, relation_keys)
-    }
-    return [
-        full_docs.get(doc.get("ref_relation_key"), doc)
-        if doc.get("doc_type") == "relation"
-        else doc
-        for doc in docs
-    ]
-
-
-def _node_label(node: dict[str, Any]) -> str:
-    data = node.get("data") if isinstance(node.get("data"), dict) else {}
-    for key in ("label", "name", "title"):
-        value = data.get(key) or node.get(key)
-        if value:
-            return str(value)
-    return str(node.get("id") or node.get("key") or "未命名步骤")
-
-
-def _flow_doc_from_row(row: dict[str, Any]) -> dict[str, Any]:
-    flow_json = row.get("flow_json") or {}
-    nodes = flow_json.get("nodes") or []
-    edges = flow_json.get("edges") or []
-    step_lines = [
-        f"- {node.get('id') or node.get('key')}: {_node_label(node)}"
-        for node in nodes
-        if isinstance(node, dict)
-    ]
-    content = "\n".join(
-        filter(
-            None,
-            [
-                f"业务流程 {row['flow_key']}：{row['name']}",
-                f"说明：{row.get('description') or ''}",
-                f"步骤数：{len(nodes)}，连线数：{len(edges)}",
-                "步骤：\n" + "\n".join(step_lines) if step_lines else "",
-            ],
-        )
-    )
-    return {
-        "doc_type": "business_flow",
-        "title": row["name"],
-        "content": content,
-        "ref_flow_key": row["flow_key"],
-        "ref_table_key": None,
-        "ref_column_key": None,
-        "ref_relation_key": None,
-    }
-
-
-def _binding_doc_from_row(flow: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:
-    target = binding.get("relation_key")
-    if not target and binding.get("table_key"):
-        target = binding["table_key"]
-        if binding.get("column_key"):
-            target = f"{target}.{binding['column_key']}"
-    content = "\n".join(
-        filter(
-            None,
-            [
-                f"流程绑定 {flow['name']} / {binding['step_key']}",
-                f"用途：{binding.get('usage_type') or 'read'}",
-                f"目标：{target or ''}",
-                f"说明：{binding.get('description') or ''}",
-            ],
-        )
-    )
-    return {
-        "doc_type": "business_flow_binding",
-        "title": f"{flow['name']}:{binding['step_key']}",
-        "content": content,
-        "ref_flow_key": flow["flow_key"],
-        "ref_step_key": binding["step_key"],
-        "ref_table_key": binding.get("table_key"),
-        "ref_column_key": binding.get("column_key"),
-        "ref_relation_key": binding.get("relation_key"),
-        "usage_type": binding.get("usage_type") or "read",
-    }
-
-
-def _fetch_business_flow_documents(
-    cur: psycopg.Cursor,
-    graph_id: UUID,
-    query: str | None,
-    er_docs: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    cur.execute(
-        """
-        SELECT graph_id, flow_key, name, description, flow_json, version
-        FROM er_business_flow
-        WHERE graph_id = %s AND deleted_at IS NULL
-        ORDER BY name
-        """,
-        (graph_id,),
-    )
-    flows = [dict(r) for r in cur.fetchall()]
-    if not flows:
-        return []
-
-    flow_keys = [f["flow_key"] for f in flows]
-    cur.execute(
-        """
-        SELECT flow_key, binding_key, step_key, table_key, column_key,
-               relation_key, usage_type, description
-        FROM er_business_flow_er_binding
-        WHERE graph_id = %s AND deleted_at IS NULL AND flow_key = ANY(%s)
-        ORDER BY flow_key, binding_key
-        """,
-        (graph_id, flow_keys),
-    )
-    bindings_by_flow: dict[str, list[dict[str, Any]]] = {}
-    for row in cur.fetchall():
-        bindings_by_flow.setdefault(row["flow_key"], []).append(dict(row))
-
-    related_tables = {doc.get("ref_table_key") for doc in er_docs if doc.get("ref_table_key")}
-    related_columns = {
-        (doc.get("ref_table_key"), doc.get("ref_column_key"))
-        for doc in er_docs
-        if doc.get("ref_table_key") and doc.get("ref_column_key")
-    }
-    related_relations = {
-        doc.get("ref_relation_key") for doc in er_docs if doc.get("ref_relation_key")
-    }
-    q = query.casefold() if query else None
-
-    docs: list[dict[str, Any]] = []
-    for flow in flows:
-        bindings = bindings_by_flow.get(flow["flow_key"], [])
-        searchable = json.dumps(
-            {
-                "flow_key": flow["flow_key"],
-                "name": flow["name"],
-                "description": flow.get("description"),
-                "flow_json": flow.get("flow_json") or {},
-                "bindings": bindings,
-            },
-            ensure_ascii=False,
-            default=str,
-        ).casefold()
-        matched_by_query = bool(q and q in searchable)
-        matched_by_ref = any(
-            b.get("relation_key") in related_relations
-            or b.get("table_key") in related_tables
-            or (b.get("table_key"), b.get("column_key")) in related_columns
-            for b in bindings
-        )
-        if query and not matched_by_query and not matched_by_ref:
-            continue
-
-        docs.append(_flow_doc_from_row(flow))
-        docs.extend(_binding_doc_from_row(flow, binding) for binding in bindings)
-
-    return docs
-
-
-def _merge_documents(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    merged: list[dict[str, Any]] = []
-    for doc in docs:
-        doc_type = doc.get("doc_type")
-        if doc_type == "business_flow_binding":
-            key = f"{doc.get('ref_flow_key')}:{doc.get('ref_step_key')}:{doc.get('title')}"
-        elif doc_type == "business_flow":
-            key = doc.get("ref_flow_key") or doc.get("title") or ""
-        elif doc.get("ref_relation_key"):
-            key = doc["ref_relation_key"]
-        elif doc.get("ref_table_key") and doc.get("ref_column_key"):
-            key = f"{doc['ref_table_key']}.{doc['ref_column_key']}"
-        else:
-            key = doc.get("title") or ""
-        dedupe = f"{doc_type}:{key}"
-        if dedupe in seen:
-            continue
-        seen.add(dedupe)
-        merged.append(doc)
-    return merged
+    _index_business_flow_documents(cur, graph_id)
 
 
 def build_agent_context(cur: psycopg.Cursor, graph_id: UUID, query: str | None = None) -> dict[str, Any]:
-    cur.execute("SELECT version FROM er_graph WHERE id = %s", (graph_id,))
-    g = cur.fetchone()
-    if not g:
-        raise ValueError("graph not found")
+    """向后兼容入口，委托给 DDD 应用服务。"""
+    return agent_context_service.build_agent_context(cur, graph_id, query)
 
-    q = _normalize_agent_query(query)
-    docs: list[dict[str, Any]] = []
 
-    if q:
-        pattern = f"%{q}%"
-        cur.execute(
-            """
-            SELECT doc_type, title, content, ref_table_key, ref_column_key, ref_relation_key
-            FROM er_search_document
-            WHERE graph_id = %s
-              AND (content ILIKE %s OR title ILIKE %s)
-            ORDER BY doc_type, title
-            LIMIT 80
-            """,
-            (graph_id, pattern, pattern),
-        )
-        docs = [dict(r) for r in cur.fetchall()]
-
-        expanded: list[dict[str, Any]] = []
-        for doc in docs:
-            if doc.get("doc_type") != "column":
-                continue
-            table_key = doc.get("ref_table_key")
-            column_key = doc.get("ref_column_key")
-            if table_key and column_key:
-                expanded.extend(_fetch_relations_for_column(cur, graph_id, table_key, column_key))
-        docs = _merge_documents(docs + expanded)
-    else:
-        cur.execute(
-            """
-            SELECT doc_type, title, content, ref_table_key, ref_column_key, ref_relation_key
-            FROM er_search_document
-            WHERE graph_id = %s
-            ORDER BY doc_type, title
-            LIMIT 120
-            """,
-            (graph_id,),
-        )
-        docs = [dict(r) for r in cur.fetchall()]
-
-    docs = _enrich_relation_documents(cur, graph_id, docs)
-    docs = _merge_documents(docs + _fetch_business_flow_documents(cur, graph_id, q, docs))
-
-    sections: list[str] = []
-    rel_lines: list[str] = []
-    flow_lines: list[str] = []
-    for doc in docs:
-        sections.append(f"### {doc.get('title')}\n{doc.get('content')}")
-        if doc.get("doc_type") == "relation" and doc.get("ref_relation_key"):
-            rk = doc["ref_relation_key"]
-            flag = " [verified]" if doc.get("verified") else " [unverified]"
-            rel_lines.append(
-                f"- {rk}: {doc.get('join_condition') or ''} "
-                f"({_match_operator_label(doc.get('match_operator'))}, conf={doc.get('confidence')}){flag}"
-            )
-        if doc.get("doc_type") == "business_flow_binding" and doc.get("ref_flow_key"):
-            target = doc.get("ref_relation_key")
-            if not target and doc.get("ref_table_key"):
-                target = doc["ref_table_key"]
-                if doc.get("ref_column_key"):
-                    target = f"{target}.{doc['ref_column_key']}"
-            flow_lines.append(
-                f"- {doc['ref_flow_key']}/{doc.get('ref_step_key')}: "
-                f"{doc.get('usage_type') or 'read'} {target or ''}"
-            )
-
-    text = "相关 Schema 摘要\n\n" + "\n\n".join(sections)
-    if rel_lines:
-        text += "\n\n逻辑关联：\n" + "\n".join(rel_lines)
-    elif not q:
-        cur.execute(
-            """
-            SELECT relation_key, join_condition, relation_type, match_operator, relationship, confidence, verified
-            FROM er_relation WHERE graph_id = %s AND deleted_at IS NULL ORDER BY relation_key
-            """,
-            (graph_id,),
-        )
-        for r in cur.fetchall():
-            flag = " [verified]" if r.get("verified") else " [unverified]"
-            rel_lines.append(
-                f"- {r['relation_key']}: {r.get('join_condition')} "
-                f"({_match_operator_label(r.get('match_operator'))}, conf={r.get('confidence')}){flag}"
-            )
-        if rel_lines:
-            text += "\n\n逻辑关联：\n" + "\n".join(rel_lines)
-    if flow_lines:
-        text += "\n\n业务流程绑定：\n" + "\n".join(flow_lines)
-
-    return {
-        "graph_id": str(graph_id),
-        "version": g["version"],
-        "text": text,
-        "documents": docs,
-    }
+# 兼容旧引用：业务图文档组装
+_fetch_business_flow_documents = fetch_business_flow_documents

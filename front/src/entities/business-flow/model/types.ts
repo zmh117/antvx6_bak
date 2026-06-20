@@ -138,6 +138,7 @@ export type BusinessFlowLaneInstance = LaneInstanceData & {
 }
 
 export type BusinessFlowNodeErRef = {
+  id?: string
   erDiagramId: string
   erTableKey: string
   erColumnKey?: string | null

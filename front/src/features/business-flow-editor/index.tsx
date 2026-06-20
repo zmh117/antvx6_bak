@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Graph, Node, type Cell, type Edge } from '@antv/x6'
+import { Graph, Node } from '@antv/x6'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, GripVertical, Layers3, X } from 'lucide-react'
 
@@ -20,10 +20,10 @@ import {
   useSwimlaneComponentsQuery,
 } from '@/entities/business-flow/api'
 import { businessFlowKeys } from '@/entities/business-flow/api/queryKeys'
+import { useGraphsQuery } from '@/entities/er-graph/api'
 import type {
-  BusinessFlowChangeOpBody,
-  BusinessFlowEdgeRecord,
-  BusinessFlowNodeRecord,
+  BusinessFlowErRefType,
+  BusinessFlowNodeErRef,
   LocalBusinessFlowCanvas,
   SwimlaneComponentListItem,
 } from '@/entities/business-flow'
@@ -39,19 +39,15 @@ import {
   updateEdgeText,
   updateNodeText,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
-
-type SelectedBusinessCell =
-  | { kind: 'lane'; cell: Cell; displayName: string; ownerRole: string }
-  | {
-      kind: 'node'
-      cell: Cell
-      title: string
-      description: string
-      actor: string
-      businessRule: string
-    }
-  | { kind: 'edge'; cell: Edge; label: string }
-  | null
+import {
+  buildBusinessFlowOps,
+  isLayoutOnlyBusinessFlowOps,
+} from '@/features/business-flow-editor/lib/buildBusinessFlowOps'
+import {
+  readSelectedBusinessCell,
+  type ErGraphOption,
+  type SelectedBusinessCell,
+} from '@/features/business-flow-editor/lib/readSelectedBusinessCell'
 
 export function BusinessFlowEditor({
   businessFlowId,
@@ -70,6 +66,7 @@ export function BusinessFlowEditor({
   const persistInFlightRef = useRef(false)
   const persistQueuedRef = useRef(false)
   const persistCanvasRef = useRef<() => Promise<void>>(async () => {})
+  const schedulePersistRef = useRef<() => void>(() => {})
   const loadedFlowIdRef = useRef<string | null>(null)
   const renderingRef = useRef(false)
   const normalizingRef = useRef(false)
@@ -117,6 +114,10 @@ export function BusinessFlowEditor({
   const [savedAt, setSavedAt] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const businessFlowProductId = meta?.product_id ?? null
+  const erGraphsQuery = useGraphsQuery(businessFlowProductId ?? 'all')
+  const erGraphOptions: ErGraphOption[] = (erGraphsQuery.data ?? []).map(
+    (graph) => ({ id: graph.id, name: graph.name }),
+  )
 
   useEffect(() => {
     selectedRef.current = selected
@@ -221,6 +222,10 @@ export function BusinessFlowEditor({
   }, [persistCanvas])
 
   useEffect(() => {
+    schedulePersistRef.current = schedulePersist
+  }, [schedulePersist])
+
+  useEffect(() => {
     if (!containerRef.current) return
     const graph = createBusinessFlowGraph(containerRef.current)
     graphRef.current = graph
@@ -238,9 +243,11 @@ export function BusinessFlowEditor({
       setSelected(readSelectedBusinessCell(cell)),
     )
     graph.on('blank:click', () => setSelected(null))
-    graph.on('node:change:position', ({ node }) => {
+    graph.on('node:change:position', ({ node, options }) => {
       if (renderingRef.current || normalizingRef.current) return
       if (readCellData(node).cellRole !== 'FLOW_NODE') return
+      // 泳道拖动会带动子节点平移；translateBy 为发起者 id，被动平移无需 refit
+      if (options?.translateBy && options.translateBy !== node.id) return
       const parent = node.getParent()
       if (
         !(parent instanceof Node) ||
@@ -281,7 +288,7 @@ export function BusinessFlowEditor({
           }
         }
       }
-      schedulePersist()
+      schedulePersistRef.current()
     })
     graph.on('node:resized', ({ node }) => {
       if (
@@ -298,7 +305,7 @@ export function BusinessFlowEditor({
       } finally {
         normalizingRef.current = false
       }
-      schedulePersist()
+      schedulePersistRef.current()
     })
     graph.on('edge:connected', ({ edge }) => {
       const data = readCellData(edge)
@@ -310,9 +317,9 @@ export function BusinessFlowEditor({
         title: '',
       })
       setSelected(readSelectedBusinessCell(edge))
-      schedulePersist()
+      schedulePersistRef.current()
     })
-    graph.on('edge:removed', schedulePersist)
+    graph.on('edge:removed', () => schedulePersistRef.current())
     graph.on('node:removed', () => {
       if (renderingRef.current) return
       normalizingRef.current = true
@@ -323,7 +330,7 @@ export function BusinessFlowEditor({
       } finally {
         normalizingRef.current = false
       }
-      schedulePersist()
+      schedulePersistRef.current()
     })
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
@@ -339,7 +346,7 @@ export function BusinessFlowEditor({
         cell.remove()
       })
       setSelected(null)
-      schedulePersist()
+      schedulePersistRef.current()
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => {
@@ -350,7 +357,10 @@ export function BusinessFlowEditor({
       graphRef.current = null
       loadedFlowIdRef.current = null
     }
-  }, [businessFlowId, schedulePersist])
+    // 仅在切换业务图时重建画布；persist 回调通过 schedulePersistRef 稳定引用，
+    // 避免 mutation 状态变化导致整张画布被 dispose 重建（拖动松手后闪回起点再跳到终点）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessFlowId])
 
   async function dropComponent(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault()
@@ -448,6 +458,7 @@ export function BusinessFlowEditor({
           {selected ? (
             <BusinessInspectorDrawer
               selected={selected}
+              erGraphs={erGraphOptions}
               onChange={setSelected}
               onPersist={schedulePersist}
               onClose={() => {
@@ -549,11 +560,13 @@ function BusinessHistoryDrawer({
 
 function BusinessInspectorDrawer({
   selected,
+  erGraphs,
   onChange,
   onPersist,
   onClose,
 }: {
   selected: Exclude<SelectedBusinessCell, null>
+  erGraphs: ErGraphOption[]
   onChange: (selected: SelectedBusinessCell) => void
   onPersist: () => void
   onClose: () => void
@@ -568,6 +581,7 @@ function BusinessInspectorDrawer({
     <BusinessPanelShell title={title} onClose={onClose}>
       <BusinessInspector
         selected={selected}
+        erGraphs={erGraphs}
         onChange={onChange}
         onPersist={onPersist}
       />
@@ -676,224 +690,14 @@ function SwimlaneComponentPalette({
   )
 }
 
-function buildBusinessFlowOps(
-  previous: LocalBusinessFlowCanvas,
-  draft: ReturnType<typeof flowDraftFromGraph>,
-): BusinessFlowChangeOpBody[] {
-  const ops: BusinessFlowChangeOpBody[] = []
-  const prevLanes = new Map(
-    previous.laneInstances.map((lane) => [lane.instanceKey, lane]),
-  )
-  const nextLanes = new Map(
-    draft.laneInstances.map((lane) => [lane.instanceKey, lane]),
-  )
-  nextLanes.forEach((lane, key) => {
-    const prev = prevLanes.get(key)
-    if (!prev) return
-    if (
-      prev.position.x !== lane.position.x ||
-      prev.position.y !== lane.position.y ||
-      prev.size.width !== lane.size.width ||
-      prev.size.height !== lane.size.height ||
-      stableJson(prev.layoutJson ?? null) !==
-        stableJson(lane.layoutJson ?? null)
-    ) {
-      ops.push({
-        opType: 'MOVE_LANE_INSTANCE',
-        targetType: 'LANE_INSTANCE',
-        targetKey: key,
-        patch: {
-          to: {
-            x: lane.position.x,
-            y: lane.position.y,
-            width: lane.size.width,
-            height: lane.size.height,
-          },
-          layoutJson: lane.layoutJson ?? null,
-        },
-        summary: `移动泳道：${lane.displayName}`,
-      })
-    }
-    if (
-      prev.displayName !== lane.displayName ||
-      (prev.ownerRole ?? '') !== (lane.ownerRole ?? '')
-    ) {
-      ops.push({
-        opType: 'RENAME_LANE_INSTANCE',
-        targetType: 'LANE_INSTANCE',
-        targetKey: key,
-        patch: {
-          displayName: lane.displayName,
-          ownerRole: lane.ownerRole ?? null,
-        },
-        summary: `更新泳道：${lane.displayName}`,
-      })
-    }
-  })
-
-  const prevNodes = new Map(previous.nodes.map((node) => [node.nodeKey, node]))
-  const nextNodes = new Map(draft.nodes.map((node) => [node.nodeKey, node]))
-  prevNodes.forEach((node, key) => {
-    if (!nextNodes.has(key)) {
-      ops.push({
-        opType: 'REMOVE_NODE',
-        targetType: 'NODE',
-        targetKey: key,
-        patch: { title: node.title },
-        summary: `删除节点：${node.title}`,
-      })
-    }
-  })
-  nextNodes.forEach((node, key) => {
-    const prev = prevNodes.get(key)
-    if (!prev) {
-      ops.push({
-        opType: 'ADD_NODE',
-        targetType: 'NODE',
-        targetKey: key,
-        patch: {
-          laneInstanceKey: laneKeyForNode(draft, node),
-          nodeType: node.nodeType,
-          title: node.title,
-          x: node.position.x,
-          y: node.position.y,
-          width: node.size.width,
-          height: node.size.height,
-          description: node.description,
-          actor: node.actor,
-          businessRule: node.businessRule,
-        },
-        summary: `新增节点：${node.title}`,
-      })
-      return
-    }
-    const patch: Record<string, unknown> = {}
-    if (
-      prev.position.x !== node.position.x ||
-      prev.position.y !== node.position.y ||
-      prev.size.width !== node.size.width ||
-      prev.size.height !== node.size.height
-    ) {
-      patch.to = {
-        x: node.position.x,
-        y: node.position.y,
-        width: node.size.width,
-        height: node.size.height,
-      }
-    }
-    if (prev.title !== node.title) patch.title = node.title
-    if ((prev.description ?? '') !== (node.description ?? ''))
-      patch.description = node.description ?? null
-    if ((prev.actor ?? '') !== (node.actor ?? ''))
-      patch.actor = node.actor ?? null
-    if ((prev.businessRule ?? '') !== (node.businessRule ?? ''))
-      patch.businessRule = node.businessRule ?? null
-    if (Object.keys(patch).length > 0) {
-      ops.push({
-        opType: 'UPDATE_NODE',
-        targetType: 'NODE',
-        targetKey: key,
-        patch,
-        summary: `更新节点：${node.title}`,
-      })
-    }
-  })
-
-  const prevEdges = new Map(previous.edges.map((edge) => [edge.edgeKey, edge]))
-  const nextEdges = new Map(draft.edges.map((edge) => [edge.edgeKey, edge]))
-  prevEdges.forEach((edge, key) => {
-    if (!nextEdges.has(key)) {
-      ops.push({
-        opType: 'REMOVE_EDGE',
-        targetType: 'EDGE',
-        targetKey: key,
-        patch: { label: edge.label },
-        summary: `删除连线：${edge.label || key}`,
-      })
-    }
-  })
-  nextEdges.forEach((edge, key) => {
-    const prev = prevEdges.get(key)
-    if (!prev) {
-      ops.push({
-        opType: 'ADD_EDGE',
-        targetType: 'EDGE',
-        targetKey: key,
-        patch: edgePatch(edge),
-        summary: `新增连线：${edge.label || key}`,
-      })
-      return
-    }
-    if (
-      prev.label !== edge.label ||
-      prev.edgeType !== edge.edgeType ||
-      prev.sourceNodeKey !== edge.sourceNodeKey ||
-      prev.targetNodeKey !== edge.targetNodeKey ||
-      prev.sourcePort !== edge.sourcePort ||
-      prev.targetPort !== edge.targetPort
-    ) {
-      ops.push({
-        opType:
-          prev.sourceNodeKey !== edge.sourceNodeKey ||
-          prev.targetNodeKey !== edge.targetNodeKey
-            ? 'ADD_EDGE'
-            : 'UPDATE_EDGE',
-        targetType: 'EDGE',
-        targetKey: key,
-        patch: edgePatch(edge),
-        summary: `更新连线：${edge.label || key}`,
-      })
-    }
-  })
-  return ops
-}
-
-function stableJson(value: unknown) {
-  return JSON.stringify(value ?? null)
-}
-
-function isLayoutOnlyBusinessFlowOps(ops: BusinessFlowChangeOpBody[]) {
-  return ops.every((op) => {
-    if (
-      op.opType === 'MOVE_LANE_INSTANCE' ||
-      op.opType === 'RESIZE_LANE_INSTANCE'
-    )
-      return true
-    if (op.opType !== 'UPDATE_NODE') return false
-    const patch = op.patch
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch))
-      return false
-    return Object.keys(patch).every((key) => key === 'to')
-  })
-}
-
-function laneKeyForNode(
-  draft: ReturnType<typeof flowDraftFromGraph>,
-  node: BusinessFlowNodeRecord,
-) {
-  return draft.laneInstances.find(
-    (lane) => lane.laneInstanceId === node.laneInstanceId,
-  )?.instanceKey
-}
-
-function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
-  return {
-    sourceNodeKey: edge.sourceNodeKey,
-    targetNodeKey: edge.targetNodeKey,
-    sourcePort: edge.sourcePort,
-    targetPort: edge.targetPort,
-    edgeType: edge.edgeType,
-    label: edge.label,
-    conditionText: edge.conditionText,
-  }
-}
-
 function BusinessInspector({
   selected,
+  erGraphs,
   onChange,
   onPersist,
 }: {
   selected: SelectedBusinessCell
+  erGraphs: ErGraphOption[]
   onChange: (selected: SelectedBusinessCell) => void
   onPersist: () => void
 }) {
@@ -1023,38 +827,182 @@ function BusinessInspector({
           />
         </Field>
       </FieldGroup>
+      <NodeErBindingEditor
+        node={selected}
+        erGraphs={erGraphs}
+        onChange={onChange}
+        onPersist={onPersist}
+      />
     </div>
   )
 }
 
-function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
-  const data = readCellData(cell)
-  if (cell.isEdge()) {
-    return {
-      kind: 'edge',
-      cell: cell as Edge,
-      label: data.title ?? '',
-    }
+const ER_REF_TYPES: BusinessFlowErRefType[] = [
+  'READ',
+  'CREATE',
+  'UPDATE',
+  'DELETE',
+  'CHECK',
+]
+
+function NodeErBindingEditor({
+  node,
+  erGraphs,
+  onChange,
+  onPersist,
+}: {
+  node: Extract<SelectedBusinessCell, { kind: 'node' }>
+  erGraphs: ErGraphOption[]
+  onChange: (selected: SelectedBusinessCell) => void
+  onPersist: () => void
+}) {
+  const [draftDiagramId, setDraftDiagramId] = useState('')
+  const [draftTableKey, setDraftTableKey] = useState('')
+  const [draftColumnKey, setDraftColumnKey] = useState('')
+  const [draftRefType, setDraftRefType] = useState<BusinessFlowErRefType>('READ')
+
+  const commit = (erRefs: BusinessFlowNodeErRef[]) => {
+    node.cell.setData({ ...readCellData(node.cell), erRefs })
+    onChange({ ...node, erRefs })
+    onPersist()
   }
-  if (data.cellRole === 'LANE_INSTANCE') {
-    return {
-      kind: 'lane',
-      cell,
-      displayName: String(cell.attr('label/text') ?? data.title ?? ''),
-      ownerRole: String(cell.attr('owner/text') ?? ''),
-    }
+
+  const diagramName = (id: string) =>
+    erGraphs.find((graph) => graph.id === id)?.name ?? id
+
+  const addBinding = () => {
+    const erDiagramId = draftDiagramId || erGraphs[0]?.id
+    if (!erDiagramId || !draftTableKey.trim()) return
+    commit([
+      ...node.erRefs,
+      {
+        erDiagramId,
+        erTableKey: draftTableKey.trim(),
+        erColumnKey: draftColumnKey.trim() || null,
+        refType: draftRefType,
+        description: null,
+      },
+    ])
+    setDraftTableKey('')
+    setDraftColumnKey('')
+    setDraftRefType('READ')
   }
-  if (data.cellRole === 'FLOW_NODE') {
-    return {
-      kind: 'node',
-      cell,
-      title: data.title ?? String(cell.attr('label/text') ?? ''),
-      description: data.description ?? '',
-      actor: data.actor ?? '',
-      businessRule: data.businessRule ?? '',
-    }
-  }
-  return null
+
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      <div className="text-xs font-semibold">ER 绑定（步骤 → 字段）</div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        声明该步骤读写的 ER 表/字段，供 Agent 生成用例时映射数据。
+      </p>
+      <div className="mt-3 space-y-2">
+        {node.erRefs.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border p-2 text-[11px] text-muted-foreground">
+            暂无绑定。
+          </div>
+        ) : (
+          node.erRefs.map((ref, index) => (
+            <div
+              key={ref.id ?? `${ref.erTableKey}.${ref.erColumnKey ?? ''}:${index}`}
+              className="rounded-md border border-border p-2 text-xs"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-medium">
+                  {ref.erTableKey}
+                  {ref.erColumnKey ? `.${ref.erColumnKey}` : ''}
+                </span>
+                <button
+                  type="button"
+                  className="text-[11px] text-destructive hover:underline"
+                  onClick={() =>
+                    commit(node.erRefs.filter((_, i) => i !== index))
+                  }
+                >
+                  移除
+                </button>
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {diagramName(ref.erDiagramId)}
+              </div>
+              <select
+                className="mt-2 h-7 w-full rounded border border-border bg-background px-1 text-xs"
+                value={ref.refType}
+                onChange={(event) =>
+                  commit(
+                    node.erRefs.map((item, i) =>
+                      i === index
+                        ? {
+                            ...item,
+                            refType: event.target
+                              .value as BusinessFlowErRefType,
+                          }
+                        : item,
+                    ),
+                  )
+                }
+              >
+                {ER_REF_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="mt-3 space-y-2 rounded-md border border-border p-2">
+        <select
+          className="h-7 w-full rounded border border-border bg-background px-1 text-xs"
+          value={draftDiagramId || erGraphs[0]?.id || ''}
+          onChange={(event) => setDraftDiagramId(event.target.value)}
+        >
+          {erGraphs.length === 0 ? (
+            <option value="">（无可用 ER 图）</option>
+          ) : (
+            erGraphs.map((graph) => (
+              <option key={graph.id} value={graph.id}>
+                {graph.name}
+              </option>
+            ))
+          )}
+        </select>
+        <Input
+          placeholder="表 key（必填）"
+          value={draftTableKey}
+          onChange={(event) => setDraftTableKey(event.target.value)}
+        />
+        <Input
+          placeholder="字段 key（可选）"
+          value={draftColumnKey}
+          onChange={(event) => setDraftColumnKey(event.target.value)}
+        />
+        <div className="flex gap-2">
+          <select
+            className="h-8 flex-1 rounded border border-border bg-background px-1 text-xs"
+            value={draftRefType}
+            onChange={(event) =>
+              setDraftRefType(event.target.value as BusinessFlowErRefType)
+            }
+          >
+            {ER_REF_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={erGraphs.length === 0 || !draftTableKey.trim()}
+            onClick={addBinding}
+          >
+            添加
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export default BusinessFlowEditor
