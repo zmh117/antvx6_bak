@@ -105,10 +105,15 @@ export function useRemoveGraphMemberMutation() {
   })
 }
 
-export function useGraphQuery(graphId = getDefaultGraphId()) {
+export function useGraphQuery(
+  graphId = getDefaultGraphId(),
+  opts: { enabled?: boolean } = {},
+) {
+  const resolvedGraphId = graphId || getDefaultGraphId()
   return useQuery({
-    queryKey: graphKeys.detail(graphId),
-    queryFn: () => fetchGraphLoad(graphId),
+    queryKey: graphKeys.detail(resolvedGraphId),
+    queryFn: () => fetchGraphLoad(resolvedGraphId),
+    enabled: opts.enabled ?? true,
   })
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Graph, Node } from '@antv/x6'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, GripVertical, Layers3, Trash2, X } from 'lucide-react'
@@ -20,7 +20,7 @@ import {
   useSwimlaneComponentsQuery,
 } from '@/entities/business-flow/api'
 import { businessFlowKeys } from '@/entities/business-flow/api/queryKeys'
-import { useGraphsQuery } from '@/entities/er-graph/api'
+import { useGraphQuery, useGraphsQuery } from '@/entities/er-graph/api'
 import type {
   BusinessFlowErRefType,
   BusinessFlowNodeErRef,
@@ -894,6 +894,76 @@ const ER_REF_TYPES: BusinessFlowErRefType[] = [
   'CHECK',
 ]
 
+type ErGraphLoadData = NonNullable<ReturnType<typeof useGraphQuery>['data']>
+type ErColumnOption = { key: string; label: string }
+type ErTableOption = { key: string; label: string; columns: ErColumnOption[] }
+
+function buildErTableOptions(data: ErGraphLoadData | undefined): ErTableOption[] {
+  if (!data) return []
+
+  const columnsByTable = new Map<string, ErColumnOption[]>()
+  for (const column of data.columns ?? []) {
+    if (!column.table_key || !column.column_key) continue
+    const columns = columnsByTable.get(column.table_key) ?? []
+    columns.push({
+      key: column.column_key,
+      label: buildColumnLabel(column.column_key, column.business_name, column.data_type),
+    })
+    columnsByTable.set(column.table_key, columns)
+  }
+
+  const structuredTables = data.tables ?? []
+  const tableSources = structuredTables.length
+    ? structuredTables.map((table) => ({
+        key: table.table_key,
+        name: table.table_name ?? table.raw_data?.name,
+        businessName: table.business_name ?? table.raw_data?.businessName,
+        fields: table.raw_data?.fields ?? [],
+      }))
+    : (data.legacy_tables ?? []).map((table) => ({
+        key: table.id,
+        name: table.name,
+        businessName: table.businessName,
+        fields: table.fields ?? [],
+      }))
+
+  return tableSources
+    .filter((table) => table.key)
+    .map((table) => {
+      const structuredColumns = columnsByTable.get(table.key) ?? []
+      const rawColumns = table.fields.map((field) => ({
+        key: field.name,
+        label: buildColumnLabel(field.name, field.businessName, field.type),
+      }))
+      return {
+        key: table.key,
+        label: buildTableLabel(table.key, table.name, table.businessName),
+        columns: dedupeErColumns(structuredColumns.length ? structuredColumns : rawColumns),
+      }
+    })
+}
+
+function dedupeErColumns(columns: ErColumnOption[]) {
+  const seen = new Set<string>()
+  return columns.filter((column) => {
+    if (!column.key || seen.has(column.key)) return false
+    seen.add(column.key)
+    return true
+  })
+}
+
+function buildTableLabel(key: string, name?: string | null, businessName?: string | null) {
+  const title = businessName || name
+  return title && title !== key ? `${key} - ${title}` : key
+}
+
+function buildColumnLabel(key: string, businessName?: string | null, dataType?: string | null) {
+  const suffix = [businessName && businessName !== key ? businessName : null, dataType]
+    .filter(Boolean)
+    .join(' · ')
+  return suffix ? `${key} - ${suffix}` : key
+}
+
 function NodeErBindingEditor({
   node,
   erGraphs,
@@ -909,6 +979,21 @@ function NodeErBindingEditor({
   const [draftTableKey, setDraftTableKey] = useState('')
   const [draftColumnKey, setDraftColumnKey] = useState('')
   const [draftRefType, setDraftRefType] = useState<BusinessFlowErRefType>('READ')
+  const selectedDiagramId = draftDiagramId || erGraphs[0]?.id || ''
+  const erGraphQuery = useGraphQuery(selectedDiagramId, {
+    enabled: Boolean(selectedDiagramId),
+  })
+  const erTableOptions = useMemo(
+    () => buildErTableOptions(erGraphQuery.data),
+    [erGraphQuery.data],
+  )
+  const selectedTable = erTableOptions.find(
+    (table) => table.key === draftTableKey,
+  )
+  const selectedTableColumns = selectedTable?.columns ?? []
+  const selectedColumn = selectedTableColumns.find(
+    (column) => column.key === draftColumnKey,
+  )
 
   const commit = (erRefs: BusinessFlowNodeErRef[]) => {
     node.cell.setData({ ...readCellData(node.cell), erRefs })
@@ -920,7 +1005,7 @@ function NodeErBindingEditor({
     erGraphs.find((graph) => graph.id === id)?.name ?? id
 
   const addBinding = () => {
-    const erDiagramId = draftDiagramId || erGraphs[0]?.id
+    const erDiagramId = selectedDiagramId
     if (!erDiagramId || !draftTableKey.trim()) return
     commit([
       ...node.erRefs,
@@ -1002,8 +1087,12 @@ function NodeErBindingEditor({
       <div className="mt-3 space-y-2 rounded-md border border-border p-2">
         <select
           className="h-7 w-full rounded border border-border bg-background px-1 text-xs"
-          value={draftDiagramId || erGraphs[0]?.id || ''}
-          onChange={(event) => setDraftDiagramId(event.target.value)}
+          value={selectedDiagramId}
+          onChange={(event) => {
+            setDraftDiagramId(event.target.value)
+            setDraftTableKey('')
+            setDraftColumnKey('')
+          }}
         >
           {erGraphs.length === 0 ? (
             <option value="">（无可用 ER 图）</option>
@@ -1015,13 +1104,69 @@ function NodeErBindingEditor({
             ))
           )}
         </select>
+        {erGraphQuery.isLoading ? (
+          <div className="text-[11px] text-muted-foreground">
+            正在加载表字段...
+          </div>
+        ) : null}
+        {erGraphQuery.isError ? (
+          <div className="text-[11px] text-destructive">
+            表字段加载失败，可继续手动输入 key。
+          </div>
+        ) : null}
+        <select
+          className="h-7 w-full rounded border border-border bg-background px-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+          value={selectedTable ? draftTableKey : ''}
+          disabled={!selectedDiagramId || erGraphQuery.isLoading || erTableOptions.length === 0}
+          onChange={(event) => {
+            setDraftTableKey(event.target.value)
+            setDraftColumnKey('')
+          }}
+        >
+          <option value="">
+            {erTableOptions.length === 0 ? '暂无可选 ER 表' : '选择 ER 表'}
+          </option>
+          {erTableOptions.map((table) => (
+            <option key={table.key} value={table.key}>
+              {table.label}
+            </option>
+          ))}
+        </select>
         <Input
-          placeholder="表 key（必填）"
+          placeholder={
+            erTableOptions.length > 0
+              ? '表 key（可手动修正）'
+              : '表 key（必填）'
+          }
           value={draftTableKey}
-          onChange={(event) => setDraftTableKey(event.target.value)}
+          onChange={(event) => {
+            setDraftTableKey(event.target.value)
+            setDraftColumnKey('')
+          }}
         />
+        <select
+          className="h-7 w-full rounded border border-border bg-background px-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+          value={selectedColumn ? draftColumnKey : ''}
+          disabled={!draftTableKey.trim() || selectedTableColumns.length === 0}
+          onChange={(event) => setDraftColumnKey(event.target.value)}
+        >
+          <option value="">
+            {selectedTableColumns.length === 0
+              ? '暂无可选字段'
+              : '不绑定字段 / 选择字段'}
+          </option>
+          {selectedTableColumns.map((column) => (
+            <option key={column.key} value={column.key}>
+              {column.label}
+            </option>
+          ))}
+        </select>
         <Input
-          placeholder="字段 key（可选）"
+          placeholder={
+            selectedTableColumns.length > 0
+              ? '字段 key（可手动修正，可选）'
+              : '字段 key（可选）'
+          }
           value={draftColumnKey}
           onChange={(event) => setDraftColumnKey(event.target.value)}
         />
