@@ -213,6 +213,7 @@ export type LocalBusinessFlowCanvas = {
   code?: string | null
   description?: string | null
   version: number
+  collabRevision: number
   createdAt: string
   updatedAt: string
   laneInstances: BusinessFlowLaneInstance[]

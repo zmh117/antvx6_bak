@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Graph, Node } from '@antv/x6'
+import { Edge, Graph, Node, type Cell } from '@antv/x6'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, GripVertical, Layers3, Trash2, X } from 'lucide-react'
 
@@ -20,6 +20,7 @@ import {
   useSwimlaneComponentsQuery,
 } from '@/entities/business-flow/api'
 import { businessFlowKeys } from '@/entities/business-flow/api/queryKeys'
+import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { useGraphsQuery } from '@/entities/er-graph/api'
 import type {
   LocalBusinessFlowCanvas,
@@ -40,6 +41,13 @@ import {
   updateEdgeText,
   updateNodeText,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
+import {
+  createBusinessFlowCollaboration,
+  type BusinessFlowCollaborationController,
+  type BusinessFlowPresenceActivity,
+  type BusinessFlowPresenceTarget,
+  type BusinessFlowRemoteAwareness,
+} from '@/features/business-flow/infrastructure/yjs'
 import { NodeErBindingEditor } from '@/features/business-flow/presentation/components/NodeErBindingEditor'
 import {
   buildBusinessFlowOps,
@@ -50,6 +58,21 @@ import {
   type ErGraphOption,
   type SelectedBusinessCell,
 } from '@/features/business-flow-editor/lib/readSelectedBusinessCell'
+
+const PRESENCE_STALE_MS = 30_000
+const PRESENCE_LABELS: Record<BusinessFlowPresenceActivity, string> = {
+  selecting: '正在查看',
+  editing: '正在编辑',
+  dragging: '正在移动',
+  connecting: '已连接',
+}
+
+type PresenceHighlight = {
+  key: string
+  label: string
+  color: string
+  rect: { x: number; y: number; width: number; height: number }
+}
 
 export function BusinessFlowEditor({
   businessFlowId,
@@ -64,6 +87,8 @@ export function BusinessFlowEditor({
   const graphRef = useRef<Graph | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<LocalBusinessFlowCanvas | null>(null)
+  const collabRef = useRef<BusinessFlowCollaborationController | null>(null)
+  const applyingRemoteRef = useRef(false)
   const persistTimer = useRef<number | null>(null)
   const persistInFlightRef = useRef(false)
   const persistQueuedRef = useRef(false)
@@ -114,6 +139,18 @@ export function BusinessFlowEditor({
     'idle' | 'saving' | 'saved' | 'error'
   >('idle')
   const [savedAt, setSavedAt] = useState<string | null>(null)
+  const [collabStatus, setCollabStatus] = useState<
+    'connecting' | 'connected' | 'disconnected' | 'error'
+  >('disconnected')
+  const [onlineUsers, setOnlineUsers] = useState<
+    Array<{ id?: string; name?: string; email?: string; color?: string }>
+  >([])
+  const [remoteAwareness, setRemoteAwareness] = useState<
+    BusinessFlowRemoteAwareness[]
+  >([])
+  const [presenceHighlights, setPresenceHighlights] = useState<
+    PresenceHighlight[]
+  >([])
   const [showHistory, setShowHistory] = useState(false)
   const businessFlowProductId = meta?.product_id ?? null
   const erGraphsQuery = useGraphsQuery(businessFlowProductId ?? 'all')
@@ -125,6 +162,18 @@ export function BusinessFlowEditor({
     selectedRef.current = selected
   }, [selected])
 
+  const cacheCanvasState = useCallback(
+    (nextCanvas: LocalBusinessFlowCanvas, updatePanel = true) => {
+      canvasRef.current = nextCanvas
+      if (updatePanel) setCanvas(nextCanvas)
+      queryClient.setQueryData(
+        businessFlowKeys.editorState(businessFlowId),
+        nextCanvas,
+      )
+    },
+    [businessFlowId, queryClient],
+  )
+
   const removeSelectedCell = useCallback(() => {
     const graph = graphRef.current
     const cell = selectedRef.current?.cell
@@ -132,17 +181,13 @@ export function BusinessFlowEditor({
     const removedCells = removeBusinessFlowCells(graph, [cell])
     if (!removedCells.length) return
     setSelected(null)
+    collabRef.current?.setLocalPresence(null)
     schedulePersistRef.current()
   }, [])
 
   const loadCanvasIntoGraph = useCallback(
     (nextCanvas: LocalBusinessFlowCanvas) => {
-      canvasRef.current = nextCanvas
-      setCanvas(nextCanvas)
-      queryClient.setQueryData(
-        businessFlowKeys.editorState(businessFlowId),
-        nextCanvas,
-      )
+      cacheCanvasState(nextCanvas)
       const graph = graphRef.current
       if (!graph) return
       renderingRef.current = true
@@ -153,19 +198,14 @@ export function BusinessFlowEditor({
         renderingRef.current = false
       }
     },
-    [businessFlowId, queryClient],
+    [businessFlowId, cacheCanvasState],
   )
 
   // 放置新泳道后只增量挂载新 cell，避免对已挂载画布做 clearCells 全量重建
   // （否则 X6 会在复用 id 的视图上留下拖动残影）。
   const appendCanvasIntoGraph = useCallback(
     (nextCanvas: LocalBusinessFlowCanvas) => {
-      canvasRef.current = nextCanvas
-      setCanvas(nextCanvas)
-      queryClient.setQueryData(
-        businessFlowKeys.editorState(businessFlowId),
-        nextCanvas,
-      )
+      cacheCanvasState(nextCanvas)
       const graph = graphRef.current
       if (!graph) {
         loadCanvasIntoGraph(nextCanvas)
@@ -179,7 +219,7 @@ export function BusinessFlowEditor({
         renderingRef.current = false
       }
     },
-    [businessFlowId, loadCanvasIntoGraph, queryClient],
+    [businessFlowId, cacheCanvasState, loadCanvasIntoGraph],
   )
 
   useEffect(() => {
@@ -196,7 +236,8 @@ export function BusinessFlowEditor({
   const runPersistCanvas = useCallback(async () => {
     const graph = graphRef.current
     const previous = canvasRef.current
-    if (!graph || !previous || renderingRef.current) return
+    if (!graph || !previous || renderingRef.current || applyingRemoteRef.current)
+      return
     const draft = flowDraftFromGraph(graph, previous)
     const ops = buildBusinessFlowOps(previous, draft)
     if (ops.length === 0) return
@@ -213,20 +254,13 @@ export function BusinessFlowEditor({
         version: result.newVersion,
         updatedAt: new Date().toISOString(),
       }
-      canvasRef.current = nextCanvas
-      queryClient.setQueryData(
-        businessFlowKeys.editorState(businessFlowId),
-        nextCanvas,
-      )
-      if (!layoutOnly) {
-        setCanvas(nextCanvas)
-      }
+      cacheCanvasState(nextCanvas, !layoutOnly)
       setSaveState('saved')
       setSavedAt(new Date().toLocaleTimeString())
     } catch {
       setSaveState('error')
     }
-  }, [applyChangesMutation, businessFlowId, queryClient])
+  }, [applyChangesMutation, cacheCanvasState])
 
   const persistCanvas = useCallback(async () => {
     if (persistInFlightRef.current) {
@@ -251,17 +285,95 @@ export function BusinessFlowEditor({
     persistCanvasRef.current = persistCanvas
   }, [persistCanvas])
 
+  const publishPresence = useCallback(
+    (
+      target: BusinessFlowPresenceTarget | null,
+      activity?: BusinessFlowPresenceActivity,
+    ) => {
+      collabRef.current?.setLocalPresence(target, activity)
+    },
+    [],
+  )
+
+  const targetFromCell = useCallback((cell: Cell | null | undefined) => {
+    if (!cell) return null
+    const data = readCellData(cell)
+    if (data.cellRole === 'LANE_INSTANCE') {
+      return { kind: 'lane', key: data.laneInstanceKey ?? cell.id } satisfies BusinessFlowPresenceTarget
+    }
+    if (data.cellRole === 'FLOW_NODE') {
+      return { kind: 'node', key: data.nodeKey ?? cell.id } satisfies BusinessFlowPresenceTarget
+    }
+    if (data.cellRole === 'FLOW_EDGE') {
+      return { kind: 'edge', key: data.edgeKey ?? cell.id } satisfies BusinessFlowPresenceTarget
+    }
+    return null
+  }, [])
+
+  const publishCellPresence = useCallback(
+    (cell: Cell | null | undefined, activity: BusinessFlowPresenceActivity) => {
+      publishPresence(targetFromCell(cell), activity)
+    },
+    [publishPresence, targetFromCell],
+  )
+
+  const commitRealtimeCanvas = useCallback(
+    (nextCanvas: LocalBusinessFlowCanvas | null) => {
+      if (!nextCanvas) return
+      cacheCanvasState(nextCanvas)
+      setSaveState('saved')
+      setSavedAt(new Date().toLocaleTimeString())
+    },
+    [cacheCanvasState],
+  )
+
+  const persistRealtimeCell = useCallback(
+    (cell?: Cell | null) => {
+      const collab = collabRef.current
+      if (!collab?.isRealtimeEnabled()) return false
+      let nextCanvas: LocalBusinessFlowCanvas | null = null
+      if (cell instanceof Node && readCellData(cell).cellRole === 'LANE_INSTANCE') {
+        nextCanvas = collab.patchLane(cell)
+      } else if (cell instanceof Node && readCellData(cell).cellRole === 'FLOW_NODE') {
+        nextCanvas = collab.patchNode(cell)
+      } else if (cell instanceof Edge && readCellData(cell).cellRole === 'FLOW_EDGE') {
+        nextCanvas = collab.patchEdge(cell)
+      } else {
+        nextCanvas = collab.pushGraph()
+      }
+      commitRealtimeCanvas(nextCanvas)
+      return true
+    },
+    [commitRealtimeCanvas],
+  )
+
+  const persistRealtimeRemovedCells = useCallback(
+    (cells: Cell[]) => {
+      const collab = collabRef.current
+      if (!collab?.isRealtimeEnabled()) return false
+      commitRealtimeCanvas(collab.removeCells(cells))
+      return true
+    },
+    [commitRealtimeCanvas],
+  )
+
   const schedulePersist = useCallback(() => {
+    if (persistRealtimeCell(selectedRef.current?.cell)) return
     if (persistTimer.current != null) window.clearTimeout(persistTimer.current)
     persistTimer.current = window.setTimeout(() => {
       persistTimer.current = null
       void persistCanvas()
     }, 550)
-  }, [persistCanvas])
+  }, [persistCanvas, persistRealtimeCell])
 
   useEffect(() => {
     schedulePersistRef.current = schedulePersist
   }, [schedulePersist])
+
+  const persistSelectedEdit = useCallback(() => {
+    publishCellPresence(selectedRef.current?.cell, 'editing')
+    schedulePersist()
+  }, [publishCellPresence, schedulePersist])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -277,10 +389,14 @@ export function BusinessFlowEditor({
       }
     }
 
-    graph.on('cell:click', ({ cell }) =>
-      setSelected(readSelectedBusinessCell(cell)),
-    )
-    graph.on('blank:click', () => setSelected(null))
+    graph.on('cell:click', ({ cell }) => {
+      setSelected(readSelectedBusinessCell(cell))
+      publishCellPresence(cell, 'selecting')
+    })
+    graph.on('blank:click', () => {
+      setSelected(null)
+      publishPresence(null)
+    })
     graph.on('node:change:position', ({ node, options }) => {
       if (renderingRef.current || normalizingRef.current) return
       if (readCellData(node).cellRole !== 'FLOW_NODE') return
@@ -326,7 +442,8 @@ export function BusinessFlowEditor({
           }
         }
       }
-      schedulePersistRef.current()
+      publishCellPresence(node, 'dragging')
+      if (!persistRealtimeCell(node)) schedulePersistRef.current()
     })
     graph.on('node:resized', ({ node }) => {
       if (
@@ -343,7 +460,8 @@ export function BusinessFlowEditor({
       } finally {
         normalizingRef.current = false
       }
-      schedulePersistRef.current()
+      publishCellPresence(node, 'dragging')
+      if (!persistRealtimeCell(node)) schedulePersistRef.current()
     })
     graph.on('edge:connected', ({ edge }) => {
       const data = readCellData(edge)
@@ -355,10 +473,14 @@ export function BusinessFlowEditor({
         title: '',
       })
       setSelected(readSelectedBusinessCell(edge))
-      schedulePersistRef.current()
+      publishCellPresence(edge, 'connecting')
+      if (!persistRealtimeCell(edge)) schedulePersistRef.current()
     })
-    graph.on('edge:removed', () => schedulePersistRef.current())
-    graph.on('node:removed', () => {
+    graph.on('edge:removed', ({ edge }) => {
+      publishPresence(null)
+      if (!persistRealtimeRemovedCells([edge])) schedulePersistRef.current()
+    })
+    graph.on('node:removed', ({ node }) => {
       if (renderingRef.current) return
       normalizingRef.current = true
       try {
@@ -368,18 +490,22 @@ export function BusinessFlowEditor({
       } finally {
         normalizingRef.current = false
       }
-      schedulePersistRef.current()
+      publishPresence(null)
+      if (!persistRealtimeRemovedCells([node])) schedulePersistRef.current()
     })
     const unbindDeleteKeys = bindBusinessFlowDeleteKeys(graph, {
       getFallbackCell: () => selectedRef.current?.cell ?? null,
       onDeleted: () => {
         setSelected(null)
+        publishPresence(null)
         schedulePersistRef.current()
       },
     })
     return () => {
       if (persistTimer.current != null)
         window.clearTimeout(persistTimer.current)
+      collabRef.current?.destroy()
+      collabRef.current = null
       unbindDeleteKeys()
       graph.dispose()
       graphRef.current = null
@@ -389,6 +515,141 @@ export function BusinessFlowEditor({
     // 避免 mutation 状态变化导致整张画布被 dispose 重建（拖动松手后闪回起点再跳到终点）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessFlowId])
+
+  useEffect(() => {
+    const graph = graphRef.current
+    const currentCanvas = canvasRef.current
+    if (!graph || !currentCanvas || currentCanvas.businessFlowId !== businessFlowId)
+      return
+    collabRef.current?.destroy()
+    collabRef.current = null
+    setRemoteAwareness([])
+    setPresenceHighlights([])
+    const token = getAccessToken()
+    if (!token) {
+      setCollabStatus('disconnected')
+      setOnlineUsers([])
+      return
+    }
+    collabRef.current = createBusinessFlowCollaboration({
+      graph,
+      businessFlowId,
+      collabRevision: currentCanvas.collabRevision,
+      token,
+      getCanvas: () => canvasRef.current,
+      onStatus: setCollabStatus,
+      onRemoteApply: (nextCanvas) => {
+        cacheCanvasState(nextCanvas)
+        setSaveState('saved')
+        setSavedAt(new Date().toLocaleTimeString())
+      },
+      onAwareness: (states) => {
+        setRemoteAwareness(states)
+        setOnlineUsers(states.map((state) => state.user))
+      },
+      onError: () => {
+        setCollabStatus('error')
+        setSaveState('error')
+      },
+      setApplyingRemote: (value) => {
+        applyingRemoteRef.current = value
+        renderingRef.current = value
+      },
+      currentUser: getCurrentUser(),
+    })
+    return () => {
+      collabRef.current?.destroy()
+      collabRef.current = null
+      applyingRemoteRef.current = false
+      renderingRef.current = false
+    }
+  }, [businessFlowId, cacheCanvasState, canvas?.collabRevision])
+
+  const recomputePresenceHighlights = useCallback(() => {
+    const graph = graphRef.current
+    const container = containerRef.current
+    if (!graph || !container) {
+      setPresenceHighlights([])
+      return
+    }
+    const containerRect = container.getBoundingClientRect()
+    const now = Date.now()
+    const toRelativeRect = (rect: DOMRect, pad = 6) => ({
+      x: rect.left - containerRect.left - pad,
+      y: rect.top - containerRect.top - pad,
+      width: Math.max(24, rect.width + pad * 2),
+      height: Math.max(20, rect.height + pad * 2),
+    })
+    const cellRect = (cell: Cell, pad = 6) => {
+      const view = graph.findViewByCell(cell)
+      const containerEl = view?.container as SVGElement | HTMLElement | undefined
+      if (!containerEl) return null
+      const edgeShape =
+        cell instanceof Edge
+          ? containerEl.querySelector<SVGElement>('path, polyline, line')
+          : null
+      const rect = (edgeShape || containerEl).getBoundingClientRect()
+      if (!rect.width && !rect.height) return null
+      return toRelativeRect(rect, pad)
+    }
+    const targetRect = (target: BusinessFlowPresenceTarget) => {
+      const cell = graph.getCellById(target.key)
+      if (!cell) return null
+      return cellRect(cell, target.kind === 'edge' ? 10 : 6)
+    }
+    const next: PresenceHighlight[] = []
+    remoteAwareness.forEach((state) => {
+      if (!state.target || state.isLocal) return
+      if (state.updatedAt && now - state.updatedAt > PRESENCE_STALE_MS) return
+      const rect = targetRect(state.target)
+      if (!rect) return
+      const activity = state.activity || 'editing'
+      const name = state.user.name || state.user.email || '其他成员'
+      next.push({
+        key: `${state.clientId}:${state.target.kind}:${state.target.key}`,
+        label: `${name} ${PRESENCE_LABELS[activity]}`,
+        color: state.user.color || '#2563eb',
+        rect,
+      })
+    })
+    setPresenceHighlights(next)
+  }, [remoteAwareness])
+
+  useEffect(() => {
+    recomputePresenceHighlights()
+  }, [recomputePresenceHighlights, canvas])
+
+  useEffect(() => {
+    const graph = graphRef.current
+    if (!graph) return
+    let raf = 0
+    const schedule = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(recomputePresenceHighlights)
+    }
+    const events = [
+      'node:change:position',
+      'node:change:size',
+      'edge:change:source',
+      'edge:change:target',
+      'edge:change:vertices',
+      'edge:change:data',
+      'scale',
+      'translate',
+      'resize',
+      'render:done',
+      'view:mounted',
+      'view:unmounted',
+    ]
+    events.forEach((event) => graph.on(event, schedule))
+    window.addEventListener('resize', schedule)
+    schedule()
+    return () => {
+      cancelAnimationFrame(raf)
+      events.forEach((event) => graph.off(event, schedule))
+      window.removeEventListener('resize', schedule)
+    }
+  }, [recomputePresenceHighlights])
 
   async function dropComponent(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault()
@@ -411,6 +672,11 @@ export function BusinessFlowEditor({
       const refreshed = await editorQuery.refetch()
       if (refreshed.data) {
         appendCanvasIntoGraph(refreshed.data)
+        if (collabRef.current?.isRealtimeEnabled()) {
+          queueMicrotask(() => {
+            commitRealtimeCanvas(collabRef.current?.pushGraph() ?? null)
+          })
+        }
       }
       setSaveState('saved')
       setSavedAt(new Date().toLocaleTimeString())
@@ -447,6 +713,18 @@ export function BusinessFlowEditor({
                   ? `已保存 ${savedAt}`
                   : '自动保存'}
           </span>
+          <Badge
+            variant={collabStatus === 'connected' ? 'secondary' : 'outline'}
+            className="hidden sm:inline-flex"
+          >
+            {collabStatus === 'connected'
+              ? `协同中 ${Math.max(onlineUsers.length, 1)} 人`
+              : collabStatus === 'connecting'
+                ? '协同连接中'
+                : collabStatus === 'error'
+                  ? '协同异常'
+                  : '协同断开'}
+          </Badge>
           <Badge variant="outline" className="hidden sm:inline-flex">
             {canvas?.laneInstances.length ?? 0} 泳道
           </Badge>
@@ -476,6 +754,30 @@ export function BusinessFlowEditor({
             onDrop={dropComponent}
           >
             <div ref={containerRef} className="h-full w-full" />
+            <div className="pointer-events-none absolute inset-0 z-30">
+              {presenceHighlights.map((item) => (
+                <div
+                  key={item.key}
+                  className="absolute rounded-md border-2 shadow-sm"
+                  aria-hidden="true"
+                  style={{
+                    left: item.rect.x,
+                    top: item.rect.y,
+                    width: item.rect.width,
+                    height: item.rect.height,
+                    borderColor: item.color,
+                    boxShadow: `0 0 0 1px color-mix(in srgb, ${item.color} 18%, transparent)`,
+                  }}
+                >
+                  <span
+                    className="absolute left-0 top-0 max-w-48 -translate-y-full truncate rounded-t-md px-1.5 py-0.5 text-[11px] font-medium leading-4 text-white shadow-sm"
+                    style={{ backgroundColor: item.color }}
+                  >
+                    {item.label}
+                  </span>
+                </div>
+              ))}
+            </div>
             {!editorQuery.isLoading &&
             (canvas?.laneInstances.length ?? 0) === 0 ? (
               <div className="pointer-events-none absolute left-1/2 top-10 w-80 -translate-x-1/2 rounded-md border border-dashed border-border bg-card/85 px-4 py-3 text-center text-xs text-muted-foreground shadow-sm">
@@ -489,10 +791,11 @@ export function BusinessFlowEditor({
               erGraphs={erGraphOptions}
               onChange={setSelected}
               onDelete={removeSelectedCell}
-              onPersist={schedulePersist}
+              onPersist={persistSelectedEdit}
               onClose={() => {
                 graphRef.current?.cleanSelection()
                 setSelected(null)
+                publishPresence(null)
               }}
             />
           ) : null}

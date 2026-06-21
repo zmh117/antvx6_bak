@@ -5,11 +5,11 @@ import {
   getMembership,
   isCurrentCollabRevision,
   loadYDoc,
-  parseGraphDocumentName,
+  parseCollabDocumentName,
   storeYDoc,
 } from './db.js'
 import { clientIdForUser, verifyJwt } from './jwt.js'
-import { materializeGraph } from './materialize.js'
+import { materializeCollabDocument } from './materialize.js'
 
 const ROLE_RANK = { viewer: 1, editor: 2, owner: 3 }
 
@@ -18,39 +18,43 @@ const server = new Server({
   debounce: 2000,
   maxDebounce: 10000,
   async onAuthenticate(data) {
-    const { graphId, collabRevision } = parseGraphDocumentName(data.documentName)
+    const docRef = parseCollabDocumentName(data.documentName)
     const payload = verifyJwt(data.token)
-    const role = await getMembership(graphId, payload.sub)
+    const role = await getMembership(docRef, payload.sub)
     if (!role) throw new Error('graph access denied')
-    if (!(await isCurrentCollabRevision(graphId, collabRevision))) {
+    if (!(await isCurrentCollabRevision(docRef))) {
       throw new Error('stale collab document')
     }
     if (ROLE_RANK[role] < ROLE_RANK.editor) {
       data.connectionConfig.readOnly = true
     }
     return {
-      graphId,
+      documentType: docRef.documentType,
+      ownerType: docRef.ownerType,
+      ownerId: docRef.ownerId,
+      graphId: docRef.graphId,
+      businessFlowId: docRef.businessFlowId,
       userId: payload.sub,
       email: payload.email,
       displayName: payload.name || payload.email,
       role,
-      collabRevision,
+      collabRevision: docRef.collabRevision,
       clientId: clientIdForUser(payload),
     }
   },
   async onLoadDocument(data) {
-    const { graphId, collabRevision } = parseGraphDocumentName(data.documentName)
-    if (!(await isCurrentCollabRevision(graphId, collabRevision))) {
+    const docRef = parseCollabDocumentName(data.documentName)
+    if (!(await isCurrentCollabRevision(docRef))) {
       throw new Error('stale collab document')
     }
-    return loadYDoc(graphId, collabRevision)
+    return loadYDoc(docRef)
   },
   async onChange(data) {
-    const { graphId, collabRevision } = parseGraphDocumentName(data.documentName)
-    if (!(await isCurrentCollabRevision(graphId, collabRevision))) return
+    const docRef = parseCollabDocumentName(data.documentName)
+    if (!(await isCurrentCollabRevision(docRef))) return
     if (data.update) {
       await appendYUpdate(
-        graphId,
+        docRef,
         data.update,
         data.context,
         String(data.transactionOrigin || 'remote'),
@@ -58,11 +62,11 @@ const server = new Server({
     }
   },
   async onStoreDocument(data) {
-    const { graphId, collabRevision } = parseGraphDocumentName(data.documentName)
-    if (!(await isCurrentCollabRevision(graphId, collabRevision))) return
-    await storeYDoc(graphId, data.document)
+    const docRef = parseCollabDocumentName(data.documentName)
+    if (!(await isCurrentCollabRevision(docRef))) return
+    await storeYDoc(docRef, data.document)
     try {
-      await materializeGraph(graphId, data.document, data.lastContext, collabRevision)
+      await materializeCollabDocument(docRef, data.document, data.lastContext)
     } catch (error) {
       console.error('[collab] materialize failed', error)
     }

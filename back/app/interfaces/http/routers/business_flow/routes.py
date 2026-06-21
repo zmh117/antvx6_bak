@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from psycopg.types.json import Jsonb
 
 from app.config import get_settings
@@ -12,6 +14,7 @@ from app.database import db_transaction, get_connection
 from app.interfaces.http.schemas.business_flow import (
     ApplyBusinessFlowChangesRequest,
     ApplyBusinessFlowChangesResponse,
+    BusinessFlowChangeOpPayload,
     BusinessFlowCreateRequest,
     BusinessFlowEditorStateResponse,
     BusinessFlowHistoryItemDTO,
@@ -28,6 +31,7 @@ from app.interfaces.http.schemas.business_flow import (
 from app.services.auth import (
     AuthenticatedUser,
     ensure_business_flow_role,
+    ensure_internal_token,
     ensure_product_role,
     get_current_user_from_header,
 )
@@ -484,7 +488,7 @@ def _write_business_flow_snapshot(
     cur,
     business_flow_id: UUID,
     version: int,
-    user_id: UUID,
+    user_id: UUID | str,
 ) -> None:
     state = _fetch_business_flow_editor_state(cur, business_flow_id)
     snapshot = state.model_dump(mode="json")
@@ -518,7 +522,7 @@ def _append_change_batch(
     source: str,
     summary: str,
     ops: list[dict],
-    user_id: UUID,
+    user_id: UUID | str,
 ) -> None:
     cur.execute(
         """
@@ -722,6 +726,8 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
     if op.op_type in {"MOVE_NODE", "UPDATE_NODE"}:
         values = {}
         to = patch.get("to") if isinstance(patch.get("to"), dict) else patch
+        if "laneInstanceKey" in patch and patch.get("laneInstanceKey"):
+            values["lane_instance_id"] = _resolve_lane_id(cur, business_flow_id, patch["laneInstanceKey"])
         if "x" in to:
             values["position_x"] = to["x"]
         if "y" in to:
@@ -829,6 +835,10 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 label = EXCLUDED.label,
                 edge_type = EXCLUDED.edge_type,
                 condition_text = EXCLUDED.condition_text,
+                data_contract_json = EXCLUDED.data_contract_json,
+                style_json = EXCLUDED.style_json,
+                properties_json = EXCLUDED.properties_json,
+                is_overridden = TRUE,
                 updated_at = NOW()
             """,
             (
@@ -851,6 +861,10 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
 
     if op.op_type == "UPDATE_EDGE":
         values = {}
+        if "sourcePort" in patch:
+            values["source_port"] = patch["sourcePort"] or None
+        if "targetPort" in patch:
+            values["target_port"] = patch["targetPort"] or None
         if "label" in patch:
             values["label"] = patch["label"] or None
         if "edgeType" in patch:
@@ -930,6 +944,399 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
         return
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"unsupported op_type: {op.op_type}")
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value or {}, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _same_text(left: Any, right: Any) -> bool:
+    return (left or "") == (right or "")
+
+
+def _same_number(left: Any, right: Any, tolerance: float = 0.5) -> bool:
+    try:
+        return abs(float(left or 0) - float(right or 0)) < tolerance
+    except (TypeError, ValueError):
+        return False
+
+
+def _number(value: Any, fallback: float = 0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed == parsed else fallback
+
+
+def _materialized_ref_signature(ref: dict[str, Any]) -> str:
+    return ":".join(
+        [
+            str(ref.get("er_diagram_id") or ref.get("erDiagramId") or ""),
+            str(ref.get("er_table_key") or ref.get("erTableKey") or ""),
+            str(ref.get("er_column_key") or ref.get("erColumnKey") or ""),
+        ]
+    )
+
+
+def _normalize_materialized_ref(ref: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": ref.get("id"),
+        "er_diagram_id": ref.get("er_diagram_id") or ref.get("erDiagramId"),
+        "er_table_key": ref.get("er_table_key") or ref.get("erTableKey"),
+        "er_column_key": ref.get("er_column_key") or ref.get("erColumnKey") or None,
+        "ref_type": ref.get("ref_type") or ref.get("refType") or "READ",
+        "description": ref.get("description") or None,
+    }
+
+
+def _build_materialized_er_ref_ops(
+    node_key: str,
+    node_title: str,
+    current_refs: list[dict[str, Any]],
+    incoming_refs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    ops: list[dict[str, Any]] = []
+    current = [_normalize_materialized_ref(ref) for ref in current_refs]
+    incoming = [_normalize_materialized_ref(ref) for ref in incoming_refs]
+    current_by_id = {
+        str(ref["id"]): ref
+        for ref in current
+        if ref.get("id")
+    }
+    current_by_signature = {
+        _materialized_ref_signature(ref): ref
+        for ref in current
+    }
+    incoming_ids = {
+        str(ref["id"])
+        for ref in incoming
+        if ref.get("id")
+    }
+    incoming_signatures = {_materialized_ref_signature(ref) for ref in incoming}
+
+    for ref in current:
+        ref_id = str(ref["id"]) if ref.get("id") else ""
+        signature = _materialized_ref_signature(ref)
+        if (ref_id and ref_id in incoming_ids) or signature in incoming_signatures:
+            continue
+        ops.append(
+            {
+                "op_type": "REMOVE_NODE_ER_REF",
+                "target_type": "ER_REF",
+                "target_key": ref_id,
+                "patch": {"nodeKey": node_key, "title": node_title},
+                "summary": f"移除 ER 绑定：{node_title}",
+            }
+        )
+
+    for ref in incoming:
+        signature = _materialized_ref_signature(ref)
+        matched = (
+            current_by_id.get(str(ref["id"]))
+            if ref.get("id")
+            else current_by_signature.get(signature)
+        )
+        if not matched:
+            if not ref.get("er_diagram_id") or not ref.get("er_table_key"):
+                continue
+            ops.append(
+                {
+                    "op_type": "ADD_NODE_ER_REF",
+                    "target_type": "ER_REF",
+                    "target_key": node_key,
+                    "patch": {
+                        "nodeKey": node_key,
+                        "erDiagramId": ref["er_diagram_id"],
+                        "erTableKey": ref["er_table_key"],
+                        "erColumnKey": ref.get("er_column_key"),
+                        "refType": ref.get("ref_type") or "READ",
+                        "description": ref.get("description"),
+                    },
+                    "summary": f"新增 ER 绑定：{node_title}",
+                }
+            )
+            continue
+        if (
+            (matched.get("ref_type") or "READ") != (ref.get("ref_type") or "READ")
+            or (matched.get("description") or "") != (ref.get("description") or "")
+        ):
+            ops.append(
+                {
+                    "op_type": "UPDATE_NODE_ER_REF",
+                    "target_type": "ER_REF",
+                    "target_key": str(matched["id"]),
+                    "patch": {
+                        "refType": ref.get("ref_type") or "READ",
+                        "description": ref.get("description"),
+                    },
+                    "summary": f"更新 ER 绑定：{node_title}",
+                }
+            )
+    return ops
+
+
+def _edge_patch(edge: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "sourceNodeKey": edge.get("source_node_key"),
+        "targetNodeKey": edge.get("target_node_key"),
+        "sourcePort": edge.get("source_port"),
+        "targetPort": edge.get("target_port"),
+        "edgeType": edge.get("edge_type") or "SEQUENCE",
+        "label": edge.get("label"),
+        "conditionText": edge.get("condition_text"),
+        "dataContractJson": edge.get("data_contract_json") or {},
+        "styleJson": edge.get("style_json") or {},
+        "propertiesJson": edge.get("properties_json") or {},
+    }
+
+
+def _build_business_flow_materialize_ops(
+    current_state: dict[str, Any],
+    incoming_state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    ops: list[dict[str, Any]] = []
+    current_lanes = {
+        lane["instance_key"]: lane
+        for lane in current_state.get("lane_instances", [])
+        if lane.get("instance_key")
+    }
+    current_lane_key_by_id = {
+        str(lane.get("id")): key
+        for key, lane in current_lanes.items()
+        if lane.get("id")
+    }
+    incoming_lanes = {
+        lane["instance_key"]: lane
+        for lane in incoming_state.get("lane_instances", [])
+        if lane.get("instance_key")
+    }
+    lane_key_by_id = {
+        str(lane.get("id")): key
+        for key, lane in incoming_lanes.items()
+        if lane.get("id")
+    }
+
+    for key, lane in incoming_lanes.items():
+        current = current_lanes.get(key)
+        if not current:
+            continue
+        if (
+            not _same_number(current.get("position_x"), lane.get("position_x"))
+            or not _same_number(current.get("position_y"), lane.get("position_y"))
+            or not _same_number(current.get("width"), lane.get("width"))
+            or not _same_number(current.get("height"), lane.get("height"))
+            or _stable_json(current.get("layout_json")) != _stable_json(lane.get("layout_json"))
+        ):
+            ops.append(
+                {
+                    "op_type": "MOVE_LANE_INSTANCE",
+                    "target_type": "LANE_INSTANCE",
+                    "target_key": key,
+                    "patch": {
+                        "to": {
+                            "x": _number(lane.get("position_x")),
+                            "y": _number(lane.get("position_y")),
+                            "width": _number(lane.get("width"), 360),
+                            "height": _number(lane.get("height"), 360),
+                        },
+                        "layoutJson": lane.get("layout_json") or {},
+                    },
+                    "summary": f"移动泳道：{lane.get('display_name') or key}",
+                }
+            )
+        if (
+            not _same_text(current.get("display_name"), lane.get("display_name"))
+            or not _same_text(current.get("owner_role"), lane.get("owner_role"))
+        ):
+            ops.append(
+                {
+                    "op_type": "RENAME_LANE_INSTANCE",
+                    "target_type": "LANE_INSTANCE",
+                    "target_key": key,
+                    "patch": {
+                        "displayName": lane.get("display_name") or "泳道实例",
+                        "ownerRole": lane.get("owner_role"),
+                    },
+                    "summary": f"更新泳道：{lane.get('display_name') or key}",
+                }
+            )
+
+    current_nodes = {
+        node["node_key"]: node
+        for node in current_state.get("nodes", [])
+        if node.get("node_key")
+    }
+    incoming_nodes = {
+        node["node_key"]: node
+        for node in incoming_state.get("nodes", [])
+        if node.get("node_key")
+    }
+    for key, node in current_nodes.items():
+        if key not in incoming_nodes:
+            ops.append(
+                {
+                    "op_type": "REMOVE_NODE",
+                    "target_type": "NODE",
+                    "target_key": key,
+                    "patch": {"title": node.get("title")},
+                    "summary": f"删除节点：{node.get('title') or key}",
+                }
+            )
+    for key, node in incoming_nodes.items():
+        current = current_nodes.get(key)
+        lane_key = node.get("lane_instance_key") or lane_key_by_id.get(str(node.get("lane_instance_id") or ""))
+        if not current:
+            if not lane_key:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"materialized node missing lane: {key}",
+                )
+            ops.append(
+                {
+                    "op_type": "ADD_NODE",
+                    "target_type": "NODE",
+                    "target_key": key,
+                    "patch": {
+                        "laneInstanceKey": lane_key,
+                        "nodeType": node.get("node_type") or "TASK",
+                        "title": node.get("title") or "任务",
+                        "x": _number(node.get("position_x")),
+                        "y": _number(node.get("position_y")),
+                        "width": _number(node.get("width"), 120),
+                        "height": _number(node.get("height"), 60),
+                        "description": node.get("description"),
+                        "actor": node.get("actor"),
+                        "businessRule": node.get("business_rule"),
+                        "inputSummary": node.get("input_summary"),
+                        "outputSummary": node.get("output_summary"),
+                        "styleJson": node.get("style_json") or {},
+                        "propertiesJson": node.get("properties_json") or {},
+                    },
+                    "summary": f"新增节点：{node.get('title') or key}",
+                }
+            )
+            ops.extend(
+                _build_materialized_er_ref_ops(
+                    key,
+                    node.get("title") or key,
+                    [],
+                    node.get("er_refs") or [],
+                )
+            )
+            continue
+        patch: dict[str, Any] = {}
+        if (
+            not _same_number(current.get("position_x"), node.get("position_x"))
+            or not _same_number(current.get("position_y"), node.get("position_y"))
+            or not _same_number(current.get("width"), node.get("width"))
+            or not _same_number(current.get("height"), node.get("height"))
+        ):
+            patch["to"] = {
+                "x": _number(node.get("position_x")),
+                "y": _number(node.get("position_y")),
+                "width": _number(node.get("width"), 120),
+                "height": _number(node.get("height"), 60),
+            }
+        current_lane_key = current_lane_key_by_id.get(str(current.get("lane_instance_id") or ""))
+        if lane_key and current_lane_key and lane_key != current_lane_key:
+            patch["laneInstanceKey"] = lane_key
+        if not _same_text(current.get("title"), node.get("title")):
+            patch["title"] = node.get("title") or "任务"
+        if not _same_text(current.get("description"), node.get("description")):
+            patch["description"] = node.get("description")
+        if not _same_text(current.get("actor"), node.get("actor")):
+            patch["actor"] = node.get("actor")
+        if not _same_text(current.get("business_rule"), node.get("business_rule")):
+            patch["businessRule"] = node.get("business_rule")
+        if not _same_text(current.get("input_summary"), node.get("input_summary")):
+            patch["inputSummary"] = node.get("input_summary")
+        if not _same_text(current.get("output_summary"), node.get("output_summary")):
+            patch["outputSummary"] = node.get("output_summary")
+        if patch:
+            ops.append(
+                {
+                    "op_type": "UPDATE_NODE",
+                    "target_type": "NODE",
+                    "target_key": key,
+                    "patch": patch,
+                    "summary": f"更新节点：{node.get('title') or key}",
+                }
+            )
+        ops.extend(
+            _build_materialized_er_ref_ops(
+                key,
+                node.get("title") or key,
+                current.get("er_refs") or [],
+                node.get("er_refs") or [],
+            )
+        )
+
+    current_edges = {
+        edge["edge_key"]: edge
+        for edge in current_state.get("edges", [])
+        if edge.get("edge_key")
+    }
+    incoming_edges = {
+        edge["edge_key"]: edge
+        for edge in incoming_state.get("edges", [])
+        if edge.get("edge_key")
+    }
+    for key, edge in current_edges.items():
+        if key not in incoming_edges:
+            ops.append(
+                {
+                    "op_type": "REMOVE_EDGE",
+                    "target_type": "EDGE",
+                    "target_key": key,
+                    "patch": {"label": edge.get("label")},
+                    "summary": f"删除连线：{edge.get('label') or key}",
+                }
+            )
+    for key, edge in incoming_edges.items():
+        if edge.get("source_type", "NODE") != "NODE" or edge.get("target_type", "NODE") != "NODE":
+            continue
+        current = current_edges.get(key)
+        patch = _edge_patch(edge)
+        if not current:
+            ops.append(
+                {
+                    "op_type": "ADD_EDGE",
+                    "target_type": "EDGE",
+                    "target_key": key,
+                    "patch": patch,
+                    "summary": f"新增连线：{edge.get('label') or key}",
+                }
+            )
+            continue
+        endpoint_changed = (
+            (current.get("source_node_key") or "") != (edge.get("source_node_key") or "")
+            or (current.get("target_node_key") or "") != (edge.get("target_node_key") or "")
+        )
+        changed = endpoint_changed or any(
+            (current.get(field) or "") != (edge.get(field) or "")
+            for field in [
+                "source_port",
+                "target_port",
+                "edge_type",
+                "label",
+                "condition_text",
+            ]
+        )
+        changed = changed or _stable_json(current.get("data_contract_json")) != _stable_json(edge.get("data_contract_json"))
+        changed = changed or _stable_json(current.get("style_json")) != _stable_json(edge.get("style_json"))
+        changed = changed or _stable_json(current.get("properties_json")) != _stable_json(edge.get("properties_json"))
+        if changed:
+            ops.append(
+                {
+                    "op_type": "ADD_EDGE" if endpoint_changed else "UPDATE_EDGE",
+                    "target_type": "EDGE",
+                    "target_key": key,
+                    "patch": patch,
+                    "summary": f"更新连线：{edge.get('label') or key}",
+                }
+            )
+    return ops
 
 
 @router.get("/{business_flow_id}/editor-state", response_model=BusinessFlowEditorStateResponse)
@@ -1287,6 +1694,92 @@ def apply_business_flow_changes(
                 user.id,
             )
             _write_business_flow_snapshot(cur, business_flow_id, new_version, user.id)
+            return ApplyBusinessFlowChangesResponse(new_version=new_version, summary=summary)
+
+
+@router.post("/{business_flow_id}/internal/materialize", response_model=ApplyBusinessFlowChangesResponse)
+def materialize_business_flow_from_collab(
+    business_flow_id: UUID,
+    body: dict[str, Any],
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> ApplyBusinessFlowChangesResponse:
+    ensure_internal_token(x_internal_token)
+    if body.get("business_flow_id") and str(body["business_flow_id"]) != str(business_flow_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="business flow id mismatch",
+        )
+    with db_transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT current_version, collab_revision
+                FROM business_flow
+                WHERE id = %s AND status <> 'ARCHIVED'
+                FOR UPDATE
+                """,
+                (business_flow_id,),
+            )
+            flow = cur.fetchone()
+            if not flow:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"business flow not found: {business_flow_id}",
+                )
+
+            current_revision = int(flow.get("collab_revision") or 1)
+            try:
+                incoming_revision = int(body.get("collabRevision"))
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="collabRevision is required",
+                ) from None
+            if incoming_revision != current_revision:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "business flow collaboration revision conflict: "
+                        f"current={current_revision}, incoming={incoming_revision}"
+                    ),
+                )
+
+            current_version = int(flow["current_version"])
+            current_state = _fetch_business_flow_editor_state(cur, business_flow_id).model_dump(mode="json")
+            incoming_state = {
+                "lane_instances": body.get("lane_instances") or [],
+                "nodes": body.get("nodes") or [],
+                "edges": body.get("edges") or [],
+            }
+            ops = _build_business_flow_materialize_ops(current_state, incoming_state)
+            if not ops:
+                return ApplyBusinessFlowChangesResponse(new_version=current_version, summary="无变更")
+
+            for op in ops:
+                _apply_business_flow_op(cur, business_flow_id, BusinessFlowChangeOpPayload(**op))
+            _normalize_business_flow_lane_bounds(cur, business_flow_id)
+            new_version = current_version + 1
+            summary = f"协同更新了 {len(ops)} 项内容"
+            cur.execute(
+                """
+                UPDATE business_flow
+                SET current_version = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_version, business_flow_id),
+            )
+            actor_id = body.get("userId") or body.get("clientId") or "collab"
+            _append_change_batch(
+                cur,
+                business_flow_id,
+                current_version,
+                new_version,
+                body.get("operationSource") or "collab_auto_save",
+                summary,
+                ops,
+                actor_id,
+            )
+            _write_business_flow_snapshot(cur, business_flow_id, new_version, actor_id)
             return ApplyBusinessFlowChangesResponse(new_version=new_version, summary=summary)
 
 

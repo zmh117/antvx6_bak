@@ -7,3 +7,5 @@ export type BusinessFlowCollaborationOwner =
       ownerType: 'SWIMLANE_COMPONENT_DRAFT'
       ownerId: string
     }
+
+export * from './businessFlowCollaboration'

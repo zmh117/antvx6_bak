@@ -454,6 +454,7 @@ function normalizeBusinessFlowEditorState(
     code: meta?.code ?? null,
     description: meta?.description ?? null,
     version: state.current_version,
+    collabRevision: state.collab_revision ?? 1,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     laneInstances: state.lane_instances.map((lane) => ({

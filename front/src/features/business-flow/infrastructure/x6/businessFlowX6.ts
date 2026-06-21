@@ -691,6 +691,135 @@ export function addMissingBusinessFlowCells(
   return added
 }
 
+export function applyBusinessFlowCanvasToGraph(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+) {
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  const incomingLaneKeys = new Set(canvas.laneInstances.map((lane) => lane.instanceKey))
+  const incomingNodeKeys = new Set(canvas.nodes.map((node) => node.nodeKey))
+  const incomingEdgeKeys = new Set(canvas.edges.map((edge) => edge.edgeKey))
+
+  graph.batchUpdate(() => {
+    graph.getEdges().forEach((edge) => {
+      if (readCellData(edge).cellRole !== 'FLOW_EDGE') return
+      if (!incomingEdgeKeys.has(edge.id)) graph.removeCell(edge)
+    })
+    graph.getNodes().forEach((node) => {
+      const role = readCellData(node).cellRole
+      if (role === 'FLOW_NODE' && !incomingNodeKeys.has(node.id)) graph.removeCell(node)
+      if (role === 'LANE_INSTANCE' && !incomingLaneKeys.has(node.id)) graph.removeCell(node)
+    })
+
+    canvas.laneInstances.forEach((lane) => {
+      const existing = graph.getCellById(lane.instanceKey)
+      if (!(existing instanceof Node) || readCellData(existing).cellRole !== 'LANE_INSTANCE') {
+        if (existing) graph.removeCell(existing)
+        addLaneInstanceCell(graph, canvas, lane)
+        return
+      }
+      existing.position(lane.position.x, lane.position.y)
+      existing.resize(lane.size.width, lane.size.height)
+      existing.attr('label/text', lane.displayName)
+      existing.attr('owner/text', lane.ownerRole ?? '')
+      existing.setZIndex(LANE_Z_INDEX_BASE + lane.zIndex)
+      existing.setData(
+        {
+          ...readCellData(existing),
+          boundedContext: 'business-flow',
+          cellRole: 'LANE_INSTANCE',
+          businessFlowId: canvas.businessFlowId,
+          laneInstanceId: lane.laneInstanceId,
+          laneInstanceKey: lane.instanceKey,
+          componentId: lane.componentId,
+          componentVersionId: lane.componentVersionId,
+          title: lane.displayName,
+          layoutJson: lane.layoutJson ?? null,
+        } satisfies FlowCellData,
+        { silent: true },
+      )
+    })
+
+    canvas.nodes.forEach((node) => {
+      const laneKey = laneKeyById.get(node.laneInstanceId)
+      const laneRecord = laneById.get(node.laneInstanceId)
+      const lane = laneKey ? graph.getCellById(laneKey) : null
+      const expectedShape = shapeName(node.nodeType)
+      const existing = graph.getCellById(node.nodeKey)
+      if (
+        !(existing instanceof Node) ||
+        readCellData(existing).cellRole !== 'FLOW_NODE' ||
+        existing.shape !== expectedShape
+      ) {
+        if (existing) graph.removeCell(existing)
+        addFlowNodeCell(graph, node, laneById, laneKeyById)
+        return
+      }
+      if (lane instanceof Node) {
+        lane.addChild(existing)
+        existing.position(node.position.x, node.position.y, { relative: true })
+      } else {
+        existing.position(
+          laneRecord ? laneRecord.position.x + node.position.x : node.position.x,
+          laneRecord ? laneRecord.position.y + node.position.y : node.position.y,
+        )
+      }
+      existing.resize(node.size.width, node.size.height)
+      existing.attr(nodeAttrs(node.nodeType, node.title))
+      existing.setData(
+        {
+          ...readCellData(existing),
+          boundedContext: 'business-flow',
+          cellRole: 'FLOW_NODE',
+          businessFlowId: canvas.businessFlowId,
+          laneInstanceId: node.laneInstanceId,
+          laneInstanceKey: laneKey,
+          nodeKey: node.nodeKey,
+          originComponentNodeKey: node.originComponentNodeKey,
+          nodeType: node.nodeType,
+          title: node.title,
+          description: node.description ?? null,
+          actor: node.actor ?? null,
+          businessRule: node.businessRule ?? null,
+          erRefs: node.erRefs ?? [],
+        } satisfies FlowCellData,
+        { silent: true },
+      )
+    })
+
+    normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
+
+    canvas.edges.forEach((edge) => {
+      if (!edge.sourceNodeKey || !edge.targetNodeKey) return
+      const existing = graph.getCellById(edge.edgeKey)
+      if (!(existing instanceof Edge) || readCellData(existing).cellRole !== 'FLOW_EDGE') {
+        if (existing) graph.removeCell(existing)
+        addFlowEdgeCell(graph, canvas, edge)
+        return
+      }
+      existing.setSource({ cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined })
+      existing.setTarget({ cell: edge.targetNodeKey, port: edge.targetPort ?? undefined })
+      existing.attr(edgeAttrs(edge.isCrossLane))
+      existing.setLabels(edgeLabels(edge.label))
+      existing.setData(
+        {
+          ...readCellData(existing),
+          boundedContext: 'business-flow',
+          cellRole: 'FLOW_EDGE',
+          businessFlowId: canvas.businessFlowId,
+          laneInstanceId: edge.laneInstanceId ?? undefined,
+          edgeKey: edge.edgeKey,
+          originComponentEdgeKey: edge.originComponentEdgeKey,
+          title: edge.label ?? '',
+        } satisfies FlowCellData,
+        { silent: true },
+      )
+      existing.setZIndex(EDGE_Z_INDEX)
+    })
+  })
+}
+
 export function normalizeBusinessFlowLanes(
   graph: Graph,
   options: {
@@ -824,9 +953,11 @@ export function componentDraftFromGraph(graph: Graph) {
 
 export function flowDraftFromGraph(
   graph: Graph,
-  canvas: Pick<LocalBusinessFlowCanvas, 'businessFlowId' | 'name' | 'code' | 'description'>,
+  canvas: Pick<LocalBusinessFlowCanvas, 'businessFlowId' | 'name' | 'code' | 'description' | 'collabRevision' | 'nodes' | 'edges'>,
 ) {
   const timestamp = new Date().toISOString()
+  const previousNodes = new Map(canvas.nodes.map((node) => [node.nodeKey, node]))
+  const previousEdges = new Map(canvas.edges.map((edge) => [edge.edgeKey, edge]))
   const lanes = graph
     .getNodes()
     .filter((node) => readCellData(node).cellRole === 'LANE_INSTANCE')
@@ -863,6 +994,8 @@ export function flowDraftFromGraph(
     .filter((node) => readCellData(node).cellRole === 'FLOW_NODE')
     .map((node) => {
       const data = readCellData(node)
+      const nodeKey = data.nodeKey ?? node.id
+      const previousNode = previousNodes.get(nodeKey)
       const parent = node.getParent()
       const position =
         parent instanceof Node && readCellData(parent).cellRole === 'LANE_INSTANCE'
@@ -874,10 +1007,10 @@ export function flowDraftFromGraph(
       return {
         kind: 'BUSINESS_FLOW_NODE' as const,
         businessFlowId: canvas.businessFlowId,
-        nodeId: data.nodeKey ?? node.id,
-        nodeKey: data.nodeKey ?? node.id,
+        nodeId: previousNode?.nodeId ?? nodeKey,
+        nodeKey,
         laneInstanceId: data.laneInstanceId ?? laneIdByKey.get(laneKey ?? '') ?? '',
-        originComponentNodeKey: data.originComponentNodeKey ?? null,
+        originComponentNodeKey: data.originComponentNodeKey ?? previousNode?.originComponentNodeKey ?? null,
         nodeType: data.nodeType ?? 'TASK',
         title: data.title ?? String(node.attr('label/text') ?? '任务'),
         description: data.description ?? null,
@@ -886,12 +1019,12 @@ export function flowDraftFromGraph(
         erRefs: data.erRefs ?? [],
         position,
         size,
-        inputSummary: null,
-        outputSummary: null,
+        inputSummary: previousNode?.inputSummary ?? null,
+        outputSummary: previousNode?.outputSummary ?? null,
         isOverridden: true,
-        styleJson: null,
-        propertiesJson: null,
-        createdAt: timestamp,
+        styleJson: previousNode?.styleJson ?? null,
+        propertiesJson: previousNode?.propertiesJson ?? null,
+        createdAt: previousNode?.createdAt ?? timestamp,
         updatedAt: timestamp,
       } satisfies BusinessFlowNodeRecord
     })
@@ -905,6 +1038,8 @@ export function flowDraftFromGraph(
       const targetCell = terminalCellId(target)
       if (!sourceCell || !targetCell) return []
       const data = readCellData(edge)
+      const edgeKey = data.edgeKey ?? edge.id
+      const previousEdge = previousEdges.get(edgeKey)
       const sourceNodeKey = sourceCell
       const targetNodeKey = targetCell
       const sourceLaneKey = nodeLaneKey.get(sourceNodeKey)
@@ -914,13 +1049,13 @@ export function flowDraftFromGraph(
         {
           kind: 'BUSINESS_FLOW_EDGE' as const,
           businessFlowId: canvas.businessFlowId,
-          edgeId: data.edgeKey ?? edge.id,
-          edgeKey: data.edgeKey ?? edge.id,
+          edgeId: previousEdge?.edgeId ?? edgeKey,
+          edgeKey,
           laneInstanceId: isCrossLane ? null : laneIdByKey.get(sourceLaneKey ?? '') ?? null,
           edgeType: isCrossLane ? 'DEPENDENCY' : 'SEQUENCE',
           label: data.title ?? readEdgeLabel(edge),
-          conditionText: null,
-          dataContract: undefined,
+          conditionText: previousEdge?.conditionText ?? null,
+          dataContract: previousEdge?.dataContract,
           isCrossLane,
           sourceType: 'NODE' as const,
           sourceNodeKey,
@@ -930,11 +1065,11 @@ export function flowDraftFromGraph(
           targetNodeKey,
           targetLaneInstanceKey: null,
           targetPort: terminalPort(target),
-          originComponentEdgeKey: data.originComponentEdgeKey ?? null,
+          originComponentEdgeKey: data.originComponentEdgeKey ?? previousEdge?.originComponentEdgeKey ?? null,
           isOverridden: true,
-          styleJson: null,
-          propertiesJson: null,
-          createdAt: timestamp,
+          styleJson: previousEdge?.styleJson ?? null,
+          propertiesJson: previousEdge?.propertiesJson ?? null,
+          createdAt: previousEdge?.createdAt ?? timestamp,
           updatedAt: timestamp,
         } satisfies BusinessFlowEdgeRecord,
       ]
@@ -944,6 +1079,7 @@ export function flowDraftFromGraph(
     name: canvas.name,
     code: canvas.code,
     description: canvas.description,
+    collabRevision: canvas.collabRevision,
     laneInstances: lanes,
     nodes,
     edges,
