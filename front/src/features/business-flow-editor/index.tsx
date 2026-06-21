@@ -74,6 +74,19 @@ type PresenceHighlight = {
   rect: { x: number; y: number; width: number; height: number }
 }
 
+function activeAwarenessUsers(states: BusinessFlowRemoteAwareness[]) {
+  const users = new Map<
+    string,
+    { id?: string; name?: string; email?: string; color?: string }
+  >()
+  states.forEach((state) => {
+    const userKey =
+      state.user.id || state.user.email || state.user.name || String(state.clientId)
+    users.set(userKey, state.user)
+  })
+  return Array.from(users.values())
+}
+
 export function BusinessFlowEditor({
   businessFlowId,
   onBack,
@@ -545,11 +558,10 @@ export function BusinessFlowEditor({
       },
       onAwareness: (states) => {
         setRemoteAwareness(states)
-        setOnlineUsers(states.map((state) => state.user))
+        setOnlineUsers(activeAwarenessUsers(states))
       },
       onError: () => {
         setCollabStatus('error')
-        setSaveState('error')
       },
       setApplyingRemote: (value) => {
         applyingRemoteRef.current = value

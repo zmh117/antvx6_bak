@@ -638,8 +638,7 @@ export function createBusinessFlowCollaboration(
     },
     destroy() {
       clearDisconnectTimer()
-      provider.awareness?.setLocalStateField('target', null)
-      provider.awareness?.setLocalStateField('activity', undefined)
+      provider.awareness?.setLocalState(null)
       doc.off('afterTransaction', onRemoteChange)
       provider.awareness?.off('change', updateAwareness)
       provider.destroy()
