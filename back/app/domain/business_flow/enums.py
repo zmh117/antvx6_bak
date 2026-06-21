@@ -14,10 +14,25 @@ ComponentVersionStatus = Literal["DRAFT", "PUBLISHED"]
 BusinessFlowStatus = Literal["DRAFT", "PUBLISHED", "ARCHIVED"]
 BusinessFlowRole = Literal["owner", "editor", "viewer"]
 LaneInstanceStatus = Literal["ACTIVE", "REMOVED"]
-BusinessNodeType = Literal["START", "END", "TASK", "DECISION", "SERVICE", "MANUAL", "EVENT"]
+BusinessNodeType = Literal[
+    "START",
+    "END",
+    "TASK",
+    "DECISION",
+    "SERVICE",
+    "MANUAL",
+    "EVENT",
+    "GATEWAY",
+    "SUB_PROCESS",
+    "CALL_ACTIVITY",
+    "DATA_OBJECT",
+    "TEXT_ANNOTATION",
+]
 BusinessEdgeEndpointType = Literal["NODE", "LANE"]
 BusinessEdgeType = Literal[
     "SEQUENCE",
+    "MESSAGE",
+    "ASSOCIATION",
     "TRIGGER",
     "DATA_FLOW",
     "CALL",
@@ -42,10 +57,17 @@ BUSINESS_NODE_TYPES: tuple[str, ...] = (
     "SERVICE",
     "MANUAL",
     "EVENT",
+    "GATEWAY",
+    "SUB_PROCESS",
+    "CALL_ACTIVITY",
+    "DATA_OBJECT",
+    "TEXT_ANNOTATION",
 )
 BUSINESS_EDGE_ENDPOINT_TYPES: tuple[str, ...] = ("NODE", "LANE")
 BUSINESS_EDGE_TYPES: tuple[str, ...] = (
     "SEQUENCE",
+    "MESSAGE",
+    "ASSOCIATION",
     "TRIGGER",
     "DATA_FLOW",
     "CALL",

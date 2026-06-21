@@ -23,8 +23,16 @@ import { businessFlowKeys } from '@/entities/business-flow/api/queryKeys'
 import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { useGraphsQuery } from '@/entities/er-graph/api'
 import type {
+  BpmnEdgeProfile,
+  BpmnNodeProfile,
   LocalBusinessFlowCanvas,
+  MesSemantics,
   SwimlaneComponentListItem,
+} from '@/entities/business-flow'
+import {
+  mergeBpmnIntoProperties,
+  normalizeBpmnEdgeProfile,
+  normalizeMesSemantics,
 } from '@/entities/business-flow'
 import {
   addMissingBusinessFlowCells,
@@ -38,7 +46,9 @@ import {
   rememberManualLaneSize,
   removeBusinessFlowCells,
   renderBusinessFlowCanvas,
+  updateEdgeBpmnProfile,
   updateEdgeText,
+  updateNodeBpmnProfile,
   updateNodeText,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 import {
@@ -49,6 +59,11 @@ import {
   type BusinessFlowRemoteAwareness,
 } from '@/features/business-flow/infrastructure/yjs'
 import { NodeErBindingEditor } from '@/features/business-flow/presentation/components/NodeErBindingEditor'
+import {
+  BpmnEdgeProfileFields,
+  BpmnNodeProfileFields,
+  MesSemanticsFields,
+} from '@/features/business-flow/presentation/components/BpmnMesFields'
 import {
   buildBusinessFlowOps,
   isLayoutOnlyBusinessFlowOps,
@@ -65,6 +80,21 @@ const PRESENCE_LABELS: Record<BusinessFlowPresenceActivity, string> = {
   editing: '正在编辑',
   dragging: '正在移动',
   connecting: '已连接',
+}
+
+function updateCellMesSemantics(
+  cell: Cell,
+  profile: BpmnNodeProfile | BpmnEdgeProfile,
+  mesSemantics: MesSemantics,
+) {
+  const data = readCellData(cell)
+  const normalized = normalizeMesSemantics(mesSemantics)
+  cell.setData({
+    ...data,
+    mesSemantics: normalized,
+    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, profile, normalized),
+  })
+  return normalized
 }
 
 type PresenceHighlight = {
@@ -478,11 +508,21 @@ export function BusinessFlowEditor({
     })
     graph.on('edge:connected', ({ edge }) => {
       const data = readCellData(edge)
+      const bpmnProfile = normalizeBpmnEdgeProfile({ edgeType: 'SEQUENCE' })
+      const mesSemantics = normalizeMesSemantics()
       edge.setData({
         ...data,
         cellRole: 'FLOW_EDGE',
         businessFlowId,
         edgeKey: data.edgeKey ?? edge.id,
+        edgeType: 'SEQUENCE',
+        ...bpmnProfile,
+        mesSemantics,
+        propertiesJson: mergeBpmnIntoProperties(
+          data.propertiesJson,
+          bpmnProfile,
+          mesSemantics,
+        ),
         title: '',
       })
       setSelected(readSelectedBusinessCell(edge))
@@ -1110,7 +1150,7 @@ function BusinessInspector({
   }
   if (selected.kind === 'edge') {
     return (
-      <div>
+      <div className="space-y-4">
         <div className="text-xs font-semibold">连线属性</div>
         <FieldGroup className="mt-3">
           <Field>
@@ -1126,11 +1166,37 @@ function BusinessInspector({
             />
           </Field>
         </FieldGroup>
+        <div>
+          <div className="mb-2 text-xs font-semibold">BPMN 连线</div>
+          <BpmnEdgeProfileFields
+            profile={selected.bpmnProfile}
+            onChange={(profile) => {
+              const bpmnProfile = updateEdgeBpmnProfile(selected.cell, profile)
+              onChange({ ...selected, bpmnProfile })
+              onPersist()
+            }}
+          />
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-semibold">MES 语义</div>
+          <MesSemanticsFields
+            value={selected.mesSemantics}
+            onChange={(mesSemantics) => {
+              const nextMesSemantics = updateCellMesSemantics(
+                selected.cell,
+                selected.bpmnProfile,
+                mesSemantics,
+              )
+              onChange({ ...selected, mesSemantics: nextMesSemantics })
+              onPersist()
+            }}
+          />
+        </div>
       </div>
     )
   }
   return (
-    <div>
+    <div className="space-y-4">
       <div className="text-xs font-semibold">流程节点</div>
       <FieldGroup className="mt-3">
         <Field>
@@ -1189,7 +1255,65 @@ function BusinessInspector({
             }}
           />
         </Field>
+        <Field>
+          <FieldLabel>输入摘要</FieldLabel>
+          <Textarea
+            rows={2}
+            value={selected.inputSummary}
+            onChange={(event) => {
+              const inputSummary = event.target.value
+              selected.cell.setData({
+                ...readCellData(selected.cell),
+                inputSummary,
+              })
+              onChange({ ...selected, inputSummary })
+              onPersist()
+            }}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>输出摘要</FieldLabel>
+          <Textarea
+            rows={2}
+            value={selected.outputSummary}
+            onChange={(event) => {
+              const outputSummary = event.target.value
+              selected.cell.setData({
+                ...readCellData(selected.cell),
+                outputSummary,
+              })
+              onChange({ ...selected, outputSummary })
+              onPersist()
+            }}
+          />
+        </Field>
       </FieldGroup>
+      <div>
+        <div className="mb-2 text-xs font-semibold">BPMN 节点</div>
+        <BpmnNodeProfileFields
+          profile={selected.bpmnProfile}
+          onChange={(profile) => {
+            const bpmnProfile = updateNodeBpmnProfile(selected.cell, profile)
+            onChange({ ...selected, bpmnProfile })
+            onPersist()
+          }}
+        />
+      </div>
+      <div>
+        <div className="mb-2 text-xs font-semibold">MES 语义</div>
+        <MesSemanticsFields
+          value={selected.mesSemantics}
+          onChange={(mesSemantics) => {
+            const nextMesSemantics = updateCellMesSemantics(
+              selected.cell,
+              selected.bpmnProfile,
+              mesSemantics,
+            )
+            onChange({ ...selected, mesSemantics: nextMesSemantics })
+            onPersist()
+          }}
+        />
+      </div>
       <NodeErBindingEditor
         erRefs={selected.erRefs}
         erGraphs={erGraphs}

@@ -357,6 +357,7 @@ def _node_response(row: dict, refs_by_node_id: dict[UUID, list[dict]] | None = N
         "position_y": float(row["position_y"]),
         "width": float(row["width"]),
         "height": float(row["height"]),
+        "mes_semantics_json": _json_value(row, "mes_semantics_json"),
         "style_json": _json_value(row, "style_json"),
         "properties_json": _json_value(row, "properties_json"),
         "er_refs": (refs_by_node_id or {}).get(row["id"], []),
@@ -367,6 +368,7 @@ def _edge_response(row: dict) -> dict:
     return {
         **row,
         "data_contract_json": _json_value(row, "data_contract_json"),
+        "mes_semantics_json": _json_value(row, "mes_semantics_json"),
         "style_json": _json_value(row, "style_json"),
         "properties_json": _json_value(row, "properties_json"),
     }
@@ -432,7 +434,11 @@ def _fetch_business_flow_editor_state(
     cur.execute(
         """
         SELECT id, lane_instance_id, node_key, origin_component_node_key, node_type,
+               bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+               bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+               bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
                title, description, actor, business_rule, input_summary, output_summary,
+               mes_semantics_json,
                position_x, position_y, width, height, is_overridden, style_json,
                properties_json
         FROM business_flow_node
@@ -452,7 +458,9 @@ def _fetch_business_flow_editor_state(
                e.target_node_id, tn.node_key AS target_node_key,
                e.target_lane_instance_id, tli.instance_key AS target_lane_instance_key,
                e.target_port, e.edge_type, e.label, e.condition_text,
-               e.data_contract_json, e.origin_component_edge_key, e.is_overridden,
+               e.bpmn_flow_type, e.bpmn_sequence_flow_kind, e.bpmn_message_name,
+               e.bpmn_condition_expression, e.data_contract_json, e.mes_semantics_json,
+               e.origin_component_edge_key, e.is_overridden,
                e.style_json, e.properties_json
         FROM business_flow_edge e
         LEFT JOIN business_flow_node sn ON sn.id = e.source_node_id
@@ -743,10 +751,27 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             "businessRule": "business_rule",
             "inputSummary": "input_summary",
             "outputSummary": "output_summary",
+            "nodeType": "node_type",
+            "bpmnElementType": "bpmn_element_type",
+            "bpmnEventKind": "bpmn_event_kind",
+            "bpmnEventDefinition": "bpmn_event_definition",
+            "bpmnTaskType": "bpmn_task_type",
+            "bpmnGatewayType": "bpmn_gateway_type",
+            "bpmnSubProcessKind": "bpmn_subprocess_kind",
+            "bpmnCallActivityRef": "bpmn_call_activity_ref",
+            "bpmnBoundaryAttachedToNodeKey": "bpmn_boundary_attached_to_node_key",
         }
         for client_key, field in mapping.items():
             if client_key in patch:
                 values[field] = patch[client_key] or None
+        if "nodeType" in patch and patch.get("nodeType"):
+            values["node_type"] = patch["nodeType"]
+        if "mesSemantics" in patch:
+            values["mes_semantics_json"] = Jsonb(patch.get("mesSemantics") or {})
+        if "styleJson" in patch:
+            values["style_json"] = Jsonb(patch.get("styleJson") or {})
+        if "propertiesJson" in patch:
+            values["properties_json"] = Jsonb(patch.get("propertiesJson") or {})
         if values:
             assignments = [f"{field} = %s" for field in values]
             cur.execute(
@@ -766,10 +791,14 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             INSERT INTO business_flow_node (
                 business_flow_id, lane_instance_id, node_key, node_type, title,
                 description, actor, business_rule, input_summary, output_summary,
+                bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+                bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+                bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+                mes_semantics_json,
                 position_x, position_y, width, height, is_overridden,
                 style_json, properties_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
             ON CONFLICT (business_flow_id, node_key) DO NOTHING
             """,
             (
@@ -783,6 +812,15 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 patch.get("businessRule"),
                 patch.get("inputSummary"),
                 patch.get("outputSummary"),
+                patch.get("bpmnElementType"),
+                patch.get("bpmnEventKind"),
+                patch.get("bpmnEventDefinition"),
+                patch.get("bpmnTaskType"),
+                patch.get("bpmnGatewayType"),
+                patch.get("bpmnSubProcessKind"),
+                patch.get("bpmnCallActivityRef"),
+                patch.get("bpmnBoundaryAttachedToNodeKey"),
+                Jsonb(patch.get("mesSemantics") or {}),
                 patch.get("x", 0),
                 patch.get("y", 0),
                 patch.get("width", 120),
@@ -819,9 +857,11 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 business_flow_id, lane_instance_id, edge_key, source_type,
                 source_node_id, source_port, target_type, target_node_id, target_port,
                 edge_type, label, condition_text, data_contract_json, is_overridden,
+                bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
+                bpmn_condition_expression, mes_semantics_json,
                 style_json, properties_json
             )
-            VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+            VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (business_flow_id, edge_key) DO UPDATE
             SET lane_instance_id = EXCLUDED.lane_instance_id,
                 source_type = EXCLUDED.source_type,
@@ -836,6 +876,11 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 edge_type = EXCLUDED.edge_type,
                 condition_text = EXCLUDED.condition_text,
                 data_contract_json = EXCLUDED.data_contract_json,
+                bpmn_flow_type = EXCLUDED.bpmn_flow_type,
+                bpmn_sequence_flow_kind = EXCLUDED.bpmn_sequence_flow_kind,
+                bpmn_message_name = EXCLUDED.bpmn_message_name,
+                bpmn_condition_expression = EXCLUDED.bpmn_condition_expression,
+                mes_semantics_json = EXCLUDED.mes_semantics_json,
                 style_json = EXCLUDED.style_json,
                 properties_json = EXCLUDED.properties_json,
                 is_overridden = TRUE,
@@ -853,6 +898,11 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 patch.get("label"),
                 patch.get("conditionText") or patch.get("condition_text"),
                 Jsonb(patch.get("dataContractJson") or patch.get("data_contract_json") or {}),
+                patch.get("bpmnFlowType") or patch.get("bpmn_flow_type"),
+                patch.get("bpmnSequenceFlowKind") or patch.get("bpmn_sequence_flow_kind"),
+                patch.get("bpmnMessageName") or patch.get("bpmn_message_name"),
+                patch.get("bpmnConditionExpression") or patch.get("bpmn_condition_expression"),
+                Jsonb(patch.get("mesSemantics") or patch.get("mes_semantics_json") or {}),
                 Jsonb(patch.get("styleJson") or {}),
                 Jsonb(patch.get("propertiesJson") or {}),
             ),
@@ -871,6 +921,22 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             values["edge_type"] = patch["edgeType"]
         if "conditionText" in patch:
             values["condition_text"] = patch["conditionText"] or None
+        if "bpmnFlowType" in patch:
+            values["bpmn_flow_type"] = patch["bpmnFlowType"] or None
+        if "bpmnSequenceFlowKind" in patch:
+            values["bpmn_sequence_flow_kind"] = patch["bpmnSequenceFlowKind"] or None
+        if "bpmnMessageName" in patch:
+            values["bpmn_message_name"] = patch["bpmnMessageName"] or None
+        if "bpmnConditionExpression" in patch:
+            values["bpmn_condition_expression"] = patch["bpmnConditionExpression"] or None
+        if "mesSemantics" in patch:
+            values["mes_semantics_json"] = Jsonb(patch.get("mesSemantics") or {})
+        if "dataContractJson" in patch:
+            values["data_contract_json"] = Jsonb(patch.get("dataContractJson") or {})
+        if "styleJson" in patch:
+            values["style_json"] = Jsonb(patch.get("styleJson") or {})
+        if "propertiesJson" in patch:
+            values["properties_json"] = Jsonb(patch.get("propertiesJson") or {})
         if values:
             assignments = [f"{field} = %s" for field in values]
             cur.execute(
@@ -1083,9 +1149,14 @@ def _edge_patch(edge: dict[str, Any]) -> dict[str, Any]:
         "sourcePort": edge.get("source_port"),
         "targetPort": edge.get("target_port"),
         "edgeType": edge.get("edge_type") or "SEQUENCE",
+        "bpmnFlowType": edge.get("bpmn_flow_type"),
+        "bpmnSequenceFlowKind": edge.get("bpmn_sequence_flow_kind"),
+        "bpmnMessageName": edge.get("bpmn_message_name"),
+        "bpmnConditionExpression": edge.get("bpmn_condition_expression"),
         "label": edge.get("label"),
         "conditionText": edge.get("condition_text"),
         "dataContractJson": edge.get("data_contract_json") or {},
+        "mesSemantics": edge.get("mes_semantics_json") or {},
         "styleJson": edge.get("style_json") or {},
         "propertiesJson": edge.get("properties_json") or {},
     }
@@ -1200,6 +1271,14 @@ def _build_business_flow_materialize_ops(
                     "patch": {
                         "laneInstanceKey": lane_key,
                         "nodeType": node.get("node_type") or "TASK",
+                        "bpmnElementType": node.get("bpmn_element_type"),
+                        "bpmnEventKind": node.get("bpmn_event_kind"),
+                        "bpmnEventDefinition": node.get("bpmn_event_definition"),
+                        "bpmnTaskType": node.get("bpmn_task_type"),
+                        "bpmnGatewayType": node.get("bpmn_gateway_type"),
+                        "bpmnSubProcessKind": node.get("bpmn_subprocess_kind"),
+                        "bpmnCallActivityRef": node.get("bpmn_call_activity_ref"),
+                        "bpmnBoundaryAttachedToNodeKey": node.get("bpmn_boundary_attached_to_node_key"),
                         "title": node.get("title") or "任务",
                         "x": _number(node.get("position_x")),
                         "y": _number(node.get("position_y")),
@@ -1210,6 +1289,7 @@ def _build_business_flow_materialize_ops(
                         "businessRule": node.get("business_rule"),
                         "inputSummary": node.get("input_summary"),
                         "outputSummary": node.get("output_summary"),
+                        "mesSemantics": node.get("mes_semantics_json") or {},
                         "styleJson": node.get("style_json") or {},
                         "propertiesJson": node.get("properties_json") or {},
                     },
@@ -1253,6 +1333,25 @@ def _build_business_flow_materialize_ops(
             patch["inputSummary"] = node.get("input_summary")
         if not _same_text(current.get("output_summary"), node.get("output_summary")):
             patch["outputSummary"] = node.get("output_summary")
+        for client_key, field in [
+            ("nodeType", "node_type"),
+            ("bpmnElementType", "bpmn_element_type"),
+            ("bpmnEventKind", "bpmn_event_kind"),
+            ("bpmnEventDefinition", "bpmn_event_definition"),
+            ("bpmnTaskType", "bpmn_task_type"),
+            ("bpmnGatewayType", "bpmn_gateway_type"),
+            ("bpmnSubProcessKind", "bpmn_subprocess_kind"),
+            ("bpmnCallActivityRef", "bpmn_call_activity_ref"),
+            ("bpmnBoundaryAttachedToNodeKey", "bpmn_boundary_attached_to_node_key"),
+        ]:
+            if not _same_text(current.get(field), node.get(field)):
+                patch[client_key] = node.get(field)
+        if _stable_json(current.get("mes_semantics_json")) != _stable_json(node.get("mes_semantics_json")):
+            patch["mesSemantics"] = node.get("mes_semantics_json") or {}
+        if _stable_json(current.get("style_json")) != _stable_json(node.get("style_json")):
+            patch["styleJson"] = node.get("style_json") or {}
+        if _stable_json(current.get("properties_json")) != _stable_json(node.get("properties_json")):
+            patch["propertiesJson"] = node.get("properties_json") or {}
         if patch:
             ops.append(
                 {
@@ -1321,9 +1420,14 @@ def _build_business_flow_materialize_ops(
                 "edge_type",
                 "label",
                 "condition_text",
+                "bpmn_flow_type",
+                "bpmn_sequence_flow_kind",
+                "bpmn_message_name",
+                "bpmn_condition_expression",
             ]
         )
         changed = changed or _stable_json(current.get("data_contract_json")) != _stable_json(edge.get("data_contract_json"))
+        changed = changed or _stable_json(current.get("mes_semantics_json")) != _stable_json(edge.get("mes_semantics_json"))
         changed = changed or _stable_json(current.get("style_json")) != _stable_json(edge.get("style_json"))
         changed = changed or _stable_json(current.get("properties_json")) != _stable_json(edge.get("properties_json"))
         if changed:
@@ -1397,6 +1501,10 @@ def place_swimlane_component(
                 """
                 SELECT id, node_key, node_type, title, description, actor, business_rule,
                        input_summary, output_summary, position_x, position_y, width, height,
+                       bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+                       bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+                       bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+                       mes_semantics_json,
                        style_json, properties_json
                 FROM swimlane_component_node
                 WHERE component_version_id = %s
@@ -1425,8 +1533,10 @@ def place_swimlane_component(
             cur.execute(
                 """
                 SELECT edge_key, source_node_key, target_node_key, source_port, target_port,
-                       edge_type, label, condition_text, data_contract_json, style_json,
-                       properties_json
+                       edge_type, label, condition_text, bpmn_flow_type,
+                       bpmn_sequence_flow_kind, bpmn_message_name,
+                       bpmn_condition_expression, data_contract_json,
+                       mes_semantics_json, style_json, properties_json
                 FROM swimlane_component_edge
                 WHERE component_version_id = %s
                 ORDER BY created_at ASC, edge_key ASC
@@ -1505,9 +1615,13 @@ def place_swimlane_component(
                         business_flow_id, lane_instance_id, node_key,
                         origin_component_node_key, node_type, title, description,
                         actor, business_rule, input_summary, output_summary,
+                        bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+                        bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+                        bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+                        mes_semantics_json,
                         position_x, position_y, width, height, style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -1522,6 +1636,15 @@ def place_swimlane_component(
                         component_node["business_rule"],
                         component_node["input_summary"],
                         component_node["output_summary"],
+                        component_node.get("bpmn_element_type"),
+                        component_node.get("bpmn_event_kind"),
+                        component_node.get("bpmn_event_definition"),
+                        component_node.get("bpmn_task_type"),
+                        component_node.get("bpmn_gateway_type"),
+                        component_node.get("bpmn_subprocess_kind"),
+                        component_node.get("bpmn_call_activity_ref"),
+                        component_node.get("bpmn_boundary_attached_to_node_key"),
+                        Jsonb(component_node.get("mes_semantics_json") or {}),
                         LANE_PADDING_LEFT + (float(component_node["position_x"]) - min_x),
                         LANE_HEADER_HEIGHT + (float(component_node["position_y"]) - min_y),
                         float(component_node["width"]),
@@ -1565,9 +1688,11 @@ def place_swimlane_component(
                         business_flow_id, lane_instance_id, edge_key, source_type,
                         source_node_id, source_port, target_type, target_node_id,
                         target_port, edge_type, label, condition_text, data_contract_json,
+                        bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
+                        bpmn_condition_expression, mes_semantics_json,
                         origin_component_edge_key, style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         business_flow_id,
@@ -1581,6 +1706,11 @@ def place_swimlane_component(
                         component_edge["label"],
                         component_edge["condition_text"],
                         Jsonb(component_edge.get("data_contract_json") or {}),
+                        component_edge.get("bpmn_flow_type"),
+                        component_edge.get("bpmn_sequence_flow_kind"),
+                        component_edge.get("bpmn_message_name"),
+                        component_edge.get("bpmn_condition_expression"),
+                        Jsonb(component_edge.get("mes_semantics_json") or {}),
                         component_edge["edge_key"],
                         Jsonb(component_edge.get("style_json") or {}),
                         Jsonb(component_edge.get("properties_json") or {}),
@@ -1909,10 +2039,14 @@ def restore_business_flow(
                     INSERT INTO business_flow_node (
                         business_flow_id, lane_instance_id, node_key, origin_component_node_key,
                         node_type, title, description, actor, business_rule, input_summary,
+                        bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+                        bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+                        bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+                        mes_semantics_json,
                         output_summary, position_x, position_y, width, height, is_overridden,
                         style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -1926,6 +2060,15 @@ def restore_business_flow(
                         node.get("actor"),
                         node.get("business_rule"),
                         node.get("input_summary"),
+                        node.get("bpmn_element_type"),
+                        node.get("bpmn_event_kind"),
+                        node.get("bpmn_event_definition"),
+                        node.get("bpmn_task_type"),
+                        node.get("bpmn_gateway_type"),
+                        node.get("bpmn_subprocess_kind"),
+                        node.get("bpmn_call_activity_ref"),
+                        node.get("bpmn_boundary_attached_to_node_key"),
+                        Jsonb(node.get("mes_semantics_json") or {}),
                         node.get("output_summary"),
                         node.get("position_x", 0),
                         node.get("position_y", 0),
@@ -1975,10 +2118,12 @@ def restore_business_flow(
                         business_flow_id, lane_instance_id, edge_key, source_type,
                         source_node_id, source_lane_instance_id, source_port, target_type,
                         target_node_id, target_lane_instance_id, target_port, edge_type,
-                        label, condition_text, data_contract_json, origin_component_edge_key,
+                        bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
+                        bpmn_condition_expression, label, condition_text,
+                        data_contract_json, mes_semantics_json, origin_component_edge_key,
                         is_overridden, style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         business_flow_id,
@@ -1993,9 +2138,14 @@ def restore_business_flow(
                         target_lane_id,
                         edge.get("target_port"),
                         edge.get("edge_type", "SEQUENCE"),
+                        edge.get("bpmn_flow_type"),
+                        edge.get("bpmn_sequence_flow_kind"),
+                        edge.get("bpmn_message_name"),
+                        edge.get("bpmn_condition_expression"),
                         edge.get("label"),
                         edge.get("condition_text"),
                         Jsonb(edge.get("data_contract_json") or {}),
+                        Jsonb(edge.get("mes_semantics_json") or {}),
                         edge.get("origin_component_edge_key"),
                         bool(edge.get("is_overridden")),
                         Jsonb(edge.get("style_json") or {}),

@@ -1,6 +1,16 @@
 import type { Cell, Edge } from '@antv/x6'
 
-import type { BusinessFlowNodeErRef } from '@/entities/business-flow'
+import type {
+  BpmnEdgeProfile,
+  BpmnNodeProfile,
+  BusinessFlowNodeErRef,
+  MesSemantics,
+} from '@/entities/business-flow'
+import {
+  normalizeBpmnEdgeProfile,
+  normalizeBpmnNodeProfile,
+  normalizeMesSemantics,
+} from '@/entities/business-flow'
 import { readCellData } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 
 export type ErGraphOption = { id: string; name: string }
@@ -14,18 +24,38 @@ export type SelectedBusinessCell =
       description: string
       actor: string
       businessRule: string
+      inputSummary: string
+      outputSummary: string
+      bpmnProfile: BpmnNodeProfile
+      mesSemantics: MesSemantics
       erRefs: BusinessFlowNodeErRef[]
     }
-  | { kind: 'edge'; cell: Edge; label: string }
+  | {
+      kind: 'edge'
+      cell: Edge
+      label: string
+      bpmnProfile: BpmnEdgeProfile
+      mesSemantics: MesSemantics
+    }
   | null
 
 export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
   const data = readCellData(cell)
   if (cell.isEdge()) {
+    const bpmnProfile = normalizeBpmnEdgeProfile({
+      edgeType: data.edgeType,
+      bpmnFlowType: data.bpmnFlowType,
+      bpmnSequenceFlowKind: data.bpmnSequenceFlowKind,
+      bpmnMessageName: data.bpmnMessageName,
+      bpmnConditionExpression: data.bpmnConditionExpression,
+      propertiesJson: data.propertiesJson,
+    })
     return {
       kind: 'edge',
       cell: cell as Edge,
       label: data.title ?? '',
+      bpmnProfile,
+      mesSemantics: normalizeMesSemantics(data.mesSemantics, data.propertiesJson),
     }
   }
   if (data.cellRole === 'LANE_INSTANCE') {
@@ -37,6 +67,18 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
     }
   }
   if (data.cellRole === 'FLOW_NODE') {
+    const bpmnProfile = normalizeBpmnNodeProfile({
+      nodeType: data.nodeType,
+      bpmnElementType: data.bpmnElementType,
+      bpmnEventKind: data.bpmnEventKind,
+      bpmnEventDefinition: data.bpmnEventDefinition,
+      bpmnTaskType: data.bpmnTaskType,
+      bpmnGatewayType: data.bpmnGatewayType,
+      bpmnSubProcessKind: data.bpmnSubProcessKind,
+      bpmnCallActivityRef: data.bpmnCallActivityRef,
+      bpmnBoundaryAttachedToNodeKey: data.bpmnBoundaryAttachedToNodeKey,
+      propertiesJson: data.propertiesJson,
+    })
     return {
       kind: 'node',
       cell,
@@ -44,6 +86,10 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       description: data.description ?? '',
       actor: data.actor ?? '',
       businessRule: data.businessRule ?? '',
+      inputSummary: data.inputSummary ?? '',
+      outputSummary: data.outputSummary ?? '',
+      bpmnProfile,
+      mesSemantics: normalizeMesSemantics(data.mesSemantics, data.propertiesJson),
       erRefs: data.erRefs ?? [],
     }
   }

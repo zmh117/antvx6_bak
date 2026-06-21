@@ -79,9 +79,19 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import type {
+  BpmnEdgeProfile,
+  BpmnNodeProfile,
   BusinessFlowNodeErRef,
   BusinessFlowNodeType,
+  MesSemantics,
   SwimlaneComponent,
+} from '@/entities/business-flow'
+import {
+  legacyNodeTypeForBpmn,
+  mergeBpmnIntoProperties,
+  normalizeBpmnEdgeProfile,
+  normalizeBpmnNodeProfile,
+  normalizeMesSemantics,
 } from '@/entities/business-flow'
 import {
   useArchiveSwimlaneComponentMutation,
@@ -108,9 +118,16 @@ import {
   readCellData,
   removeBusinessFlowCells,
   renderComponentVersion,
+  updateEdgeBpmnProfile,
   updateEdgeText,
+  updateNodeBpmnProfile,
   updateNodeText,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
+import {
+  BpmnEdgeProfileFields,
+  BpmnNodeProfileFields,
+  MesSemanticsFields,
+} from '@/features/business-flow/presentation/components/BpmnMesFields'
 import {
   NodeErBindingEditor,
   type ErGraphOption,
@@ -120,17 +137,145 @@ import { DataTable, DataTablePagination } from '@/shared/ui/data-table'
 import { EntityTitleCell } from '@/shared/ui/entity-title-cell'
 
 const NODE_TOOLS: Array<{
-  type: BusinessFlowNodeType
+  key: string
   label: string
+  group: string
+  profile: BpmnNodeProfile
   icon: typeof Square
 }> = [
-  { type: 'START', label: '开始', icon: Circle },
-  { type: 'END', label: '结束', icon: Circle },
-  { type: 'TASK', label: '任务', icon: Square },
-  { type: 'DECISION', label: '决策', icon: Diamond },
-  { type: 'SERVICE', label: '服务', icon: Boxes },
-  { type: 'MANUAL', label: '人工', icon: MousePointer2 },
-  { type: 'EVENT', label: '事件', icon: Workflow },
+  {
+    key: 'event-start',
+    label: '开始事件',
+    group: '事件',
+    profile: { bpmnElementType: 'EVENT', bpmnEventKind: 'START', bpmnEventDefinition: 'NONE' },
+    icon: Circle,
+  },
+  {
+    key: 'event-intermediate',
+    label: '中间事件',
+    group: '事件',
+    profile: { bpmnElementType: 'EVENT', bpmnEventKind: 'INTERMEDIATE', bpmnEventDefinition: 'NONE' },
+    icon: Workflow,
+  },
+  {
+    key: 'event-end',
+    label: '结束事件',
+    group: '事件',
+    profile: { bpmnElementType: 'EVENT', bpmnEventKind: 'END', bpmnEventDefinition: 'NONE' },
+    icon: Circle,
+  },
+  {
+    key: 'event-boundary',
+    label: '边界事件',
+    group: '事件',
+    profile: { bpmnElementType: 'EVENT', bpmnEventKind: 'BOUNDARY', bpmnEventDefinition: 'ERROR' },
+    icon: Circle,
+  },
+  {
+    key: 'task-user',
+    label: '用户任务',
+    group: '任务',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'USER' },
+    icon: MousePointer2,
+  },
+  {
+    key: 'task-service',
+    label: '服务任务',
+    group: '任务',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'SERVICE' },
+    icon: Boxes,
+  },
+  {
+    key: 'task-manual',
+    label: '人工任务',
+    group: '任务',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'MANUAL' },
+    icon: MousePointer2,
+  },
+  {
+    key: 'task-script',
+    label: '脚本任务',
+    group: '任务',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'SCRIPT' },
+    icon: Square,
+  },
+  {
+    key: 'task-rule',
+    label: '规则任务',
+    group: '任务',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'BUSINESS_RULE' },
+    icon: Square,
+  },
+  {
+    key: 'task-receive',
+    label: '接收任务',
+    group: '任务',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'RECEIVE' },
+    icon: Square,
+  },
+  {
+    key: 'task-send',
+    label: '发送任务',
+    group: '任务',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'SEND' },
+    icon: Square,
+  },
+  {
+    key: 'gateway-exclusive',
+    label: '排他网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'EXCLUSIVE' },
+    icon: Diamond,
+  },
+  {
+    key: 'gateway-parallel',
+    label: '并行网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'PARALLEL' },
+    icon: Diamond,
+  },
+  {
+    key: 'gateway-inclusive',
+    label: '包容网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'INCLUSIVE' },
+    icon: Diamond,
+  },
+  {
+    key: 'gateway-event',
+    label: '事件网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'EVENT_BASED' },
+    icon: Diamond,
+  },
+  {
+    key: 'sub-process',
+    label: '子流程',
+    group: '结构',
+    profile: { bpmnElementType: 'SUB_PROCESS', bpmnSubProcessKind: 'EMBEDDED' },
+    icon: Workflow,
+  },
+  {
+    key: 'call-activity',
+    label: '调用活动',
+    group: '结构',
+    profile: { bpmnElementType: 'CALL_ACTIVITY' },
+    icon: ExternalLink,
+  },
+  {
+    key: 'data-object',
+    label: '数据对象',
+    group: '数据',
+    profile: { bpmnElementType: 'DATA_OBJECT' },
+    icon: Pencil,
+  },
+  {
+    key: 'text-annotation',
+    label: '注释',
+    group: '数据',
+    profile: { bpmnElementType: 'TEXT_ANNOTATION' },
+    icon: Pencil,
+  },
 ]
 
 type SelectedComponentCell =
@@ -141,13 +286,24 @@ type SelectedComponentCell =
       description: string
       actor: string
       businessRule: string
+      inputSummary: string
+      outputSummary: string
+      bpmnProfile: BpmnNodeProfile
+      mesSemantics: MesSemantics
       erRefs: BusinessFlowNodeErRef[]
     }
-  | { kind: 'edge'; cell: Edge; label: string }
+  | {
+      kind: 'edge'
+      cell: Edge
+      label: string
+      bpmnProfile: BpmnEdgeProfile
+      mesSemantics: MesSemantics
+    }
   | null
 
 const componentPageSizes = [10, 20, 50]
 const componentColumnHelper = createColumnHelper<SwimlaneComponent>()
+const BPMN_NODE_PROFILE_MIME = 'application/x-bpmn-node-profile'
 
 type SwimlaneComponentFormMode = 'create' | 'edit'
 type SwimlaneComponentFormValues = z.input<typeof swimlaneComponentFormSchema>
@@ -211,6 +367,34 @@ function componentSearchText(component: SwimlaneComponent, productName?: string)
     .filter(Boolean)
     .join(' ')
     .toLocaleLowerCase()
+}
+
+function readDraggedNodeProfile(event: React.DragEvent<HTMLDivElement>) {
+  const rawProfile = event.dataTransfer.getData(BPMN_NODE_PROFILE_MIME)
+  if (rawProfile) {
+    try {
+      return normalizeBpmnNodeProfile(JSON.parse(rawProfile) as Partial<BpmnNodeProfile>)
+    } catch {
+      return normalizeBpmnNodeProfile({})
+    }
+  }
+  const legacyType = event.dataTransfer.getData('application/x-bf-node') as BusinessFlowNodeType
+  return legacyType ? normalizeBpmnNodeProfile({ nodeType: legacyType }) : null
+}
+
+function updateCellMesSemantics(
+  cell: Cell,
+  profile: BpmnNodeProfile | BpmnEdgeProfile,
+  mesSemantics: MesSemantics,
+) {
+  const data = readCellData(cell)
+  const normalized = normalizeMesSemantics(mesSemantics)
+  cell.setData({
+    ...data,
+    mesSemantics: normalized,
+    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, profile, normalized),
+  })
+  return normalized
 }
 
 function HeaderSortButton({
@@ -847,10 +1031,20 @@ export function SwimlaneComponentEditorPage({
     graph.on('cell:click', ({ cell }) => setSelected(readSelectedCell(cell)))
     graph.on('blank:click', () => setSelected(null))
     graph.on('edge:connected', ({ edge }) => {
+      const bpmnProfile = normalizeBpmnEdgeProfile({ edgeType: 'SEQUENCE' })
+      const mesSemantics = normalizeMesSemantics()
       edge.setData({
         ...readCellData(edge),
         cellRole: 'COMPONENT_EDGE',
         edgeKey: readCellData(edge).edgeKey ?? createLocalId('cmp_edge'),
+        edgeType: 'SEQUENCE',
+        ...bpmnProfile,
+        mesSemantics,
+        propertiesJson: mergeBpmnIntoProperties(
+          readCellData(edge).propertiesJson,
+          bpmnProfile,
+          mesSemantics,
+        ),
         title: '',
       })
       setSelected(readSelectedCell(edge))
@@ -878,10 +1072,10 @@ export function SwimlaneComponentEditorPage({
     event.preventDefault()
     const graph = graphRef.current
     if (!graph) return
-    const type = event.dataTransfer.getData('application/x-bf-node') as BusinessFlowNodeType
-    if (!type) return
+    const profile = readDraggedNodeProfile(event)
+    if (!profile) return
     const point = graphPointFromEvent(graph, event.nativeEvent)
-    const draft = newComponentNodeDraft(type, { x: point.x - 60, y: point.y - 24 })
+    const draft = newComponentNodeDraft(profile, { x: point.x - 60, y: point.y - 24 })
     const node = addComponentNode(graph, draft)
     graph.cleanSelection()
     graph.select(node)
@@ -949,17 +1143,27 @@ export function SwimlaneComponentEditorPage({
                     const Icon = tool.icon
                     return (
                       <button
-                        key={tool.type}
+                        key={tool.key}
                         type="button"
                         draggable
                         onDragStart={(event) => {
-                          event.dataTransfer.setData('application/x-bf-node', tool.type)
+                          event.dataTransfer.setData(
+                            BPMN_NODE_PROFILE_MIME,
+                            JSON.stringify(tool.profile),
+                          )
+                          event.dataTransfer.setData(
+                            'application/x-bf-node',
+                            legacyNodeTypeForBpmn(tool.profile),
+                          )
                           event.dataTransfer.effectAllowed = 'copy'
                         }}
                         className="flex h-16 flex-col items-center justify-center gap-1 rounded-md border border-border bg-background text-xs transition-colors hover:border-primary/60 hover:bg-accent"
                       >
                         <Icon className="size-4 text-primary" />
-                        {tool.label}
+                        <span>{tool.label}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {tool.group}
+                        </span>
                       </button>
                     )
                   })}
@@ -1091,7 +1295,7 @@ function ComponentInspector({
   }
   if (selected.kind === 'edge') {
     return (
-      <div>
+      <div className="space-y-4">
         <FieldGroup>
           <Field>
             <FieldLabel>标签</FieldLabel>
@@ -1105,11 +1309,35 @@ function ComponentInspector({
             />
           </Field>
         </FieldGroup>
+        <div>
+          <div className="mb-2 text-xs font-semibold">BPMN 连线</div>
+          <BpmnEdgeProfileFields
+            profile={selected.bpmnProfile}
+            onChange={(profile) => {
+              const bpmnProfile = updateEdgeBpmnProfile(selected.cell, profile)
+              onChange({ ...selected, bpmnProfile })
+            }}
+          />
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-semibold">MES 语义</div>
+          <MesSemanticsFields
+            value={selected.mesSemantics}
+            onChange={(mesSemantics) => {
+              const nextMesSemantics = updateCellMesSemantics(
+                selected.cell,
+                selected.bpmnProfile,
+                mesSemantics,
+              )
+              onChange({ ...selected, mesSemantics: nextMesSemantics })
+            }}
+          />
+        </div>
       </div>
     )
   }
   return (
-    <div>
+    <div className="space-y-4">
       <FieldGroup>
         <Field>
           <FieldLabel>标题</FieldLabel>
@@ -1157,7 +1385,55 @@ function ComponentInspector({
             }}
           />
         </Field>
+        <Field>
+          <FieldLabel>输入摘要</FieldLabel>
+          <Textarea
+            value={selected.inputSummary}
+            rows={2}
+            onChange={(event) => {
+              const inputSummary = event.target.value
+              selected.cell.setData({ ...readCellData(selected.cell), inputSummary })
+              onChange({ ...selected, inputSummary })
+            }}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>输出摘要</FieldLabel>
+          <Textarea
+            value={selected.outputSummary}
+            rows={2}
+            onChange={(event) => {
+              const outputSummary = event.target.value
+              selected.cell.setData({ ...readCellData(selected.cell), outputSummary })
+              onChange({ ...selected, outputSummary })
+            }}
+          />
+        </Field>
       </FieldGroup>
+      <div>
+        <div className="mb-2 text-xs font-semibold">BPMN 节点</div>
+        <BpmnNodeProfileFields
+          profile={selected.bpmnProfile}
+          onChange={(profile) => {
+            const bpmnProfile = updateNodeBpmnProfile(selected.cell, profile)
+            onChange({ ...selected, bpmnProfile })
+          }}
+        />
+      </div>
+      <div>
+        <div className="mb-2 text-xs font-semibold">MES 语义</div>
+        <MesSemanticsFields
+          value={selected.mesSemantics}
+          onChange={(mesSemantics) => {
+            const nextMesSemantics = updateCellMesSemantics(
+              selected.cell,
+              selected.bpmnProfile,
+              mesSemantics,
+            )
+            onChange({ ...selected, mesSemantics: nextMesSemantics })
+          }}
+        />
+      </div>
       <NodeErBindingEditor
         erRefs={selected.erRefs}
         erGraphs={erGraphs}
@@ -1173,13 +1449,35 @@ function ComponentInspector({
 function readSelectedCell(cell: Cell): SelectedComponentCell {
   const data = readCellData(cell)
   if (cell.isEdge()) {
+    const bpmnProfile = normalizeBpmnEdgeProfile({
+      edgeType: data.edgeType,
+      bpmnFlowType: data.bpmnFlowType,
+      bpmnSequenceFlowKind: data.bpmnSequenceFlowKind,
+      bpmnMessageName: data.bpmnMessageName,
+      bpmnConditionExpression: data.bpmnConditionExpression,
+      propertiesJson: data.propertiesJson,
+    })
     return {
       kind: 'edge',
       cell: cell as Edge,
       label: data.title ?? '',
+      bpmnProfile,
+      mesSemantics: normalizeMesSemantics(data.mesSemantics, data.propertiesJson),
     }
   }
   if (data.cellRole === 'COMPONENT_NODE') {
+    const bpmnProfile = normalizeBpmnNodeProfile({
+      nodeType: data.nodeType,
+      bpmnElementType: data.bpmnElementType,
+      bpmnEventKind: data.bpmnEventKind,
+      bpmnEventDefinition: data.bpmnEventDefinition,
+      bpmnTaskType: data.bpmnTaskType,
+      bpmnGatewayType: data.bpmnGatewayType,
+      bpmnSubProcessKind: data.bpmnSubProcessKind,
+      bpmnCallActivityRef: data.bpmnCallActivityRef,
+      bpmnBoundaryAttachedToNodeKey: data.bpmnBoundaryAttachedToNodeKey,
+      propertiesJson: data.propertiesJson,
+    })
     return {
       kind: 'node',
       cell,
@@ -1187,6 +1485,10 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       description: data.description ?? '',
       actor: data.actor ?? '',
       businessRule: data.businessRule ?? '',
+      inputSummary: data.inputSummary ?? '',
+      outputSummary: data.outputSummary ?? '',
+      bpmnProfile,
+      mesSemantics: normalizeMesSemantics(data.mesSemantics, data.propertiesJson),
       erRefs: data.erRefs ?? [],
     }
   }

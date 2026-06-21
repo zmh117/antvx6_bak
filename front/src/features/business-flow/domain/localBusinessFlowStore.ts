@@ -1,4 +1,6 @@
 import type {
+  BpmnEdgeProfile,
+  BpmnNodeProfile,
   BusinessFlowEdgeRecord,
   BusinessFlowEdgeType,
   BusinessFlowLaneInstance,
@@ -8,11 +10,22 @@ import type {
   CanvasPosition,
   CanvasSize,
   LocalBusinessFlowCanvas,
+  MesSemantics,
   SwimlaneComponent,
   SwimlaneComponentEdge,
   SwimlaneComponentListItem,
   SwimlaneComponentNode,
   SwimlaneComponentVersion,
+} from '@/entities/business-flow'
+import {
+  bpmnNodeSize,
+  bpmnNodeTitle,
+  legacyEdgeTypeForBpmn,
+  legacyNodeTypeForBpmn,
+  mergeBpmnIntoProperties,
+  normalizeBpmnEdgeProfile,
+  normalizeBpmnNodeProfile,
+  normalizeMesSemantics,
 } from '@/entities/business-flow'
 
 const STORAGE_KEY = 'antvx6:business-flow-demo:v1'
@@ -28,13 +41,26 @@ type StoreShape = {
 export type ComponentEditorNodeDraft = {
   nodeKey: string
   nodeType: BusinessFlowNodeType
+  bpmnElementType?: BpmnNodeProfile['bpmnElementType'] | null
+  bpmnEventKind?: BpmnNodeProfile['bpmnEventKind'] | null
+  bpmnEventDefinition?: BpmnNodeProfile['bpmnEventDefinition'] | null
+  bpmnTaskType?: BpmnNodeProfile['bpmnTaskType'] | null
+  bpmnGatewayType?: BpmnNodeProfile['bpmnGatewayType'] | null
+  bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
+  bpmnCallActivityRef?: string | null
+  bpmnBoundaryAttachedToNodeKey?: string | null
   title: string
   description?: string | null
   actor?: string | null
   businessRule?: string | null
+  inputSummary?: string | null
+  outputSummary?: string | null
+  mesSemantics?: MesSemantics | null
   erRefs?: BusinessFlowNodeErRef[]
   position: CanvasPosition
   size: CanvasSize
+  styleJson?: Record<string, unknown> | null
+  propertiesJson?: Record<string, unknown> | null
 }
 
 export type ComponentEditorEdgeDraft = {
@@ -44,8 +70,16 @@ export type ComponentEditorEdgeDraft = {
   sourcePort?: string | null
   targetPort?: string | null
   edgeType: BusinessFlowEdgeType
+  bpmnFlowType?: BpmnEdgeProfile['bpmnFlowType'] | null
+  bpmnSequenceFlowKind?: BpmnEdgeProfile['bpmnSequenceFlowKind'] | null
+  bpmnMessageName?: string | null
+  bpmnConditionExpression?: string | null
   label?: string | null
   conditionText?: string | null
+  mesSemantics?: MesSemantics | null
+  dataContractJson?: Record<string, unknown> | null
+  styleJson?: Record<string, unknown> | null
+  propertiesJson?: Record<string, unknown> | null
 }
 
 export type BusinessFlowCanvasDraft = Pick<
@@ -72,49 +106,48 @@ export function createLocalId(prefix: string) {
   return `${prefix}_${uuid.replaceAll('-', '').slice(0, 14)}`
 }
 
-function titleByType(type: BusinessFlowNodeType) {
-  const titles: Record<BusinessFlowNodeType, string> = {
-    START: '开始',
-    END: '结束',
-    TASK: '任务',
-    DECISION: '决策',
-    SERVICE: '服务',
-    MANUAL: '人工',
-    EVENT: '事件',
-  }
-  return titles[type]
-}
-
 function makeComponentNode(
   componentVersionId: string,
   nodeType: BusinessFlowNodeType,
   title: string,
   position: CanvasPosition,
-  size: CanvasSize = nodeType === 'DECISION'
-    ? { width: 88, height: 64 }
-    : nodeType === 'START' || nodeType === 'END' || nodeType === 'EVENT'
-      ? { width: 58, height: 58 }
-      : { width: 138, height: 58 },
+  size?: CanvasSize,
   extra?: Partial<SwimlaneComponentNode>,
 ): SwimlaneComponentNode {
   const nodeKey = extra?.nodeKey ?? createLocalId('cmp_node')
+  const bpmnProfile = normalizeBpmnNodeProfile({
+    nodeType,
+    bpmnElementType: extra?.bpmnElementType,
+    bpmnEventKind: extra?.bpmnEventKind,
+    bpmnEventDefinition: extra?.bpmnEventDefinition,
+    bpmnTaskType: extra?.bpmnTaskType,
+    bpmnGatewayType: extra?.bpmnGatewayType,
+    bpmnSubProcessKind: extra?.bpmnSubProcessKind,
+    bpmnCallActivityRef: extra?.bpmnCallActivityRef,
+    bpmnBoundaryAttachedToNodeKey: extra?.bpmnBoundaryAttachedToNodeKey,
+    propertiesJson: extra?.propertiesJson,
+  })
+  const mesSemantics = normalizeMesSemantics(extra?.mesSemantics, extra?.propertiesJson)
+  const nextNodeType = extra?.nodeType ?? legacyNodeTypeForBpmn(bpmnProfile)
   return {
     id: createLocalId('scn'),
     componentVersionId,
-    nodeType,
-    title,
-    description: null,
-    actor: null,
-    businessRule: null,
-    inputSummary: null,
-    outputSummary: null,
-    erRefs: [],
-    position,
-    size,
-    styleJson: null,
-    propertiesJson: null,
     ...extra,
     nodeKey,
+    nodeType: nextNodeType,
+    ...bpmnProfile,
+    title: extra?.title ?? title,
+    description: extra?.description ?? null,
+    actor: extra?.actor ?? null,
+    businessRule: extra?.businessRule ?? null,
+    inputSummary: extra?.inputSummary ?? null,
+    outputSummary: extra?.outputSummary ?? null,
+    mesSemantics,
+    erRefs: extra?.erRefs ?? [],
+    position: extra?.position ?? position,
+    size: extra?.size ?? size ?? bpmnNodeSize(bpmnProfile),
+    styleJson: extra?.styleJson ?? null,
+    propertiesJson: mergeBpmnIntoProperties(extra?.propertiesJson, bpmnProfile, mesSemantics),
   }
 }
 
@@ -124,6 +157,8 @@ function makeComponentEdge(
   targetNodeKey: string,
   label?: string | null,
 ): SwimlaneComponentEdge {
+  const bpmnProfile = normalizeBpmnEdgeProfile({ edgeType: 'SEQUENCE' })
+  const mesSemantics = normalizeMesSemantics()
   return {
     id: createLocalId('sce'),
     componentVersionId,
@@ -132,12 +167,14 @@ function makeComponentEdge(
     targetNodeKey,
     sourcePort: null,
     targetPort: null,
-    edgeType: 'SEQUENCE',
+    edgeType: legacyEdgeTypeForBpmn(bpmnProfile),
+    ...bpmnProfile,
     label: label ?? null,
     conditionText: label ?? null,
     dataContractJson: null,
+    mesSemantics,
     styleJson: null,
-    propertiesJson: null,
+    propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile, mesSemantics),
   }
 }
 
@@ -452,38 +489,68 @@ export function saveSwimlaneComponentVersion(
       const current = getCurrentComponentVersion(component)
       const versionId = current?.id ?? `${component.id}_v1`
       const versionNo = current?.versionNo ?? 1
-      const nodes: SwimlaneComponentNode[] = values.nodes.map((node) => ({
-        id: createLocalId('scn'),
-        componentVersionId: versionId,
-        nodeKey: node.nodeKey,
-        nodeType: node.nodeType,
-        title: node.title,
-        description: node.description ?? null,
-        actor: node.actor ?? null,
-        businessRule: node.businessRule ?? null,
-        inputSummary: null,
-        outputSummary: null,
-        erRefs: node.erRefs ?? [],
-        position: node.position,
-        size: node.size,
-        styleJson: null,
-        propertiesJson: null,
-      }))
-      const edges: SwimlaneComponentEdge[] = values.edges.map((edge) => ({
-        id: createLocalId('sce'),
-        componentVersionId: versionId,
-        edgeKey: edge.edgeKey,
-        sourceNodeKey: edge.sourceNodeKey,
-        targetNodeKey: edge.targetNodeKey,
-        sourcePort: edge.sourcePort ?? null,
-        targetPort: edge.targetPort ?? null,
-        edgeType: edge.edgeType,
-        label: edge.label ?? null,
-        conditionText: edge.conditionText ?? null,
-        dataContractJson: null,
-        styleJson: null,
-        propertiesJson: null,
-      }))
+      const nodes: SwimlaneComponentNode[] = values.nodes.map((node) => {
+        const bpmnProfile = normalizeBpmnNodeProfile({
+          nodeType: node.nodeType,
+          bpmnElementType: node.bpmnElementType,
+          bpmnEventKind: node.bpmnEventKind,
+          bpmnEventDefinition: node.bpmnEventDefinition,
+          bpmnTaskType: node.bpmnTaskType,
+          bpmnGatewayType: node.bpmnGatewayType,
+          bpmnSubProcessKind: node.bpmnSubProcessKind,
+          bpmnCallActivityRef: node.bpmnCallActivityRef,
+          bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
+          propertiesJson: node.propertiesJson,
+        })
+        const mesSemantics = normalizeMesSemantics(node.mesSemantics, node.propertiesJson)
+        return {
+          id: createLocalId('scn'),
+          componentVersionId: versionId,
+          nodeKey: node.nodeKey,
+          nodeType: legacyNodeTypeForBpmn(bpmnProfile),
+          ...bpmnProfile,
+          title: node.title,
+          description: node.description ?? null,
+          actor: node.actor ?? null,
+          businessRule: node.businessRule ?? null,
+          inputSummary: node.inputSummary ?? null,
+          outputSummary: node.outputSummary ?? null,
+          mesSemantics,
+          erRefs: node.erRefs ?? [],
+          position: node.position,
+          size: node.size,
+          styleJson: node.styleJson ?? null,
+          propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile, mesSemantics),
+        }
+      })
+      const edges: SwimlaneComponentEdge[] = values.edges.map((edge) => {
+        const bpmnProfile = normalizeBpmnEdgeProfile({
+          edgeType: edge.edgeType,
+          bpmnFlowType: edge.bpmnFlowType,
+          bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
+          bpmnMessageName: edge.bpmnMessageName,
+          bpmnConditionExpression: edge.bpmnConditionExpression,
+          propertiesJson: edge.propertiesJson,
+        })
+        const mesSemantics = normalizeMesSemantics(edge.mesSemantics, edge.propertiesJson)
+        return {
+          id: createLocalId('sce'),
+          componentVersionId: versionId,
+          edgeKey: edge.edgeKey,
+          sourceNodeKey: edge.sourceNodeKey,
+          targetNodeKey: edge.targetNodeKey,
+          sourcePort: edge.sourcePort ?? null,
+          targetPort: edge.targetPort ?? null,
+          edgeType: legacyEdgeTypeForBpmn(bpmnProfile),
+          ...bpmnProfile,
+          label: edge.label ?? null,
+          conditionText: edge.conditionText ?? null,
+          dataContractJson: edge.dataContractJson ?? null,
+          mesSemantics,
+          styleJson: edge.styleJson ?? null,
+          propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile, mesSemantics),
+        }
+      })
       const nextVersion: SwimlaneComponentVersion = {
         id: versionId,
         componentId: component.id,
@@ -630,24 +697,33 @@ export function placeSwimlaneComponent(
       businessFlowId,
       nodeId: createLocalId('bfn'),
       nodeKey,
-      laneInstanceId,
-      originComponentNodeKey: node.nodeKey,
-      nodeType: node.nodeType,
-      title: node.title,
-      description: node.description,
-      actor: node.actor,
-      businessRule: node.businessRule,
-      erRefs: node.erRefs ?? [],
+	      laneInstanceId,
+	      originComponentNodeKey: node.nodeKey,
+	      nodeType: node.nodeType,
+	      bpmnElementType: node.bpmnElementType ?? null,
+	      bpmnEventKind: node.bpmnEventKind ?? null,
+	      bpmnEventDefinition: node.bpmnEventDefinition ?? null,
+	      bpmnTaskType: node.bpmnTaskType ?? null,
+	      bpmnGatewayType: node.bpmnGatewayType ?? null,
+	      bpmnSubProcessKind: node.bpmnSubProcessKind ?? null,
+	      bpmnCallActivityRef: node.bpmnCallActivityRef ?? null,
+	      bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey ?? null,
+	      title: node.title,
+	      description: node.description,
+	      actor: node.actor,
+	      businessRule: node.businessRule,
+	      erRefs: node.erRefs ?? [],
       position: {
         x: position.x + 24 + node.position.x,
         y: position.y + 46 + node.position.y,
       },
-      size: node.size,
-      inputSummary: node.inputSummary,
-      outputSummary: node.outputSummary,
-      isOverridden: false,
-      styleJson: node.styleJson,
-      propertiesJson: node.propertiesJson,
+	      size: node.size,
+	      inputSummary: node.inputSummary,
+	      outputSummary: node.outputSummary,
+	      mesSemantics: node.mesSemantics ?? null,
+	      isOverridden: false,
+	      styleJson: node.styleJson,
+	      propertiesJson: node.propertiesJson,
       createdAt: timestamp,
       updatedAt: timestamp,
     }
@@ -662,11 +738,16 @@ export function placeSwimlaneComponent(
         businessFlowId,
         edgeId: createLocalId('bfe'),
         edgeKey: `${laneKey}_${edge.edgeKey}`,
-        laneInstanceId,
-        edgeType: edge.edgeType,
-        label: edge.label,
-        conditionText: edge.conditionText,
-        dataContract: undefined,
+	        laneInstanceId,
+	        edgeType: edge.edgeType,
+	        bpmnFlowType: edge.bpmnFlowType ?? null,
+	        bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind ?? null,
+	        bpmnMessageName: edge.bpmnMessageName ?? null,
+	        bpmnConditionExpression: edge.bpmnConditionExpression ?? null,
+	        label: edge.label,
+	        conditionText: edge.conditionText,
+	        dataContract: edge.dataContractJson as BusinessFlowEdgeRecord['dataContract'],
+	        mesSemantics: edge.mesSemantics ?? null,
         isCrossLane: false,
         sourceType: 'NODE',
         sourceNodeKey,
@@ -705,22 +786,31 @@ function computeLaneSize(nodes: SwimlaneComponentNode[]): CanvasSize {
 }
 
 export function newComponentNodeDraft(
-  nodeType: BusinessFlowNodeType,
+  nodeTypeOrProfile: BusinessFlowNodeType | BpmnNodeProfile,
   position: CanvasPosition,
 ): ComponentEditorNodeDraft {
+  const bpmnProfile = normalizeBpmnNodeProfile(
+    typeof nodeTypeOrProfile === 'string'
+      ? { nodeType: nodeTypeOrProfile }
+      : nodeTypeOrProfile,
+  )
+  const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
+  const mesSemantics = normalizeMesSemantics()
   return {
     nodeKey: createLocalId('cmp_node'),
     nodeType,
-    title: titleByType(nodeType),
+    ...bpmnProfile,
+    title: bpmnNodeTitle(bpmnProfile),
     description: null,
     actor: null,
     businessRule: null,
+    inputSummary: null,
+    outputSummary: null,
+    mesSemantics,
+    erRefs: [],
     position,
-    size:
-      nodeType === 'DECISION'
-        ? { width: 88, height: 64 }
-        : nodeType === 'START' || nodeType === 'END' || nodeType === 'EVENT'
-          ? { width: 58, height: 58 }
-          : { width: 138, height: 58 },
+    size: bpmnNodeSize(bpmnProfile),
+    styleJson: null,
+    propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile, mesSemantics),
   }
 }

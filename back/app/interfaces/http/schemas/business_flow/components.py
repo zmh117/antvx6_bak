@@ -32,12 +32,21 @@ class SwimlaneComponentNodeDTO(BaseModel):
     component_version_id: UUID
     node_key: str
     node_type: str
+    bpmn_element_type: str | None = None
+    bpmn_event_kind: str | None = None
+    bpmn_event_definition: str | None = None
+    bpmn_task_type: str | None = None
+    bpmn_gateway_type: str | None = None
+    bpmn_subprocess_kind: str | None = None
+    bpmn_call_activity_ref: str | None = None
+    bpmn_boundary_attached_to_node_key: str | None = None
     title: str
     description: str | None = None
     actor: str | None = None
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
+    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -56,9 +65,14 @@ class SwimlaneComponentEdgeDTO(BaseModel):
     source_port: str | None = None
     target_port: str | None = None
     edge_type: str = "SEQUENCE"
+    bpmn_flow_type: str | None = None
+    bpmn_sequence_flow_kind: str | None = None
+    bpmn_message_name: str | None = None
+    bpmn_condition_expression: str | None = None
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -117,12 +131,21 @@ class SwimlaneComponentUpdateRequest(BaseModel):
 class SwimlaneComponentNodeInput(BaseModel):
     node_key: str
     node_type: str
+    bpmn_element_type: str | None = None
+    bpmn_event_kind: str | None = None
+    bpmn_event_definition: str | None = None
+    bpmn_task_type: str | None = None
+    bpmn_gateway_type: str | None = None
+    bpmn_subprocess_kind: str | None = None
+    bpmn_call_activity_ref: str | None = None
+    bpmn_boundary_attached_to_node_key: str | None = None
     title: str
     description: str | None = None
     actor: str | None = None
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
+    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -139,9 +162,14 @@ class SwimlaneComponentEdgeInput(BaseModel):
     source_port: str | None = None
     target_port: str | None = None
     edge_type: str = "SEQUENCE"
+    bpmn_flow_type: str | None = None
+    bpmn_sequence_flow_kind: str | None = None
+    bpmn_message_name: str | None = None
+    bpmn_condition_expression: str | None = None
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -183,12 +211,21 @@ class BusinessFlowNodeDTO(BaseModel):
     node_key: str
     origin_component_node_key: str | None = None
     node_type: str
+    bpmn_element_type: str | None = None
+    bpmn_event_kind: str | None = None
+    bpmn_event_definition: str | None = None
+    bpmn_task_type: str | None = None
+    bpmn_gateway_type: str | None = None
+    bpmn_subprocess_kind: str | None = None
+    bpmn_call_activity_ref: str | None = None
+    bpmn_boundary_attached_to_node_key: str | None = None
     title: str
     description: str | None = None
     actor: str | None = None
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
+    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -216,9 +253,14 @@ class BusinessFlowEdgeDTO(BaseModel):
     target_lane_instance_key: str | None = None
     target_port: str | None = None
     edge_type: str = "SEQUENCE"
+    bpmn_flow_type: str | None = None
+    bpmn_sequence_flow_kind: str | None = None
+    bpmn_message_name: str | None = None
+    bpmn_condition_expression: str | None = None
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     origin_component_edge_key: str | None = None
     is_overridden: bool = False
     style_json: dict[str, Any] = Field(default_factory=dict)

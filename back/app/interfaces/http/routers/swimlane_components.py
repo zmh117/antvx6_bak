@@ -49,6 +49,7 @@ def _node_response(row: dict) -> dict:
         "width": float(row["width"]),
         "height": float(row["height"]),
         "er_refs": row.get("er_refs") or [],
+        "mes_semantics_json": row.get("mes_semantics_json") or {},
         "style_json": row.get("style_json") or {},
         "properties_json": row.get("properties_json") or {},
     }
@@ -58,6 +59,7 @@ def _edge_response(row: dict) -> dict:
     return {
         **row,
         "data_contract_json": row.get("data_contract_json") or {},
+        "mes_semantics_json": row.get("mes_semantics_json") or {},
         "style_json": row.get("style_json") or {},
         "properties_json": row.get("properties_json") or {},
     }
@@ -129,6 +131,10 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
             """
             SELECT id, component_version_id, node_key, node_type, title, description,
                    actor, business_rule, input_summary, output_summary,
+                   bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+                   bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+                   bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+                   mes_semantics_json,
                    position_x, position_y, width, height, style_json, properties_json
             FROM swimlane_component_node
             WHERE component_version_id = %s
@@ -149,7 +155,9 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
             """
             SELECT id, component_version_id, edge_key, source_node_key, target_node_key,
                    source_port, target_port, edge_type, label, condition_text,
-                   data_contract_json, style_json, properties_json
+                   bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
+                   bpmn_condition_expression, data_contract_json, mes_semantics_json,
+                   style_json, properties_json
             FROM swimlane_component_edge
             WHERE component_version_id = %s
             ORDER BY created_at ASC, edge_key ASC
@@ -247,9 +255,13 @@ def _insert_version_payload(
             INSERT INTO swimlane_component_node (
                 component_version_id, node_key, node_type, title, description,
                 actor, business_rule, input_summary, output_summary,
+                bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+                bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+                bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+                mes_semantics_json,
                 position_x, position_y, width, height, style_json, properties_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -262,6 +274,15 @@ def _insert_version_payload(
                 node.business_rule,
                 node.input_summary,
                 node.output_summary,
+                node.bpmn_element_type,
+                node.bpmn_event_kind,
+                node.bpmn_event_definition,
+                node.bpmn_task_type,
+                node.bpmn_gateway_type,
+                node.bpmn_subprocess_kind,
+                node.bpmn_call_activity_ref,
+                node.bpmn_boundary_attached_to_node_key,
+                Jsonb(node.mes_semantics_json),
                 node.position_x,
                 node.position_y,
                 node.width,
@@ -297,9 +318,11 @@ def _insert_version_payload(
             INSERT INTO swimlane_component_edge (
                 component_version_id, edge_key, source_node_key, target_node_key,
                 source_port, target_port, edge_type, label, condition_text,
-                data_contract_json, style_json, properties_json
+                bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
+                bpmn_condition_expression, data_contract_json, mes_semantics_json,
+                style_json, properties_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 version_id,
@@ -311,7 +334,12 @@ def _insert_version_payload(
                 edge.edge_type,
                 edge.label,
                 edge.condition_text,
+                edge.bpmn_flow_type,
+                edge.bpmn_sequence_flow_kind,
+                edge.bpmn_message_name,
+                edge.bpmn_condition_expression,
                 Jsonb(edge.data_contract_json),
+                Jsonb(edge.mes_semantics_json),
                 Jsonb(edge.style_json),
                 Jsonb(edge.properties_json),
             ),
@@ -578,6 +606,10 @@ def publish_swimlane_component_version(
                     """
                     SELECT id, node_key, node_type, title, description, actor, business_rule,
                            input_summary, output_summary, position_x, position_y, width, height,
+                           bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
+                           bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
+                           bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+                           mes_semantics_json,
                            style_json, properties_json
                     FROM swimlane_component_node
                     WHERE component_version_id = %s
@@ -600,6 +632,7 @@ def publish_swimlane_component_version(
                             "width": float(row["width"]),
                             "height": float(row["height"]),
                             "er_refs": refs_by_node_id.get(row["id"], []),
+                            "mes_semantics_json": row.get("mes_semantics_json") or {},
                             "style_json": row.get("style_json") or {},
                             "properties_json": row.get("properties_json") or {},
                         }
@@ -607,8 +640,10 @@ def publish_swimlane_component_version(
                 cur.execute(
                     """
                     SELECT edge_key, source_node_key, target_node_key, source_port, target_port,
-                           edge_type, label, condition_text, data_contract_json, style_json,
-                           properties_json
+                           edge_type, label, condition_text, bpmn_flow_type,
+                           bpmn_sequence_flow_kind, bpmn_message_name,
+                           bpmn_condition_expression, data_contract_json,
+                           mes_semantics_json, style_json, properties_json
                     FROM swimlane_component_edge
                     WHERE component_version_id = %s
                     ORDER BY created_at ASC, edge_key ASC
@@ -619,6 +654,7 @@ def publish_swimlane_component_version(
                     {
                         **row,
                         "data_contract_json": row.get("data_contract_json") or {},
+                        "mes_semantics_json": row.get("mes_semantics_json") or {},
                         "style_json": row.get("style_json") or {},
                         "properties_json": row.get("properties_json") or {},
                     }

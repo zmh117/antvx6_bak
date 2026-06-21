@@ -26,9 +26,77 @@ function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
     sourcePort: edge.sourcePort,
     targetPort: edge.targetPort,
     edgeType: edge.edgeType,
+    bpmnFlowType: edge.bpmnFlowType,
+    bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
+    bpmnMessageName: edge.bpmnMessageName,
+    bpmnConditionExpression: edge.bpmnConditionExpression,
     label: edge.label,
     conditionText: edge.conditionText,
+    mesSemantics: edge.mesSemantics ?? null,
+    dataContractJson: edge.dataContract ?? {},
+    styleJson: edge.styleJson ?? {},
+    propertiesJson: edge.propertiesJson ?? {},
   }
+}
+
+function nodePatch(
+  draft: FlowDraft,
+  node: BusinessFlowNodeRecord,
+): Record<string, unknown> {
+  return {
+    laneInstanceKey: laneKeyForNode(draft, node),
+    nodeType: node.nodeType,
+    bpmnElementType: node.bpmnElementType,
+    bpmnEventKind: node.bpmnEventKind,
+    bpmnEventDefinition: node.bpmnEventDefinition,
+    bpmnTaskType: node.bpmnTaskType,
+    bpmnGatewayType: node.bpmnGatewayType,
+    bpmnSubProcessKind: node.bpmnSubProcessKind,
+    bpmnCallActivityRef: node.bpmnCallActivityRef,
+    bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
+    title: node.title,
+    x: node.position.x,
+    y: node.position.y,
+    width: node.size.width,
+    height: node.size.height,
+    description: node.description,
+    actor: node.actor,
+    businessRule: node.businessRule,
+    inputSummary: node.inputSummary,
+    outputSummary: node.outputSummary,
+    mesSemantics: node.mesSemantics ?? null,
+    styleJson: node.styleJson ?? {},
+    propertiesJson: node.propertiesJson ?? {},
+  }
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return stableJson(left ?? null) === stableJson(right ?? null)
+}
+
+function nodeBpmnChanged(prev: BusinessFlowNodeRecord, node: BusinessFlowNodeRecord) {
+  return (
+    prev.nodeType !== node.nodeType ||
+    prev.bpmnElementType !== node.bpmnElementType ||
+    prev.bpmnEventKind !== node.bpmnEventKind ||
+    prev.bpmnEventDefinition !== node.bpmnEventDefinition ||
+    prev.bpmnTaskType !== node.bpmnTaskType ||
+    prev.bpmnGatewayType !== node.bpmnGatewayType ||
+    prev.bpmnSubProcessKind !== node.bpmnSubProcessKind ||
+    (prev.bpmnCallActivityRef ?? '') !== (node.bpmnCallActivityRef ?? '') ||
+    (prev.bpmnBoundaryAttachedToNodeKey ?? '') !==
+      (node.bpmnBoundaryAttachedToNodeKey ?? '')
+  )
+}
+
+function edgeBpmnChanged(prev: BusinessFlowEdgeRecord, edge: BusinessFlowEdgeRecord) {
+  return (
+    prev.bpmnFlowType !== edge.bpmnFlowType ||
+    prev.bpmnSequenceFlowKind !== edge.bpmnSequenceFlowKind ||
+    (prev.bpmnMessageName ?? '') !== (edge.bpmnMessageName ?? '') ||
+    (prev.bpmnConditionExpression ?? '') !==
+      (edge.bpmnConditionExpression ?? '')
+  )
 }
 
 function erRefSignature(ref: BusinessFlowNodeErRef) {
@@ -174,18 +242,7 @@ export function buildBusinessFlowOps(
         opType: 'ADD_NODE',
         targetType: 'NODE',
         targetKey: key,
-        patch: {
-          laneInstanceKey: laneKeyForNode(draft, node),
-          nodeType: node.nodeType,
-          title: node.title,
-          x: node.position.x,
-          y: node.position.y,
-          width: node.size.width,
-          height: node.size.height,
-          description: node.description,
-          actor: node.actor,
-          businessRule: node.businessRule,
-        },
+        patch: nodePatch(draft, node),
         summary: `新增节点：${node.title}`,
       })
       ops.push(...buildErRefOps(key, node.title, [], node.erRefs ?? []))
@@ -212,6 +269,29 @@ export function buildBusinessFlowOps(
       patch.actor = node.actor ?? null
     if ((prev.businessRule ?? '') !== (node.businessRule ?? ''))
       patch.businessRule = node.businessRule ?? null
+    if ((prev.inputSummary ?? '') !== (node.inputSummary ?? ''))
+      patch.inputSummary = node.inputSummary ?? null
+    if ((prev.outputSummary ?? '') !== (node.outputSummary ?? ''))
+      patch.outputSummary = node.outputSummary ?? null
+    if (nodeBpmnChanged(prev, node)) {
+      Object.assign(patch, {
+        nodeType: node.nodeType,
+        bpmnElementType: node.bpmnElementType,
+        bpmnEventKind: node.bpmnEventKind,
+        bpmnEventDefinition: node.bpmnEventDefinition,
+        bpmnTaskType: node.bpmnTaskType,
+        bpmnGatewayType: node.bpmnGatewayType,
+        bpmnSubProcessKind: node.bpmnSubProcessKind,
+        bpmnCallActivityRef: node.bpmnCallActivityRef,
+        bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
+      })
+    }
+    if (!sameJson(prev.mesSemantics, node.mesSemantics))
+      patch.mesSemantics = node.mesSemantics ?? null
+    if (!sameJson(prev.styleJson, node.styleJson))
+      patch.styleJson = node.styleJson ?? {}
+    if (!sameJson(prev.propertiesJson, node.propertiesJson))
+      patch.propertiesJson = node.propertiesJson ?? {}
     if (Object.keys(patch).length > 0) {
       ops.push({
         opType: 'UPDATE_NODE',
@@ -254,10 +334,16 @@ export function buildBusinessFlowOps(
     if (
       prev.label !== edge.label ||
       prev.edgeType !== edge.edgeType ||
+      edgeBpmnChanged(prev, edge) ||
       prev.sourceNodeKey !== edge.sourceNodeKey ||
       prev.targetNodeKey !== edge.targetNodeKey ||
       prev.sourcePort !== edge.sourcePort ||
-      prev.targetPort !== edge.targetPort
+      prev.targetPort !== edge.targetPort ||
+      (prev.conditionText ?? '') !== (edge.conditionText ?? '') ||
+      !sameJson(prev.mesSemantics, edge.mesSemantics) ||
+      !sameJson(prev.dataContract, edge.dataContract) ||
+      !sameJson(prev.styleJson, edge.styleJson) ||
+      !sameJson(prev.propertiesJson, edge.propertiesJson)
     ) {
       ops.push({
         opType:

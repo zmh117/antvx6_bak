@@ -48,6 +48,12 @@ def merge_documents(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return merged
 
 
+def _json_summary(value: Any) -> str:
+    if not value:
+        return ""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
 def enrich_relation_documents(
     cur: psycopg.Cursor, graph_id: UUID, docs: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -148,15 +154,53 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                 None,
                 [
                     f"- {node['node_key']}: {node['title']} ({node['node_type']})",
+                    f"  BPMN：{node.get('bpmn_element_type') or ''}"
+                    + (
+                        f"/{node.get('bpmn_event_kind') or node.get('bpmn_task_type') or node.get('bpmn_gateway_type')}"
+                        if node.get("bpmn_event_kind") or node.get("bpmn_task_type") or node.get("bpmn_gateway_type")
+                        else ""
+                    ),
                     f"  泳道：{node.get('lane_name') or ''}" if node.get("lane_name") else "",
                     f"  角色：{node.get('actor') or ''}" if node.get("actor") else "",
                     f"  规则：{node.get('business_rule') or ''}"
                     if node.get("business_rule")
                     else "",
+                    f"  输入：{node.get('input_summary') or ''}" if node.get("input_summary") else "",
+                    f"  输出：{node.get('output_summary') or ''}" if node.get("output_summary") else "",
+                    f"  MES：{_json_summary(node.get('mes_semantics_json'))}"
+                    if node.get("mes_semantics_json")
+                    else "",
                 ],
             )
         )
         for node in nodes
+    ]
+    edge_lines = [
+        "\n".join(
+            filter(
+                None,
+                [
+                    f"- {edge['edge_key']}: {edge.get('label') or ''} ({edge.get('edge_type') or ''})",
+                    f"  BPMN 连线：{edge.get('bpmn_flow_type') or ''}"
+                    + (
+                        f"/{edge.get('bpmn_sequence_flow_kind')}"
+                        if edge.get("bpmn_sequence_flow_kind")
+                        else ""
+                    ),
+                    f"  条件：{edge.get('condition_text') or edge.get('bpmn_condition_expression') or ''}"
+                    if edge.get("condition_text") or edge.get("bpmn_condition_expression")
+                    else "",
+                    f"  消息：{edge.get('bpmn_message_name') or ''}" if edge.get("bpmn_message_name") else "",
+                    f"  数据契约：{_json_summary(edge.get('data_contract_json'))}"
+                    if edge.get("data_contract_json")
+                    else "",
+                    f"  MES：{_json_summary(edge.get('mes_semantics_json'))}"
+                    if edge.get("mes_semantics_json")
+                    else "",
+                ],
+            )
+        )
+        for edge in edges
     ]
     content = "\n".join(
         filter(
@@ -166,6 +210,7 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                 f"说明：{row.get('description') or ''}",
                 f"步骤数：{len(nodes)}，连线数：{len(edges)}",
                 "步骤：\n" + "\n".join(step_lines) if step_lines else "",
+                "连线：\n" + "\n".join(edge_lines) if edge_lines else "",
             ],
         )
     )
@@ -260,12 +305,14 @@ def fetch_business_flow_documents(
     for flow in repo.fetch_swimlane_business_flow_rows(cur, graph_id):
         refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
         nodes = repo.fetch_swimlane_flow_nodes(cur, flow["id"])
+        edges = repo.fetch_swimlane_flow_edges(cur, flow["id"])
         searchable = json.dumps(
             {
                 "code": flow["code"],
                 "name": flow["name"],
                 "description": flow.get("description"),
                 "nodes": nodes,
+                "edges": edges,
                 "refs": refs,
             },
             ensure_ascii=False,
