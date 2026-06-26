@@ -30,6 +30,16 @@ function jsonValue(value, fallback = {}) {
   return value
 }
 
+function stripMesJson(value) {
+  if (Array.isArray(value)) return value.map(stripMesJson)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !['mes', 'mesSemantics', 'mes_semantics_json'].includes(key))
+      .map(([key, item]) => [key, stripMesJson(item)]),
+  )
+}
+
 function numberValue(value, fallback = 0) {
   const number = Number(value)
   return Number.isFinite(number) ? number : fallback
@@ -55,7 +65,7 @@ export function seedBusinessFlowDocFromRows(doc, rows, collabRevision = null) {
     clearYMap(nodes)
     clearYMap(edges)
     clearYMap(erRefs)
-    meta.set('schemaVersion', 1)
+    meta.set('schemaVersion', 3)
     meta.set('documentType', 'BUSINESS_FLOW')
     meta.set('businessFlowId', rows.businessFlowId)
     if (collabRevision) meta.set('collabRevision', collabRevision)
@@ -89,6 +99,13 @@ export function seedBusinessFlowDocFromRows(doc, rows, collabRevision = null) {
         node_key: node.node_key,
         origin_component_node_key: node.origin_component_node_key,
         node_type: node.node_type || 'TASK',
+        bpmn_element_type: node.bpmn_element_type,
+        bpmn_event_kind: node.bpmn_event_kind,
+        bpmn_event_definition: node.bpmn_event_definition,
+        bpmn_task_type: node.bpmn_task_type,
+        bpmn_gateway_type: node.bpmn_gateway_type,
+        bpmn_subprocess_kind: node.bpmn_subprocess_kind,
+        bpmn_call_activity_ref: node.bpmn_call_activity_ref,
         title: node.title || '任务',
         description: node.description,
         actor: node.actor,
@@ -101,7 +118,7 @@ export function seedBusinessFlowDocFromRows(doc, rows, collabRevision = null) {
         height: numberValue(node.height, 60),
         is_overridden: Boolean(node.is_overridden),
         style_json: jsonValue(node.style_json),
-        properties_json: jsonValue(node.properties_json),
+        properties_json: stripMesJson(jsonValue(node.properties_json)),
       })
       for (const ref of node.er_refs || []) {
         setMapObject(erRefs, businessFlowErRefKey(node.node_key, ref), {
@@ -131,13 +148,17 @@ export function seedBusinessFlowDocFromRows(doc, rows, collabRevision = null) {
         target_lane_instance_key: edge.target_lane_instance_key,
         target_port: edge.target_port,
         edge_type: edge.edge_type || 'SEQUENCE',
+        bpmn_flow_type: edge.bpmn_flow_type,
+        bpmn_sequence_flow_kind: edge.bpmn_sequence_flow_kind,
+        bpmn_message_name: edge.bpmn_message_name,
+        bpmn_condition_expression: edge.bpmn_condition_expression,
         label: edge.label,
         condition_text: edge.condition_text,
         data_contract_json: jsonValue(edge.data_contract_json),
         origin_component_edge_key: edge.origin_component_edge_key,
         is_overridden: Boolean(edge.is_overridden),
         style_json: jsonValue(edge.style_json),
-        properties_json: jsonValue(edge.properties_json),
+        properties_json: stripMesJson(jsonValue(edge.properties_json)),
       })
     }
   }, 'seed')
@@ -209,6 +230,13 @@ export function businessFlowProjectionFromDoc(doc) {
       node_key: nodeKey,
       origin_component_node_key: node.origin_component_node_key || node.originComponentNodeKey || null,
       node_type: node.node_type || node.nodeType || 'TASK',
+      bpmn_element_type: node.bpmn_element_type || node.bpmnElementType || null,
+      bpmn_event_kind: node.bpmn_event_kind || node.bpmnEventKind || null,
+      bpmn_event_definition: node.bpmn_event_definition || node.bpmnEventDefinition || null,
+      bpmn_task_type: node.bpmn_task_type || node.bpmnTaskType || null,
+      bpmn_gateway_type: node.bpmn_gateway_type || node.bpmnGatewayType || null,
+      bpmn_subprocess_kind: node.bpmn_subprocess_kind || node.bpmnSubProcessKind || null,
+      bpmn_call_activity_ref: node.bpmn_call_activity_ref || node.bpmnCallActivityRef || null,
       title: node.title || '任务',
       description: node.description || null,
       actor: node.actor || null,
@@ -221,7 +249,7 @@ export function businessFlowProjectionFromDoc(doc) {
       height: numberValue(node.height, 60),
       is_overridden: Boolean(node.is_overridden ?? node.isOverridden),
       style_json: jsonValue(node.style_json || node.styleJson),
-      properties_json: jsonValue(node.properties_json || node.propertiesJson),
+      properties_json: stripMesJson(jsonValue(node.properties_json || node.propertiesJson)),
       er_refs: refsByNodeKey.get(nodeKey) || [],
     }
   }).sort((a, b) => String(a.node_key).localeCompare(String(b.node_key)))
@@ -242,13 +270,17 @@ export function businessFlowProjectionFromDoc(doc) {
       target_lane_instance_key: edge.target_lane_instance_key || edge.targetLaneInstanceKey || null,
       target_port: edge.target_port || edge.targetPort || null,
       edge_type: edge.edge_type || edge.edgeType || 'SEQUENCE',
+      bpmn_flow_type: edge.bpmn_flow_type || edge.bpmnFlowType || null,
+      bpmn_sequence_flow_kind: edge.bpmn_sequence_flow_kind || edge.bpmnSequenceFlowKind || null,
+      bpmn_message_name: edge.bpmn_message_name || edge.bpmnMessageName || null,
+      bpmn_condition_expression: edge.bpmn_condition_expression || edge.bpmnConditionExpression || null,
       label: edge.label || null,
       condition_text: edge.condition_text || edge.conditionText || null,
       data_contract_json: jsonValue(edge.data_contract_json || edge.dataContractJson),
       origin_component_edge_key: edge.origin_component_edge_key || edge.originComponentEdgeKey || null,
       is_overridden: Boolean(edge.is_overridden ?? edge.isOverridden),
       style_json: jsonValue(edge.style_json || edge.styleJson),
-      properties_json: jsonValue(edge.properties_json || edge.propertiesJson),
+      properties_json: stripMesJson(jsonValue(edge.properties_json || edge.propertiesJson)),
     }
   }).sort((a, b) => String(a.edge_key).localeCompare(String(b.edge_key)))
 

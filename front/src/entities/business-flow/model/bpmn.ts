@@ -13,7 +13,6 @@ import type {
   BusinessFlowJson,
   BusinessFlowNodeType,
   CanvasSize,
-  MesSemantics,
 } from './types'
 
 type JsonLike = Record<string, unknown> | null | undefined
@@ -26,7 +25,6 @@ type NullableBpmnNodeProfile = {
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
   bpmnCallActivityRef?: string | null
-  bpmnBoundaryAttachedToNodeKey?: string | null
 }
 
 type NullableBpmnEdgeProfile = {
@@ -36,44 +34,16 @@ type NullableBpmnEdgeProfile = {
   bpmnConditionExpression?: string | null
 }
 
-const EVENT_DEFINITIONS = new Set<BpmnEventDefinition>([
-  'NONE',
-  'MESSAGE',
-  'TIMER',
-  'ERROR',
-  'ESCALATION',
-  'CONDITIONAL',
-  'SIGNAL',
-  'LINK',
-  'MULTIPLE',
-  'TERMINATE',
-  'CANCEL',
-  'COMPENSATION',
-])
-
-const EVENT_KINDS = new Set<BpmnEventKind>(['START', 'INTERMEDIATE', 'END', 'BOUNDARY'])
-const TASK_TYPES = new Set<BpmnTaskType>([
-  'NONE',
-  'USER',
-  'SERVICE',
-  'MANUAL',
-  'SCRIPT',
-  'BUSINESS_RULE',
-  'RECEIVE',
-  'SEND',
-])
+const EVENT_DEFINITIONS = new Set<BpmnEventDefinition>(['NONE'])
+const EVENT_KINDS = new Set<BpmnEventKind>(['START', 'INTERMEDIATE', 'END'])
+const TASK_TYPES = new Set<BpmnTaskType>(['NONE'])
 const GATEWAY_TYPES = new Set<BpmnGatewayType>([
   'EXCLUSIVE',
   'PARALLEL',
   'INCLUSIVE',
-  'EVENT_BASED',
   'COMPLEX',
 ])
-const SUB_PROCESS_KINDS = new Set<BpmnSubProcessKind>([
-  'EMBEDDED',
-  'TRANSACTION',
-  'EVENT_SUB_PROCESS',
-])
+const SUB_PROCESS_KINDS = new Set<BpmnSubProcessKind>(['EMBEDDED', 'TRANSACTION'])
 const ELEMENT_TYPES = new Set<BpmnElementType>([
   'EVENT',
   'TASK',
@@ -81,7 +51,9 @@ const ELEMENT_TYPES = new Set<BpmnElementType>([
   'SUB_PROCESS',
   'CALL_ACTIVITY',
   'DATA_OBJECT',
-  'TEXT_ANNOTATION',
+  'DATA_INPUT',
+  'DATA_OUTPUT',
+  'DATA_STORE',
 ])
 const FLOW_TYPES = new Set<BpmnFlowType>(['SEQUENCE', 'MESSAGE', 'ASSOCIATION'])
 const SEQUENCE_FLOW_KINDS = new Set<BpmnSequenceFlowKind>([
@@ -91,6 +63,104 @@ const SEQUENCE_FLOW_KINDS = new Set<BpmnSequenceFlowKind>([
   'EXCEPTION',
 ])
 
+export const BPMN_NODE_OPTIONS: ReadonlyArray<{
+  key: string
+  label: string
+  group: '事件' | '活动' | '网关' | '数据'
+  profile: BpmnNodeProfile
+}> = [
+  {
+    key: 'event-start',
+    label: '开始事件',
+    group: '事件',
+    profile: { bpmnElementType: 'EVENT', bpmnEventKind: 'START', bpmnEventDefinition: 'NONE' },
+  },
+  {
+    key: 'event-intermediate',
+    label: '中间事件',
+    group: '事件',
+    profile: { bpmnElementType: 'EVENT', bpmnEventKind: 'INTERMEDIATE', bpmnEventDefinition: 'NONE' },
+  },
+  {
+    key: 'event-end',
+    label: '结束事件',
+    group: '事件',
+    profile: { bpmnElementType: 'EVENT', bpmnEventKind: 'END', bpmnEventDefinition: 'NONE' },
+  },
+  {
+    key: 'activity-task',
+    label: '任务',
+    group: '活动',
+    profile: { bpmnElementType: 'TASK', bpmnTaskType: 'NONE' },
+  },
+  {
+    key: 'activity-sub-process',
+    label: '子流程',
+    group: '活动',
+    profile: { bpmnElementType: 'SUB_PROCESS', bpmnSubProcessKind: 'EMBEDDED' },
+  },
+  {
+    key: 'activity-call',
+    label: '调用活动',
+    group: '活动',
+    profile: { bpmnElementType: 'CALL_ACTIVITY' },
+  },
+  {
+    key: 'activity-transaction',
+    label: '事务',
+    group: '活动',
+    profile: { bpmnElementType: 'SUB_PROCESS', bpmnSubProcessKind: 'TRANSACTION' },
+  },
+  {
+    key: 'gateway-exclusive',
+    label: '排他网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'EXCLUSIVE' },
+  },
+  {
+    key: 'gateway-inclusive',
+    label: '包容网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'INCLUSIVE' },
+  },
+  {
+    key: 'gateway-parallel',
+    label: '并行网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'PARALLEL' },
+  },
+  {
+    key: 'gateway-complex',
+    label: '复杂网关',
+    group: '网关',
+    profile: { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'COMPLEX' },
+  },
+  {
+    key: 'data-object',
+    label: '数据对象',
+    group: '数据',
+    profile: { bpmnElementType: 'DATA_OBJECT' },
+  },
+  {
+    key: 'data-input',
+    label: '数据输入',
+    group: '数据',
+    profile: { bpmnElementType: 'DATA_INPUT' },
+  },
+  {
+    key: 'data-output',
+    label: '数据输出',
+    group: '数据',
+    profile: { bpmnElementType: 'DATA_OUTPUT' },
+  },
+  {
+    key: 'data-store',
+    label: '数据存储',
+    group: '数据',
+    profile: { bpmnElementType: 'DATA_STORE' },
+  },
+]
+
 function stringValue(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -98,11 +168,6 @@ function stringValue(value: unknown) {
 function oneOf<T extends string>(value: unknown, allowed: Set<T>, fallback: T): T {
   const text = stringValue(value).toUpperCase()
   return allowed.has(text as T) ? (text as T) : fallback
-}
-
-function arrayValue(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value.map((item) => stringValue(item)).filter(Boolean)
 }
 
 function objectValue(value: unknown): BusinessFlowJson {
@@ -116,14 +181,9 @@ function profileSource(propertiesJson?: JsonLike) {
   return objectValue(props.bpmn)
 }
 
-function mesSource(propertiesJson?: JsonLike) {
-  const props = objectValue(propertiesJson)
-  return objectValue(props.mes)
-}
-
 export function normalizeBpmnNodeProfile(
   source: NullableBpmnNodeProfile & {
-    nodeType?: BusinessFlowNodeType | null
+    nodeType?: BusinessFlowNodeType | string | null
     propertiesJson?: JsonLike
   },
 ): BpmnNodeProfile {
@@ -137,7 +197,9 @@ export function normalizeBpmnNodeProfile(
     if (nodeType === 'SUB_PROCESS') bpmnElementType = 'SUB_PROCESS'
     if (nodeType === 'CALL_ACTIVITY') bpmnElementType = 'CALL_ACTIVITY'
     if (nodeType === 'DATA_OBJECT') bpmnElementType = 'DATA_OBJECT'
-    if (nodeType === 'TEXT_ANNOTATION') bpmnElementType = 'TEXT_ANNOTATION'
+    if (nodeType === 'DATA_INPUT') bpmnElementType = 'DATA_INPUT'
+    if (nodeType === 'DATA_OUTPUT') bpmnElementType = 'DATA_OUTPUT'
+    if (nodeType === 'DATA_STORE') bpmnElementType = 'DATA_STORE'
   }
 
   const eventKind =
@@ -153,7 +215,7 @@ export function normalizeBpmnNodeProfile(
       ? oneOf(
           source.bpmnTaskType ?? bpmn.taskType ?? bpmn.bpmnTaskType,
           TASK_TYPES,
-          nodeType === 'SERVICE' ? 'SERVICE' : nodeType === 'MANUAL' ? 'MANUAL' : 'NONE',
+          'NONE',
         )
       : null
   return {
@@ -189,14 +251,6 @@ export function normalizeBpmnNodeProfile(
         ? stringValue(source.bpmnCallActivityRef ?? bpmn.callActivityRef ?? bpmn.bpmnCallActivityRef) ||
           null
         : null,
-    bpmnBoundaryAttachedToNodeKey:
-      eventKind === 'BOUNDARY'
-        ? stringValue(
-            source.bpmnBoundaryAttachedToNodeKey ??
-              bpmn.boundaryAttachedToNodeKey ??
-              bpmn.bpmnBoundaryAttachedToNodeKey,
-          ) || null
-        : null,
   }
 }
 
@@ -210,9 +264,9 @@ export function legacyNodeTypeForBpmn(profile: BpmnNodeProfile): BusinessFlowNod
   if (profile.bpmnElementType === 'SUB_PROCESS') return 'SUB_PROCESS'
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'CALL_ACTIVITY'
   if (profile.bpmnElementType === 'DATA_OBJECT') return 'DATA_OBJECT'
-  if (profile.bpmnElementType === 'TEXT_ANNOTATION') return 'TEXT_ANNOTATION'
-  if (profile.bpmnTaskType === 'SERVICE') return 'SERVICE'
-  if (profile.bpmnTaskType === 'MANUAL') return 'MANUAL'
+  if (profile.bpmnElementType === 'DATA_INPUT') return 'DATA_INPUT'
+  if (profile.bpmnElementType === 'DATA_OUTPUT') return 'DATA_OUTPUT'
+  if (profile.bpmnElementType === 'DATA_STORE') return 'DATA_STORE'
   return 'TASK'
 }
 
@@ -220,35 +274,55 @@ export function bpmnNodeTitle(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'EVENT') {
     if (profile.bpmnEventKind === 'START') return '开始事件'
     if (profile.bpmnEventKind === 'END') return '结束事件'
-    if (profile.bpmnEventKind === 'BOUNDARY') return '边界事件'
     return '中间事件'
   }
   if (profile.bpmnElementType === 'GATEWAY') {
     if (profile.bpmnGatewayType === 'PARALLEL') return '并行网关'
     if (profile.bpmnGatewayType === 'INCLUSIVE') return '包容网关'
-    if (profile.bpmnGatewayType === 'EVENT_BASED') return '事件网关'
     if (profile.bpmnGatewayType === 'COMPLEX') return '复杂网关'
     return '排他网关'
   }
-  if (profile.bpmnElementType === 'SUB_PROCESS') return '子流程'
+  if (profile.bpmnElementType === 'SUB_PROCESS') {
+    return profile.bpmnSubProcessKind === 'TRANSACTION' ? '事务' : '子流程'
+  }
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return '调用活动'
   if (profile.bpmnElementType === 'DATA_OBJECT') return '数据对象'
-  if (profile.bpmnElementType === 'TEXT_ANNOTATION') return '注释'
-  if (profile.bpmnTaskType === 'SERVICE') return '服务任务'
-  if (profile.bpmnTaskType === 'MANUAL') return '人工任务'
-  if (profile.bpmnTaskType === 'SCRIPT') return '脚本任务'
-  if (profile.bpmnTaskType === 'BUSINESS_RULE') return '规则任务'
-  if (profile.bpmnTaskType === 'RECEIVE') return '接收任务'
-  if (profile.bpmnTaskType === 'SEND') return '发送任务'
-  if (profile.bpmnTaskType === 'USER') return '用户任务'
+  if (profile.bpmnElementType === 'DATA_INPUT') return '数据输入'
+  if (profile.bpmnElementType === 'DATA_OUTPUT') return '数据输出'
+  if (profile.bpmnElementType === 'DATA_STORE') return '数据存储'
   return '任务'
+}
+
+export function bpmnNodeOptionKey(profile: BpmnNodeProfile) {
+  if (profile.bpmnElementType === 'EVENT') {
+    return `event-${profile.bpmnEventKind?.toLowerCase() ?? 'intermediate'}`
+  }
+  if (profile.bpmnElementType === 'TASK') return 'activity-task'
+  if (profile.bpmnElementType === 'SUB_PROCESS') {
+    return profile.bpmnSubProcessKind === 'TRANSACTION'
+      ? 'activity-transaction'
+      : 'activity-sub-process'
+  }
+  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'activity-call'
+  if (profile.bpmnElementType === 'GATEWAY') {
+    return `gateway-${profile.bpmnGatewayType?.toLowerCase() ?? 'exclusive'}`
+  }
+  if (profile.bpmnElementType === 'DATA_OBJECT') return 'data-object'
+  if (profile.bpmnElementType === 'DATA_INPUT') return 'data-input'
+  if (profile.bpmnElementType === 'DATA_OUTPUT') return 'data-output'
+  if (profile.bpmnElementType === 'DATA_STORE') return 'data-store'
+  return 'activity-task'
 }
 
 export function bpmnNodeSize(profile: BpmnNodeProfile): CanvasSize {
   if (profile.bpmnElementType === 'EVENT') return { width: 58, height: 58 }
   if (profile.bpmnElementType === 'GATEWAY') return { width: 88, height: 72 }
-  if (profile.bpmnElementType === 'DATA_OBJECT') return { width: 96, height: 72 }
-  if (profile.bpmnElementType === 'TEXT_ANNOTATION') return { width: 150, height: 72 }
+  if (
+    profile.bpmnElementType === 'DATA_OBJECT' ||
+    profile.bpmnElementType === 'DATA_INPUT' ||
+    profile.bpmnElementType === 'DATA_OUTPUT'
+  ) return { width: 96, height: 72 }
+  if (profile.bpmnElementType === 'DATA_STORE') return { width: 108, height: 78 }
   if (profile.bpmnElementType === 'SUB_PROCESS') return { width: 180, height: 92 }
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return { width: 170, height: 74 }
   return { width: 148, height: 64 }
@@ -303,37 +377,26 @@ export function legacyEdgeTypeForBpmn(
   return isCrossLane ? 'DEPENDENCY' : 'SEQUENCE'
 }
 
-export function normalizeMesSemantics(
-  value?: MesSemantics | JsonLike,
-  propertiesJson?: JsonLike,
-): MesSemantics {
-  const raw = objectValue(value ?? mesSource(propertiesJson))
-  return {
-    variables: arrayValue(raw.variables),
-    systemConfigs: arrayValue(raw.systemConfigs),
-    masterRecipe: stringValue(raw.masterRecipe) || null,
-    recipe: stringValue(raw.recipe) || null,
-    controlSteps: arrayValue(raw.controlSteps),
-    controls: arrayValue(raw.controls),
-    materialInputs: arrayValue(raw.materialInputs),
-    materialOutputs: arrayValue(raw.materialOutputs),
-    materialUsageRecord: stringValue(raw.materialUsageRecord) || null,
-    batchRecordFields: arrayValue(raw.batchRecordFields),
-    auditEvents: arrayValue(raw.auditEvents),
-    electronicSignature: stringValue(raw.electronicSignature) || null,
-    notes: stringValue(raw.notes) || null,
-  }
+export function isDataBpmnElement(elementType?: BpmnElementType | null) {
+  return elementType === 'DATA_OBJECT' ||
+    elementType === 'DATA_INPUT' ||
+    elementType === 'DATA_OUTPUT' ||
+    elementType === 'DATA_STORE'
 }
 
 export function mergeBpmnIntoProperties(
   propertiesJson: JsonLike,
   profile: BpmnNodeProfile | BpmnEdgeProfile,
-  mesSemantics?: MesSemantics | null,
 ): BusinessFlowJson {
   const props = objectValue(propertiesJson)
+  const {
+    mes: _mes,
+    mesSemantics: _mesSemantics,
+    mes_semantics_json: _mesSemanticsJson,
+    ...cleanProperties
+  } = props
   return {
-    ...props,
-    bpmn: { ...objectValue(props.bpmn), ...profile },
-    mes: normalizeMesSemantics(mesSemantics ?? mesSource(props)),
+    ...cleanProperties,
+    bpmn: { ...profile },
   }
 }

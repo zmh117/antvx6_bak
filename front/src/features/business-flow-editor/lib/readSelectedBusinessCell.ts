@@ -4,12 +4,10 @@ import type {
   BpmnEdgeProfile,
   BpmnNodeProfile,
   BusinessFlowNodeErRef,
-  MesSemantics,
 } from '@/entities/business-flow'
 import {
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
-  normalizeMesSemantics,
 } from '@/entities/business-flow'
 import { readCellData } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 
@@ -27,7 +25,6 @@ export type SelectedBusinessCell =
       inputSummary: string
       outputSummary: string
       bpmnProfile: BpmnNodeProfile
-      mesSemantics: MesSemantics
       erRefs: BusinessFlowNodeErRef[]
     }
   | {
@@ -35,7 +32,6 @@ export type SelectedBusinessCell =
       cell: Edge
       label: string
       bpmnProfile: BpmnEdgeProfile
-      mesSemantics: MesSemantics
     }
   | null
 
@@ -55,7 +51,6 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       cell: cell as Edge,
       label: data.title ?? '',
       bpmnProfile,
-      mesSemantics: normalizeMesSemantics(data.mesSemantics, data.propertiesJson),
     }
   }
   if (data.cellRole === 'LANE_INSTANCE') {
@@ -76,7 +71,6 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       bpmnGatewayType: data.bpmnGatewayType,
       bpmnSubProcessKind: data.bpmnSubProcessKind,
       bpmnCallActivityRef: data.bpmnCallActivityRef,
-      bpmnBoundaryAttachedToNodeKey: data.bpmnBoundaryAttachedToNodeKey,
       propertiesJson: data.propertiesJson,
     })
     return {
@@ -89,7 +83,6 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       inputSummary: data.inputSummary ?? '',
       outputSummary: data.outputSummary ?? '',
       bpmnProfile,
-      mesSemantics: normalizeMesSemantics(data.mesSemantics, data.propertiesJson),
       erRefs: data.erRefs ?? [],
     }
   }

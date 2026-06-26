@@ -11,6 +11,11 @@ from psycopg.types.json import Jsonb
 
 from app.config import get_settings
 from app.database import db_transaction, get_connection
+from app.domain.business_flow.bpmn import (
+    edge_profile_error,
+    node_profile_error,
+    strip_mes_json,
+)
 from app.interfaces.http.schemas.business_flow import (
     ApplyBusinessFlowChangesRequest,
     ApplyBusinessFlowChangesResponse,
@@ -357,9 +362,8 @@ def _node_response(row: dict, refs_by_node_id: dict[UUID, list[dict]] | None = N
         "position_y": float(row["position_y"]),
         "width": float(row["width"]),
         "height": float(row["height"]),
-        "mes_semantics_json": _json_value(row, "mes_semantics_json"),
         "style_json": _json_value(row, "style_json"),
-        "properties_json": _json_value(row, "properties_json"),
+        "properties_json": strip_mes_json(_json_value(row, "properties_json")),
         "er_refs": (refs_by_node_id or {}).get(row["id"], []),
     }
 
@@ -368,9 +372,8 @@ def _edge_response(row: dict) -> dict:
     return {
         **row,
         "data_contract_json": _json_value(row, "data_contract_json"),
-        "mes_semantics_json": _json_value(row, "mes_semantics_json"),
         "style_json": _json_value(row, "style_json"),
-        "properties_json": _json_value(row, "properties_json"),
+        "properties_json": strip_mes_json(_json_value(row, "properties_json")),
     }
 
 
@@ -436,9 +439,8 @@ def _fetch_business_flow_editor_state(
         SELECT id, lane_instance_id, node_key, origin_component_node_key, node_type,
                bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-               bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
+               bpmn_call_activity_ref,
                title, description, actor, business_rule, input_summary, output_summary,
-               mes_semantics_json,
                position_x, position_y, width, height, is_overridden, style_json,
                properties_json
         FROM business_flow_node
@@ -459,7 +461,7 @@ def _fetch_business_flow_editor_state(
                e.target_lane_instance_id, tli.instance_key AS target_lane_instance_key,
                e.target_port, e.edge_type, e.label, e.condition_text,
                e.bpmn_flow_type, e.bpmn_sequence_flow_kind, e.bpmn_message_name,
-               e.bpmn_condition_expression, e.data_contract_json, e.mes_semantics_json,
+               e.bpmn_condition_expression, e.data_contract_json,
                e.origin_component_edge_key, e.is_overridden,
                e.style_json, e.properties_json
         FROM business_flow_edge e
@@ -544,6 +546,8 @@ def _append_change_batch(
     )
     batch_id = cur.fetchone()["id"]
     for index, op in enumerate(ops, start=1):
+        clean_patch = strip_mes_json(op.get("patch") or {})
+        clean_inverse_patch = strip_mes_json(op.get("inverse_patch") or {})
         cur.execute(
             """
             INSERT INTO business_flow_change_op (
@@ -558,8 +562,8 @@ def _append_change_batch(
                 op["op_type"],
                 op["target_type"],
                 op["target_key"],
-                Jsonb(op.get("patch") or {}),
-                Jsonb(op.get("inverse_patch") or {}),
+                Jsonb(clean_patch),
+                Jsonb(clean_inverse_patch),
                 op.get("summary"),
             ),
         )
@@ -578,6 +582,86 @@ def _resolve_node_id(cur, business_flow_id: UUID, node_key: str) -> UUID:
     if not row:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"node not found: {node_key}")
     return row["id"]
+
+
+def _node_profile_by_key(cur, business_flow_id: UUID, node_key: str) -> dict[str, Any]:
+    cur.execute(
+        """
+        SELECT id, node_key, node_type, bpmn_element_type, bpmn_event_kind,
+               bpmn_event_definition, bpmn_task_type, bpmn_gateway_type,
+               bpmn_subprocess_kind, bpmn_call_activity_ref
+        FROM business_flow_node
+        WHERE business_flow_id = %s AND node_key = %s
+        """,
+        (business_flow_id, node_key),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"node not found: {node_key}",
+        )
+    return dict(row)
+
+
+def _ensure_valid_node(node: dict[str, Any], node_key: str) -> None:
+    error = node_profile_error(node)
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid BPMN node {node_key}: {error}",
+        )
+
+
+def _ensure_node_edge_compatibility(
+    cur,
+    business_flow_id: UUID,
+    node_key: str,
+    node: dict[str, Any],
+) -> None:
+    if node.get("bpmn_element_type") not in {
+        "DATA_OBJECT",
+        "DATA_INPUT",
+        "DATA_OUTPUT",
+        "DATA_STORE",
+    }:
+        return
+    cur.execute(
+        """
+        SELECT e.edge_key, e.edge_type, e.bpmn_flow_type
+        FROM business_flow_edge e
+        LEFT JOIN business_flow_node source ON source.id = e.source_node_id
+        LEFT JOIN business_flow_node target ON target.id = e.target_node_id
+        WHERE e.business_flow_id = %s
+          AND (source.node_key = %s OR target.node_key = %s)
+          AND (e.edge_type <> 'ASSOCIATION' OR e.bpmn_flow_type <> 'ASSOCIATION')
+        LIMIT 1
+        """,
+        (business_flow_id, node_key, node_key),
+    )
+    invalid_edge = cur.fetchone()
+    if invalid_edge:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"node {node_key} cannot become a data node while edge "
+                f"{invalid_edge['edge_key']} is not an association"
+            ),
+        )
+
+
+def _ensure_valid_edge(
+    edge: dict[str, Any],
+    edge_key: str,
+    source_node: dict[str, Any],
+    target_node: dict[str, Any],
+) -> None:
+    error = edge_profile_error(edge, source_node, target_node)
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid BPMN edge {edge_key}: {error}",
+        )
 
 
 def _resolve_lane_id(cur, business_flow_id: UUID, instance_key: str) -> UUID:
@@ -759,20 +843,44 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             "bpmnGatewayType": "bpmn_gateway_type",
             "bpmnSubProcessKind": "bpmn_subprocess_kind",
             "bpmnCallActivityRef": "bpmn_call_activity_ref",
-            "bpmnBoundaryAttachedToNodeKey": "bpmn_boundary_attached_to_node_key",
         }
         for client_key, field in mapping.items():
             if client_key in patch:
                 values[field] = patch[client_key] or None
         if "nodeType" in patch and patch.get("nodeType"):
             values["node_type"] = patch["nodeType"]
-        if "mesSemantics" in patch:
-            values["mes_semantics_json"] = Jsonb(patch.get("mesSemantics") or {})
         if "styleJson" in patch:
             values["style_json"] = Jsonb(patch.get("styleJson") or {})
         if "propertiesJson" in patch:
-            values["properties_json"] = Jsonb(patch.get("propertiesJson") or {})
+            values["properties_json"] = Jsonb(
+                strip_mes_json(patch.get("propertiesJson") or {})
+            )
         if values:
+            candidate = _node_profile_by_key(cur, business_flow_id, target_key)
+            candidate.update(
+                {
+                    field: value
+                    for field, value in values.items()
+                    if field
+                    in {
+                        "node_type",
+                        "bpmn_element_type",
+                        "bpmn_event_kind",
+                        "bpmn_event_definition",
+                        "bpmn_task_type",
+                        "bpmn_gateway_type",
+                        "bpmn_subprocess_kind",
+                        "bpmn_call_activity_ref",
+                    }
+                }
+            )
+            _ensure_valid_node(candidate, target_key)
+            _ensure_node_edge_compatibility(
+                cur,
+                business_flow_id,
+                target_key,
+                candidate,
+            )
             assignments = [f"{field} = %s" for field in values]
             cur.execute(
                 f"""
@@ -786,6 +894,7 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
 
     if op.op_type == "ADD_NODE":
         lane_id = _resolve_lane_id(cur, business_flow_id, patch["laneInstanceKey"])
+        _ensure_valid_node(patch, target_key)
         cur.execute(
             """
             INSERT INTO business_flow_node (
@@ -793,12 +902,11 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 description, actor, business_rule, input_summary, output_summary,
                 bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                 bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
-                mes_semantics_json,
+                bpmn_call_activity_ref,
                 position_x, position_y, width, height, is_overridden,
                 style_json, properties_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
             ON CONFLICT (business_flow_id, node_key) DO NOTHING
             """,
             (
@@ -819,14 +927,12 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 patch.get("bpmnGatewayType"),
                 patch.get("bpmnSubProcessKind"),
                 patch.get("bpmnCallActivityRef"),
-                patch.get("bpmnBoundaryAttachedToNodeKey"),
-                Jsonb(patch.get("mesSemantics") or {}),
                 patch.get("x", 0),
                 patch.get("y", 0),
                 patch.get("width", 120),
                 patch.get("height", 60),
                 Jsonb(patch.get("styleJson") or {}),
-                Jsonb(patch.get("propertiesJson") or {}),
+                Jsonb(strip_mes_json(patch.get("propertiesJson") or {})),
             ),
         )
         return
@@ -848,6 +954,9 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ADD_EDGE requires node endpoints")
         source_node_id = _resolve_node_id(cur, business_flow_id, source_node_key)
         target_node_id = _resolve_node_id(cur, business_flow_id, target_node_key)
+        source_node = _node_profile_by_key(cur, business_flow_id, source_node_key)
+        target_node = _node_profile_by_key(cur, business_flow_id, target_node_key)
+        _ensure_valid_edge(patch, target_key, source_node, target_node)
         source_lane_id = _node_lane_id(cur, business_flow_id, source_node_key)
         target_lane_id = _node_lane_id(cur, business_flow_id, target_node_key)
         lane_instance_id = source_lane_id if source_lane_id == target_lane_id else None
@@ -858,10 +967,10 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 source_node_id, source_port, target_type, target_node_id, target_port,
                 edge_type, label, condition_text, data_contract_json, is_overridden,
                 bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-                bpmn_condition_expression, mes_semantics_json,
+                bpmn_condition_expression,
                 style_json, properties_json
             )
-            VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (business_flow_id, edge_key) DO UPDATE
             SET lane_instance_id = EXCLUDED.lane_instance_id,
                 source_type = EXCLUDED.source_type,
@@ -880,7 +989,6 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 bpmn_sequence_flow_kind = EXCLUDED.bpmn_sequence_flow_kind,
                 bpmn_message_name = EXCLUDED.bpmn_message_name,
                 bpmn_condition_expression = EXCLUDED.bpmn_condition_expression,
-                mes_semantics_json = EXCLUDED.mes_semantics_json,
                 style_json = EXCLUDED.style_json,
                 properties_json = EXCLUDED.properties_json,
                 is_overridden = TRUE,
@@ -902,9 +1010,8 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 patch.get("bpmnSequenceFlowKind") or patch.get("bpmn_sequence_flow_kind"),
                 patch.get("bpmnMessageName") or patch.get("bpmn_message_name"),
                 patch.get("bpmnConditionExpression") or patch.get("bpmn_condition_expression"),
-                Jsonb(patch.get("mesSemantics") or patch.get("mes_semantics_json") or {}),
                 Jsonb(patch.get("styleJson") or {}),
-                Jsonb(patch.get("propertiesJson") or {}),
+                Jsonb(strip_mes_json(patch.get("propertiesJson") or {})),
             ),
         )
         return
@@ -929,15 +1036,57 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             values["bpmn_message_name"] = patch["bpmnMessageName"] or None
         if "bpmnConditionExpression" in patch:
             values["bpmn_condition_expression"] = patch["bpmnConditionExpression"] or None
-        if "mesSemantics" in patch:
-            values["mes_semantics_json"] = Jsonb(patch.get("mesSemantics") or {})
         if "dataContractJson" in patch:
             values["data_contract_json"] = Jsonb(patch.get("dataContractJson") or {})
         if "styleJson" in patch:
             values["style_json"] = Jsonb(patch.get("styleJson") or {})
         if "propertiesJson" in patch:
-            values["properties_json"] = Jsonb(patch.get("propertiesJson") or {})
+            values["properties_json"] = Jsonb(
+                strip_mes_json(patch.get("propertiesJson") or {})
+            )
         if values:
+            cur.execute(
+                """
+                SELECT e.source_node_id, e.target_node_id, e.edge_type,
+                       e.bpmn_flow_type, e.bpmn_sequence_flow_kind,
+                       e.bpmn_message_name, e.bpmn_condition_expression,
+                       sn.node_key AS source_node_key, tn.node_key AS target_node_key
+                FROM business_flow_edge e
+                LEFT JOIN business_flow_node sn ON sn.id = e.source_node_id
+                LEFT JOIN business_flow_node tn ON tn.id = e.target_node_id
+                WHERE e.business_flow_id = %s AND e.edge_key = %s
+                """,
+                (business_flow_id, target_key),
+            )
+            current_edge = cur.fetchone()
+            if not current_edge:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"edge not found: {target_key}",
+                )
+            candidate = dict(current_edge)
+            candidate.update(
+                {
+                    field: value
+                    for field, value in values.items()
+                    if field
+                    in {
+                        "edge_type",
+                        "bpmn_flow_type",
+                        "bpmn_sequence_flow_kind",
+                        "bpmn_message_name",
+                        "bpmn_condition_expression",
+                    }
+                }
+            )
+            if current_edge["source_node_key"] and current_edge["target_node_key"]:
+                source_node = _node_profile_by_key(
+                    cur, business_flow_id, current_edge["source_node_key"]
+                )
+                target_node = _node_profile_by_key(
+                    cur, business_flow_id, current_edge["target_node_key"]
+                )
+                _ensure_valid_edge(candidate, target_key, source_node, target_node)
             assignments = [f"{field} = %s" for field in values]
             cur.execute(
                 f"""
@@ -1156,9 +1305,8 @@ def _edge_patch(edge: dict[str, Any]) -> dict[str, Any]:
         "label": edge.get("label"),
         "conditionText": edge.get("condition_text"),
         "dataContractJson": edge.get("data_contract_json") or {},
-        "mesSemantics": edge.get("mes_semantics_json") or {},
         "styleJson": edge.get("style_json") or {},
-        "propertiesJson": edge.get("properties_json") or {},
+        "propertiesJson": strip_mes_json(edge.get("properties_json") or {}),
     }
 
 
@@ -1243,6 +1391,8 @@ def _build_business_flow_materialize_ops(
         for node in incoming_state.get("nodes", [])
         if node.get("node_key")
     }
+    for key, node in incoming_nodes.items():
+        _ensure_valid_node(node, key)
     for key, node in current_nodes.items():
         if key not in incoming_nodes:
             ops.append(
@@ -1278,7 +1428,6 @@ def _build_business_flow_materialize_ops(
                         "bpmnGatewayType": node.get("bpmn_gateway_type"),
                         "bpmnSubProcessKind": node.get("bpmn_subprocess_kind"),
                         "bpmnCallActivityRef": node.get("bpmn_call_activity_ref"),
-                        "bpmnBoundaryAttachedToNodeKey": node.get("bpmn_boundary_attached_to_node_key"),
                         "title": node.get("title") or "任务",
                         "x": _number(node.get("position_x")),
                         "y": _number(node.get("position_y")),
@@ -1289,9 +1438,8 @@ def _build_business_flow_materialize_ops(
                         "businessRule": node.get("business_rule"),
                         "inputSummary": node.get("input_summary"),
                         "outputSummary": node.get("output_summary"),
-                        "mesSemantics": node.get("mes_semantics_json") or {},
                         "styleJson": node.get("style_json") or {},
-                        "propertiesJson": node.get("properties_json") or {},
+                        "propertiesJson": strip_mes_json(node.get("properties_json") or {}),
                     },
                     "summary": f"新增节点：{node.get('title') or key}",
                 }
@@ -1342,16 +1490,13 @@ def _build_business_flow_materialize_ops(
             ("bpmnGatewayType", "bpmn_gateway_type"),
             ("bpmnSubProcessKind", "bpmn_subprocess_kind"),
             ("bpmnCallActivityRef", "bpmn_call_activity_ref"),
-            ("bpmnBoundaryAttachedToNodeKey", "bpmn_boundary_attached_to_node_key"),
         ]:
             if not _same_text(current.get(field), node.get(field)):
                 patch[client_key] = node.get(field)
-        if _stable_json(current.get("mes_semantics_json")) != _stable_json(node.get("mes_semantics_json")):
-            patch["mesSemantics"] = node.get("mes_semantics_json") or {}
         if _stable_json(current.get("style_json")) != _stable_json(node.get("style_json")):
             patch["styleJson"] = node.get("style_json") or {}
         if _stable_json(current.get("properties_json")) != _stable_json(node.get("properties_json")):
-            patch["propertiesJson"] = node.get("properties_json") or {}
+            patch["propertiesJson"] = strip_mes_json(node.get("properties_json") or {})
         if patch:
             ops.append(
                 {
@@ -1395,6 +1540,11 @@ def _build_business_flow_materialize_ops(
     for key, edge in incoming_edges.items():
         if edge.get("source_type", "NODE") != "NODE" or edge.get("target_type", "NODE") != "NODE":
             continue
+        source_node = incoming_nodes.get(edge.get("source_node_key") or "")
+        target_node = incoming_nodes.get(edge.get("target_node_key") or "")
+        if not source_node or not target_node:
+            continue
+        _ensure_valid_edge(edge, key, source_node, target_node)
         current = current_edges.get(key)
         patch = _edge_patch(edge)
         if not current:
@@ -1427,7 +1577,6 @@ def _build_business_flow_materialize_ops(
             ]
         )
         changed = changed or _stable_json(current.get("data_contract_json")) != _stable_json(edge.get("data_contract_json"))
-        changed = changed or _stable_json(current.get("mes_semantics_json")) != _stable_json(edge.get("mes_semantics_json"))
         changed = changed or _stable_json(current.get("style_json")) != _stable_json(edge.get("style_json"))
         changed = changed or _stable_json(current.get("properties_json")) != _stable_json(edge.get("properties_json"))
         if changed:
@@ -1503,8 +1652,7 @@ def place_swimlane_component(
                        input_summary, output_summary, position_x, position_y, width, height,
                        bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                        bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                       bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
-                       mes_semantics_json,
+                       bpmn_call_activity_ref,
                        style_json, properties_json
                 FROM swimlane_component_node
                 WHERE component_version_id = %s
@@ -1536,7 +1684,7 @@ def place_swimlane_component(
                        edge_type, label, condition_text, bpmn_flow_type,
                        bpmn_sequence_flow_kind, bpmn_message_name,
                        bpmn_condition_expression, data_contract_json,
-                       mes_semantics_json, style_json, properties_json
+                       style_json, properties_json
                 FROM swimlane_component_edge
                 WHERE component_version_id = %s
                 ORDER BY created_at ASC, edge_key ASC
@@ -1544,6 +1692,18 @@ def place_swimlane_component(
                 (body.component_version_id,),
             )
             component_edges = cur.fetchall()
+            component_nodes_by_key = {
+                node["node_key"]: dict(node) for node in component_nodes
+            }
+            for node_key, component_node in component_nodes_by_key.items():
+                _ensure_valid_node(component_node, node_key)
+            for component_edge in component_edges:
+                _ensure_valid_edge(
+                    dict(component_edge),
+                    component_edge["edge_key"],
+                    component_nodes_by_key[component_edge["source_node_key"]],
+                    component_nodes_by_key[component_edge["target_node_key"]],
+                )
 
             lane_key = f"lane_{uuid4().hex[:14]}"
             x = float(body.position.get("x", 0))
@@ -1617,11 +1777,10 @@ def place_swimlane_component(
                         actor, business_rule, input_summary, output_summary,
                         bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                         bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                        bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
-                        mes_semantics_json,
+                        bpmn_call_activity_ref,
                         position_x, position_y, width, height, style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -1643,14 +1802,12 @@ def place_swimlane_component(
                         component_node.get("bpmn_gateway_type"),
                         component_node.get("bpmn_subprocess_kind"),
                         component_node.get("bpmn_call_activity_ref"),
-                        component_node.get("bpmn_boundary_attached_to_node_key"),
-                        Jsonb(component_node.get("mes_semantics_json") or {}),
                         LANE_PADDING_LEFT + (float(component_node["position_x"]) - min_x),
                         LANE_HEADER_HEIGHT + (float(component_node["position_y"]) - min_y),
                         float(component_node["width"]),
                         float(component_node["height"]),
                         Jsonb(component_node.get("style_json") or {}),
-                        Jsonb(component_node.get("properties_json") or {}),
+                        Jsonb(strip_mes_json(component_node.get("properties_json") or {})),
                     ),
                 )
                 node_id = cur.fetchone()["id"]
@@ -1689,10 +1846,10 @@ def place_swimlane_component(
                         source_node_id, source_port, target_type, target_node_id,
                         target_port, edge_type, label, condition_text, data_contract_json,
                         bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-                        bpmn_condition_expression, mes_semantics_json,
+                        bpmn_condition_expression,
                         origin_component_edge_key, style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         business_flow_id,
@@ -1710,10 +1867,9 @@ def place_swimlane_component(
                         component_edge.get("bpmn_sequence_flow_kind"),
                         component_edge.get("bpmn_message_name"),
                         component_edge.get("bpmn_condition_expression"),
-                        Jsonb(component_edge.get("mes_semantics_json") or {}),
                         component_edge["edge_key"],
                         Jsonb(component_edge.get("style_json") or {}),
-                        Jsonb(component_edge.get("properties_json") or {}),
+                        Jsonb(strip_mes_json(component_edge.get("properties_json") or {})),
                     ),
                 )
 
@@ -1990,9 +2146,27 @@ def restore_business_flow(
             if not snapshot:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"snapshot not found: {body.target_version}")
             semantic = snapshot.get("semantic_json") or {}
-            lanes = semantic.get("lanes") or []
-            nodes = semantic.get("nodes") or []
-            edges = semantic.get("edges") or []
+            lanes = strip_mes_json(semantic.get("lanes") or [])
+            nodes = [
+                strip_mes_json(node)
+                for node in semantic.get("nodes") or []
+                if not node_profile_error(node)
+            ]
+            nodes_by_key = {
+                node["node_key"]: node for node in nodes if node.get("node_key")
+            }
+            edges = []
+            for edge in semantic.get("edges") or []:
+                clean_edge = strip_mes_json(edge)
+                source_node = nodes_by_key.get(clean_edge.get("source_node_key") or "")
+                target_node = nodes_by_key.get(clean_edge.get("target_node_key") or "")
+                if clean_edge.get("source_type", "NODE") == "NODE" and not source_node:
+                    continue
+                if clean_edge.get("target_type", "NODE") == "NODE" and not target_node:
+                    continue
+                if edge_profile_error(clean_edge, source_node, target_node):
+                    continue
+                edges.append(clean_edge)
             cur.execute("DELETE FROM business_flow_edge WHERE business_flow_id = %s", (business_flow_id,))
             cur.execute("DELETE FROM business_flow_node_er_ref WHERE business_flow_id = %s", (business_flow_id,))
             cur.execute("DELETE FROM business_flow_node WHERE business_flow_id = %s", (business_flow_id,))
@@ -2041,12 +2215,11 @@ def restore_business_flow(
                         node_type, title, description, actor, business_rule, input_summary,
                         bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                         bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                        bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
-                        mes_semantics_json,
+                        bpmn_call_activity_ref,
                         output_summary, position_x, position_y, width, height, is_overridden,
                         style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -2067,8 +2240,6 @@ def restore_business_flow(
                         node.get("bpmn_gateway_type"),
                         node.get("bpmn_subprocess_kind"),
                         node.get("bpmn_call_activity_ref"),
-                        node.get("bpmn_boundary_attached_to_node_key"),
-                        Jsonb(node.get("mes_semantics_json") or {}),
                         node.get("output_summary"),
                         node.get("position_x", 0),
                         node.get("position_y", 0),
@@ -2076,7 +2247,7 @@ def restore_business_flow(
                         node.get("height", 60),
                         bool(node.get("is_overridden")),
                         Jsonb(node.get("style_json") or {}),
-                        Jsonb(node.get("properties_json") or {}),
+                        Jsonb(strip_mes_json(node.get("properties_json") or {})),
                     ),
                 )
                 new_node_id = cur.fetchone()["id"]
@@ -2120,10 +2291,10 @@ def restore_business_flow(
                         target_node_id, target_lane_instance_id, target_port, edge_type,
                         bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
                         bpmn_condition_expression, label, condition_text,
-                        data_contract_json, mes_semantics_json, origin_component_edge_key,
+                        data_contract_json, origin_component_edge_key,
                         is_overridden, style_json, properties_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         business_flow_id,
@@ -2145,11 +2316,10 @@ def restore_business_flow(
                         edge.get("label"),
                         edge.get("condition_text"),
                         Jsonb(edge.get("data_contract_json") or {}),
-                        Jsonb(edge.get("mes_semantics_json") or {}),
                         edge.get("origin_component_edge_key"),
                         bool(edge.get("is_overridden")),
                         Jsonb(edge.get("style_json") or {}),
-                        Jsonb(edge.get("properties_json") or {}),
+                        Jsonb(strip_mes_json(edge.get("properties_json") or {})),
                     ),
                 )
             _normalize_business_flow_lane_bounds(cur, business_flow_id)

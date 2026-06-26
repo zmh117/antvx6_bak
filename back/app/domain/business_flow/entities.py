@@ -72,7 +72,6 @@ class SwimlaneComponentNode:
     bpmn_gateway_type: str | None = None
     bpmn_subprocess_kind: str | None = None
     bpmn_call_activity_ref: str | None = None
-    bpmn_boundary_attached_to_node_key: str | None = None
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -82,7 +81,6 @@ class SwimlaneComponentNode:
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
-    mes_semantics_json: JsonDict = field(default_factory=dict)
     er_refs: list[ErReference] = field(default_factory=list)
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
@@ -105,7 +103,6 @@ class SwimlaneComponentEdge:
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: JsonDict = field(default_factory=dict)
-    mes_semantics_json: JsonDict = field(default_factory=dict)
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
 
@@ -166,10 +163,8 @@ class BusinessFlowNode:
     bpmn_gateway_type: str | None = None
     bpmn_subprocess_kind: str | None = None
     bpmn_call_activity_ref: str | None = None
-    bpmn_boundary_attached_to_node_key: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
-    mes_semantics_json: JsonDict = field(default_factory=dict)
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -202,7 +197,6 @@ class BusinessFlowEdge:
     bpmn_sequence_flow_kind: str | None = None
     bpmn_message_name: str | None = None
     bpmn_condition_expression: str | None = None
-    mes_semantics_json: JsonDict = field(default_factory=dict)
     origin_component_edge_key: str | None = None
     is_overridden: bool = False
     style_json: JsonDict = field(default_factory=dict)

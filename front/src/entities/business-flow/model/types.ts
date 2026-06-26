@@ -8,15 +8,14 @@ export type BusinessFlowNodeType =
   | 'START'
   | 'END'
   | 'TASK'
-  | 'DECISION'
-  | 'SERVICE'
-  | 'MANUAL'
   | 'EVENT'
   | 'GATEWAY'
   | 'SUB_PROCESS'
   | 'CALL_ACTIVITY'
   | 'DATA_OBJECT'
-  | 'TEXT_ANNOTATION'
+  | 'DATA_INPUT'
+  | 'DATA_OUTPUT'
+  | 'DATA_STORE'
 
 export type BusinessFlowEdgeEndpointType = 'NODE' | 'LANE'
 
@@ -41,38 +40,19 @@ export type BpmnElementType =
   | 'SUB_PROCESS'
   | 'CALL_ACTIVITY'
   | 'DATA_OBJECT'
-  | 'TEXT_ANNOTATION'
+  | 'DATA_INPUT'
+  | 'DATA_OUTPUT'
+  | 'DATA_STORE'
 
-export type BpmnEventKind = 'START' | 'INTERMEDIATE' | 'END' | 'BOUNDARY'
-export type BpmnEventDefinition =
-  | 'NONE'
-  | 'MESSAGE'
-  | 'TIMER'
-  | 'ERROR'
-  | 'ESCALATION'
-  | 'CONDITIONAL'
-  | 'SIGNAL'
-  | 'LINK'
-  | 'MULTIPLE'
-  | 'TERMINATE'
-  | 'CANCEL'
-  | 'COMPENSATION'
-export type BpmnTaskType =
-  | 'NONE'
-  | 'USER'
-  | 'SERVICE'
-  | 'MANUAL'
-  | 'SCRIPT'
-  | 'BUSINESS_RULE'
-  | 'RECEIVE'
-  | 'SEND'
+export type BpmnEventKind = 'START' | 'INTERMEDIATE' | 'END'
+export type BpmnEventDefinition = 'NONE'
+export type BpmnTaskType = 'NONE'
 export type BpmnGatewayType =
   | 'EXCLUSIVE'
   | 'PARALLEL'
   | 'INCLUSIVE'
-  | 'EVENT_BASED'
   | 'COMPLEX'
-export type BpmnSubProcessKind = 'EMBEDDED' | 'TRANSACTION' | 'EVENT_SUB_PROCESS'
+export type BpmnSubProcessKind = 'EMBEDDED' | 'TRANSACTION'
 export type BpmnFlowType = 'SEQUENCE' | 'MESSAGE' | 'ASSOCIATION'
 export type BpmnSequenceFlowKind = 'NORMAL' | 'CONDITIONAL' | 'DEFAULT' | 'EXCEPTION'
 
@@ -84,7 +64,6 @@ export type BpmnNodeProfile = {
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
   bpmnCallActivityRef?: string | null
-  bpmnBoundaryAttachedToNodeKey?: string | null
 }
 
 export type BpmnEdgeProfile = {
@@ -92,22 +71,6 @@ export type BpmnEdgeProfile = {
   bpmnSequenceFlowKind?: BpmnSequenceFlowKind | null
   bpmnMessageName?: string | null
   bpmnConditionExpression?: string | null
-}
-
-export type MesSemantics = {
-  variables?: string[]
-  systemConfigs?: string[]
-  masterRecipe?: string | null
-  recipe?: string | null
-  controlSteps?: string[]
-  controls?: string[]
-  materialInputs?: string[]
-  materialOutputs?: string[]
-  materialUsageRecord?: string | null
-  batchRecordFields?: string[]
-  auditEvents?: string[]
-  electronicSignature?: string | null
-  notes?: string | null
 }
 
 export type CanvasPosition = {
@@ -132,14 +95,12 @@ export type SwimlaneComponentNode = {
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
   bpmnCallActivityRef?: string | null
-  bpmnBoundaryAttachedToNodeKey?: string | null
   title: string
   description?: string | null
   actor?: string | null
   businessRule?: string | null
   inputSummary?: string | null
   outputSummary?: string | null
-  mesSemantics?: MesSemantics | null
   position: CanvasPosition
   size: CanvasSize
   erRefs?: BusinessFlowNodeErRef[]
@@ -163,7 +124,6 @@ export type SwimlaneComponentEdge = {
   label?: string | null
   conditionText?: string | null
   dataContractJson?: BusinessFlowJson | null
-  mesSemantics?: MesSemantics | null
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
 }
@@ -258,7 +218,6 @@ export type BusinessFlowNodeData = {
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
   bpmnCallActivityRef?: string | null
-  bpmnBoundaryAttachedToNodeKey?: string | null
   title: string
   description?: string | null
   actor?: string | null
@@ -272,7 +231,6 @@ export type BusinessFlowNodeRecord = BusinessFlowNodeData & {
   size: CanvasSize
   inputSummary?: string | null
   outputSummary?: string | null
-  mesSemantics?: MesSemantics | null
   isOverridden: boolean
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
@@ -295,7 +253,6 @@ export type BusinessFlowEdgeData = {
     input?: string[]
     output?: string[]
   }
-  mesSemantics?: MesSemantics | null
   isCrossLane: boolean
 }
 

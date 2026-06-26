@@ -8,6 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg.types.json import Jsonb
 
 from app.database import db_transaction, get_connection
+from app.domain.business_flow.bpmn import (
+    edge_profile_error,
+    node_profile_error,
+    strip_mes_json,
+)
 from app.interfaces.http.schemas.business_flow import (
     SwimlaneComponentCreateRequest,
     SwimlaneComponentResponse,
@@ -49,9 +54,8 @@ def _node_response(row: dict) -> dict:
         "width": float(row["width"]),
         "height": float(row["height"]),
         "er_refs": row.get("er_refs") or [],
-        "mes_semantics_json": row.get("mes_semantics_json") or {},
         "style_json": row.get("style_json") or {},
-        "properties_json": row.get("properties_json") or {},
+        "properties_json": strip_mes_json(row.get("properties_json") or {}),
     }
 
 
@@ -59,9 +63,8 @@ def _edge_response(row: dict) -> dict:
     return {
         **row,
         "data_contract_json": row.get("data_contract_json") or {},
-        "mes_semantics_json": row.get("mes_semantics_json") or {},
         "style_json": row.get("style_json") or {},
-        "properties_json": row.get("properties_json") or {},
+        "properties_json": strip_mes_json(row.get("properties_json") or {}),
     }
 
 
@@ -133,8 +136,7 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
                    actor, business_rule, input_summary, output_summary,
                    bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                    bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                   bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
-                   mes_semantics_json,
+                   bpmn_call_activity_ref,
                    position_x, position_y, width, height, style_json, properties_json
             FROM swimlane_component_node
             WHERE component_version_id = %s
@@ -156,7 +158,7 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
             SELECT id, component_version_id, edge_key, source_node_key, target_node_key,
                    source_port, target_port, edge_type, label, condition_text,
                    bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-                   bpmn_condition_expression, data_contract_json, mes_semantics_json,
+                   bpmn_condition_expression, data_contract_json,
                    style_json, properties_json
             FROM swimlane_component_edge
             WHERE component_version_id = %s
@@ -172,8 +174,8 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
                 "published_at": version["published_at"].isoformat()
                 if version.get("published_at")
                 else None,
-                "canvas_json": version.get("canvas_json") or {},
-                "semantic_json": version.get("semantic_json") or {},
+                "canvas_json": strip_mes_json(version.get("canvas_json") or {}),
+                "semantic_json": strip_mes_json(version.get("semantic_json") or {}),
                 "nodes": nodes,
                 "edges": edges,
             }
@@ -190,12 +192,12 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
 
 
 def _checksum_payload(body: SwimlaneComponentVersionSaveRequest) -> str:
-    payload = {
+    payload = strip_mes_json({
         "canvas_json": body.canvas_json,
         "semantic_json": body.semantic_json,
         "nodes": [node.model_dump(mode="json") for node in body.nodes],
         "edges": [edge.model_dump(mode="json") for edge in body.edges],
-    }
+    })
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -208,11 +210,32 @@ def _validate_component_graph(body: SwimlaneComponentVersionSaveRequest) -> None
     if len(edge_keys) != len(set(edge_keys)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="duplicate component edge_key")
     node_key_set = set(node_keys)
+    nodes_by_key = {
+        node.node_key: node.model_dump(mode="python")
+        for node in body.nodes
+    }
+    for node_key, node in nodes_by_key.items():
+        error = node_profile_error(node)
+        if error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid BPMN node {node_key}: {error}",
+            )
     for edge in body.edges:
         if edge.source_node_key not in node_key_set or edge.target_node_key not in node_key_set:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"component edge endpoint is missing: {edge.edge_key}",
+            )
+        error = edge_profile_error(
+            edge.model_dump(mode="python"),
+            nodes_by_key.get(edge.source_node_key),
+            nodes_by_key.get(edge.target_node_key),
+        )
+        if error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid BPMN edge {edge.edge_key}: {error}",
             )
 
 
@@ -239,8 +262,8 @@ def _insert_version_payload(
             component_id,
             version_no,
             body.name or f"v{version_no}",
-            Jsonb(body.canvas_json),
-            Jsonb(body.semantic_json),
+            Jsonb(strip_mes_json(body.canvas_json)),
+            Jsonb(strip_mes_json(body.semantic_json)),
             body.thumbnail_url,
             version_status,
             _checksum_payload(body),
@@ -257,11 +280,10 @@ def _insert_version_payload(
                 actor, business_rule, input_summary, output_summary,
                 bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                 bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
-                mes_semantics_json,
+                bpmn_call_activity_ref,
                 position_x, position_y, width, height, style_json, properties_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -281,14 +303,12 @@ def _insert_version_payload(
                 node.bpmn_gateway_type,
                 node.bpmn_subprocess_kind,
                 node.bpmn_call_activity_ref,
-                node.bpmn_boundary_attached_to_node_key,
-                Jsonb(node.mes_semantics_json),
                 node.position_x,
                 node.position_y,
                 node.width,
                 node.height,
                 Jsonb(node.style_json),
-                Jsonb(node.properties_json),
+                Jsonb(strip_mes_json(node.properties_json)),
             ),
         )
         node_id = cur.fetchone()["id"]
@@ -319,10 +339,10 @@ def _insert_version_payload(
                 component_version_id, edge_key, source_node_key, target_node_key,
                 source_port, target_port, edge_type, label, condition_text,
                 bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-                bpmn_condition_expression, data_contract_json, mes_semantics_json,
+                bpmn_condition_expression, data_contract_json,
                 style_json, properties_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 version_id,
@@ -339,9 +359,8 @@ def _insert_version_payload(
                 edge.bpmn_message_name,
                 edge.bpmn_condition_expression,
                 Jsonb(edge.data_contract_json),
-                Jsonb(edge.mes_semantics_json),
                 Jsonb(edge.style_json),
-                Jsonb(edge.properties_json),
+                Jsonb(strip_mes_json(edge.properties_json)),
             ),
         )
     return version_id
@@ -608,8 +627,7 @@ def publish_swimlane_component_version(
                            input_summary, output_summary, position_x, position_y, width, height,
                            bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                            bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                           bpmn_call_activity_ref, bpmn_boundary_attached_to_node_key,
-                           mes_semantics_json,
+                           bpmn_call_activity_ref,
                            style_json, properties_json
                     FROM swimlane_component_node
                     WHERE component_version_id = %s
@@ -632,9 +650,8 @@ def publish_swimlane_component_version(
                             "width": float(row["width"]),
                             "height": float(row["height"]),
                             "er_refs": refs_by_node_id.get(row["id"], []),
-                            "mes_semantics_json": row.get("mes_semantics_json") or {},
                             "style_json": row.get("style_json") or {},
-                            "properties_json": row.get("properties_json") or {},
+                            "properties_json": strip_mes_json(row.get("properties_json") or {}),
                         }
                     )
                 cur.execute(
@@ -643,7 +660,7 @@ def publish_swimlane_component_version(
                            edge_type, label, condition_text, bpmn_flow_type,
                            bpmn_sequence_flow_kind, bpmn_message_name,
                            bpmn_condition_expression, data_contract_json,
-                           mes_semantics_json, style_json, properties_json
+                           style_json, properties_json
                     FROM swimlane_component_edge
                     WHERE component_version_id = %s
                     ORDER BY created_at ASC, edge_key ASC
@@ -654,9 +671,8 @@ def publish_swimlane_component_version(
                     {
                         **row,
                         "data_contract_json": row.get("data_contract_json") or {},
-                        "mes_semantics_json": row.get("mes_semantics_json") or {},
                         "style_json": row.get("style_json") or {},
-                        "properties_json": row.get("properties_json") or {},
+                        "properties_json": strip_mes_json(row.get("properties_json") or {}),
                     }
                     for row in cur.fetchall()
                 ]

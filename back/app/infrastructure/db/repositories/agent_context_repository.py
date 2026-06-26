@@ -156,8 +156,8 @@ def fetch_swimlane_flow_nodes(cur: psycopg.Cursor, business_flow_id: UUID) -> li
         SELECT n.node_key, n.title, n.node_type, n.description, n.actor, n.business_rule,
                n.bpmn_element_type, n.bpmn_event_kind, n.bpmn_event_definition,
                n.bpmn_task_type, n.bpmn_gateway_type, n.bpmn_subprocess_kind,
-               n.bpmn_call_activity_ref, n.bpmn_boundary_attached_to_node_key,
-               n.input_summary, n.output_summary, n.mes_semantics_json,
+               n.bpmn_call_activity_ref,
+               n.input_summary, n.output_summary,
                li.display_name AS lane_name
         FROM business_flow_node n
         LEFT JOIN business_flow_lane_instance li ON li.id = n.lane_instance_id
@@ -174,7 +174,7 @@ def fetch_swimlane_flow_edges(cur: psycopg.Cursor, business_flow_id: UUID) -> li
         """
         SELECT edge_key, edge_type, label, condition_text, data_contract_json,
                bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-               bpmn_condition_expression, mes_semantics_json
+               bpmn_condition_expression
         FROM business_flow_edge
         WHERE business_flow_id = %s
         ORDER BY created_at ASC, edge_key ASC

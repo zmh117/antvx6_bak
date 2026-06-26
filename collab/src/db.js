@@ -266,6 +266,9 @@ async function loadBusinessFlowSeedRows(businessFlowId) {
       SELECT n.id, n.lane_instance_id, li.instance_key AS lane_instance_key,
              n.node_key, n.origin_component_node_key, n.node_type, n.title,
              n.description, n.actor, n.business_rule, n.input_summary, n.output_summary,
+             n.bpmn_element_type, n.bpmn_event_kind, n.bpmn_event_definition,
+             n.bpmn_task_type, n.bpmn_gateway_type, n.bpmn_subprocess_kind,
+             n.bpmn_call_activity_ref,
              n.position_x, n.position_y, n.width, n.height, n.is_overridden,
              n.style_json, n.properties_json
       FROM business_flow_node n
@@ -294,6 +297,8 @@ async function loadBusinessFlowSeedRows(businessFlowId) {
              e.target_type, tn.node_key AS target_node_key,
              tli.instance_key AS target_lane_instance_key, e.target_port,
              e.edge_type, e.label, e.condition_text, e.data_contract_json,
+             e.bpmn_flow_type, e.bpmn_sequence_flow_kind, e.bpmn_message_name,
+             e.bpmn_condition_expression,
              e.origin_component_edge_key, e.is_overridden, e.style_json, e.properties_json
       FROM business_flow_edge e
       LEFT JOIN business_flow_lane_instance li ON li.id = e.lane_instance_id

@@ -167,9 +167,6 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                     else "",
                     f"  输入：{node.get('input_summary') or ''}" if node.get("input_summary") else "",
                     f"  输出：{node.get('output_summary') or ''}" if node.get("output_summary") else "",
-                    f"  MES：{_json_summary(node.get('mes_semantics_json'))}"
-                    if node.get("mes_semantics_json")
-                    else "",
                 ],
             )
         )
@@ -193,9 +190,6 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                     f"  消息：{edge.get('bpmn_message_name') or ''}" if edge.get("bpmn_message_name") else "",
                     f"  数据契约：{_json_summary(edge.get('data_contract_json'))}"
                     if edge.get("data_contract_json")
-                    else "",
-                    f"  MES：{_json_summary(edge.get('mes_semantics_json'))}"
-                    if edge.get("mes_semantics_json")
                     else "",
                 ],
             )

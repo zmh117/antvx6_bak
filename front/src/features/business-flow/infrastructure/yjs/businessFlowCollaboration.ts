@@ -157,14 +157,12 @@ function writeNodeToDoc(
     bpmn_gateway_type: node.bpmnGatewayType ?? null,
     bpmn_subprocess_kind: node.bpmnSubProcessKind ?? null,
     bpmn_call_activity_ref: node.bpmnCallActivityRef ?? null,
-    bpmn_boundary_attached_to_node_key: node.bpmnBoundaryAttachedToNodeKey ?? null,
     title: node.title,
     description: node.description ?? null,
     actor: node.actor ?? null,
     business_rule: node.businessRule ?? null,
     input_summary: node.inputSummary ?? null,
     output_summary: node.outputSummary ?? null,
-    mes_semantics_json: node.mesSemantics ?? {},
     position_x: node.position.x,
     position_y: node.position.y,
     width: node.size.width,
@@ -211,7 +209,6 @@ function writeEdgeToDoc(edges: Y.Map<unknown>, edge: BusinessFlowEdgeRecord) {
     label: edge.label ?? null,
     condition_text: edge.conditionText ?? null,
     data_contract_json: edge.dataContract ?? {},
-    mes_semantics_json: edge.mesSemantics ?? {},
     origin_component_edge_key: edge.originComponentEdgeKey ?? null,
     is_overridden: edge.isOverridden,
     style_json: edge.styleJson ?? {},
@@ -235,7 +232,7 @@ function writeCanvasToDoc(
     clearMap(nodes)
     clearMap(edges)
     clearMap(erRefs)
-    meta.set('schemaVersion', 2)
+    meta.set('schemaVersion', 3)
     meta.set('documentType', 'BUSINESS_FLOW')
     meta.set('businessFlowId', canvas.businessFlowId)
     meta.set('collabRevision', canvas.collabRevision)
@@ -357,9 +354,6 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       bpmnCallActivityRef: raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef
         ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
         : null,
-      bpmnBoundaryAttachedToNodeKey: raw.bpmn_boundary_attached_to_node_key || raw.bpmnBoundaryAttachedToNodeKey
-        ? String(raw.bpmn_boundary_attached_to_node_key || raw.bpmnBoundaryAttachedToNodeKey)
-        : null,
       title: stringValue(raw.title, '任务'),
       description: raw.description ? String(raw.description) : null,
       actor: raw.actor ? String(raw.actor) : null,
@@ -377,7 +371,6 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       },
       inputSummary: raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : null,
       outputSummary: raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : null,
-      mesSemantics: (raw.mes_semantics_json || raw.mesSemanticsJson || raw.mesSemantics || null) as BusinessFlowNodeRecord['mesSemantics'],
       isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden),
       styleJson: (raw.style_json || raw.styleJson || {}) as Record<string, unknown>,
       propertiesJson: (raw.properties_json || raw.propertiesJson || {}) as Record<string, unknown>,
@@ -423,7 +416,6 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       label: raw.label ? String(raw.label) : null,
       conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : null,
       dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
-      mesSemantics: (raw.mes_semantics_json || raw.mesSemanticsJson || raw.mesSemantics || null) as BusinessFlowEdgeRecord['mesSemantics'],
       isCrossLane,
       sourceType: stringValue(raw.source_type || raw.sourceType, 'NODE') as BusinessFlowEdgeRecord['sourceType'],
       sourceNodeKey,

@@ -39,14 +39,12 @@ class SwimlaneComponentNodeDTO(BaseModel):
     bpmn_gateway_type: str | None = None
     bpmn_subprocess_kind: str | None = None
     bpmn_call_activity_ref: str | None = None
-    bpmn_boundary_attached_to_node_key: str | None = None
     title: str
     description: str | None = None
     actor: str | None = None
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
-    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -72,7 +70,6 @@ class SwimlaneComponentEdgeDTO(BaseModel):
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
-    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -138,14 +135,12 @@ class SwimlaneComponentNodeInput(BaseModel):
     bpmn_gateway_type: str | None = None
     bpmn_subprocess_kind: str | None = None
     bpmn_call_activity_ref: str | None = None
-    bpmn_boundary_attached_to_node_key: str | None = None
     title: str
     description: str | None = None
     actor: str | None = None
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
-    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -169,7 +164,6 @@ class SwimlaneComponentEdgeInput(BaseModel):
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
-    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -218,14 +212,12 @@ class BusinessFlowNodeDTO(BaseModel):
     bpmn_gateway_type: str | None = None
     bpmn_subprocess_kind: str | None = None
     bpmn_call_activity_ref: str | None = None
-    bpmn_boundary_attached_to_node_key: str | None = None
     title: str
     description: str | None = None
     actor: str | None = None
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
-    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -260,7 +252,6 @@ class BusinessFlowEdgeDTO(BaseModel):
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
-    mes_semantics_json: dict[str, Any] = Field(default_factory=dict)
     origin_component_edge_key: str | None = None
     is_overridden: bool = False
     style_json: dict[str, Any] = Field(default_factory=dict)

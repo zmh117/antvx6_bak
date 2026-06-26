@@ -4,7 +4,6 @@ import {
   mergeBpmnIntoProperties,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
-  normalizeMesSemantics,
 } from '@/entities/business-flow/model/bpmn'
 import type {
   BpmnEdgeProfile,
@@ -15,7 +14,6 @@ import type {
   BusinessFlowNodeType,
   CanvasPosition,
   LocalBusinessFlowCanvas,
-  MesSemantics,
   SwimlaneComponent,
   SwimlaneComponentEdge,
   SwimlaneComponentNode,
@@ -102,14 +100,12 @@ type ApiSwimlaneComponentNode = {
   bpmn_gateway_type?: BpmnNodeProfile['bpmnGatewayType'] | null
   bpmn_subprocess_kind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
   bpmn_call_activity_ref?: string | null
-  bpmn_boundary_attached_to_node_key?: string | null
   title: string
   description?: string | null
   actor?: string | null
   business_rule?: string | null
   input_summary?: string | null
   output_summary?: string | null
-  mes_semantics_json?: MesSemantics | null
   position_x: number
   position_y: number
   width: number
@@ -142,7 +138,6 @@ type ApiSwimlaneComponentEdge = {
   label?: string | null
   condition_text?: string | null
   data_contract_json?: BusinessFlowJson | null
-  mes_semantics_json?: MesSemantics | null
   style_json?: BusinessFlowJson | null
   properties_json?: BusinessFlowJson | null
 }
@@ -196,14 +191,12 @@ export type SaveSwimlaneComponentVersionBody = {
 	    bpmnGatewayType?: BpmnNodeProfile['bpmnGatewayType'] | null
 	    bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
 	    bpmnCallActivityRef?: string | null
-	    bpmnBoundaryAttachedToNodeKey?: string | null
 	    title: string
 	    description?: string | null
 	    actor?: string | null
 	    businessRule?: string | null
 	    inputSummary?: string | null
 	    outputSummary?: string | null
-	    mesSemantics?: MesSemantics | null
 	    position: CanvasPosition
     size: { width: number; height: number }
     erRefs?: Array<{
@@ -231,7 +224,6 @@ export type SaveSwimlaneComponentVersionBody = {
 	    label?: string | null
 	    conditionText?: string | null
 	    dataContractJson?: BusinessFlowJson | null
-	    mesSemantics?: MesSemantics | null
 	    styleJson?: BusinessFlowJson | null
     propertiesJson?: BusinessFlowJson | null
   }>
@@ -293,14 +285,12 @@ type ApiBusinessFlowNode = {
   bpmn_gateway_type?: BpmnNodeProfile['bpmnGatewayType'] | null
   bpmn_subprocess_kind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
   bpmn_call_activity_ref?: string | null
-  bpmn_boundary_attached_to_node_key?: string | null
   title: string
   description?: string | null
   actor?: string | null
   business_rule?: string | null
   input_summary?: string | null
   output_summary?: string | null
-  mes_semantics_json?: MesSemantics | null
   position_x: number
   position_y: number
   width: number
@@ -342,7 +332,6 @@ type ApiBusinessFlowEdge = {
   label?: string | null
   condition_text?: string | null
   data_contract_json?: BusinessFlowJson | null
-  mes_semantics_json?: MesSemantics | null
   origin_component_edge_key?: string | null
   is_overridden: boolean
   style_json?: BusinessFlowJson | null
@@ -379,10 +368,8 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     bpmnGatewayType: node.bpmn_gateway_type,
     bpmnSubProcessKind: node.bpmn_subprocess_kind,
     bpmnCallActivityRef: node.bpmn_call_activity_ref,
-    bpmnBoundaryAttachedToNodeKey: node.bpmn_boundary_attached_to_node_key,
     propertiesJson: node.properties_json,
   })
-  const mesSemantics = normalizeMesSemantics(node.mes_semantics_json, node.properties_json)
   return {
     id: node.id,
     componentVersionId: node.component_version_id,
@@ -395,7 +382,6 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     businessRule: node.business_rule ?? null,
     inputSummary: node.input_summary ?? null,
     outputSummary: node.output_summary ?? null,
-    mesSemantics,
     position: { x: Number(node.position_x), y: Number(node.position_y) },
     size: { width: Number(node.width), height: Number(node.height) },
     erRefs: (node.er_refs ?? []).map((ref) => ({
@@ -407,7 +393,7 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
       description: ref.description ?? null,
     })),
     styleJson: node.style_json ?? null,
-    propertiesJson: mergeBpmnIntoProperties(node.properties_json, bpmnProfile, mesSemantics),
+    propertiesJson: mergeBpmnIntoProperties(node.properties_json, bpmnProfile),
   }
 }
 
@@ -420,7 +406,6 @@ function normalizeSwimlaneComponentEdge(edge: ApiSwimlaneComponentEdge): Swimlan
     bpmnConditionExpression: edge.bpmn_condition_expression,
     propertiesJson: edge.properties_json,
   })
-  const mesSemantics = normalizeMesSemantics(edge.mes_semantics_json, edge.properties_json)
   return {
     id: edge.id,
     componentVersionId: edge.component_version_id,
@@ -434,9 +419,8 @@ function normalizeSwimlaneComponentEdge(edge: ApiSwimlaneComponentEdge): Swimlan
     label: edge.label ?? null,
     conditionText: edge.condition_text ?? null,
     dataContractJson: edge.data_contract_json ?? null,
-    mesSemantics,
     styleJson: edge.style_json ?? null,
-    propertiesJson: mergeBpmnIntoProperties(edge.properties_json, bpmnProfile, mesSemantics),
+    propertiesJson: mergeBpmnIntoProperties(edge.properties_json, bpmnProfile),
   }
 }
 
@@ -490,10 +474,8 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         bpmnGatewayType: node.bpmnGatewayType,
         bpmnSubProcessKind: node.bpmnSubProcessKind,
         bpmnCallActivityRef: node.bpmnCallActivityRef,
-        bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
         propertiesJson: node.propertiesJson,
       })
-      const mesSemantics = normalizeMesSemantics(node.mesSemantics, node.propertiesJson)
       return {
         node_key: node.nodeKey,
         node_type: node.nodeType,
@@ -504,14 +486,12 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         bpmn_gateway_type: bpmnProfile.bpmnGatewayType,
         bpmn_subprocess_kind: bpmnProfile.bpmnSubProcessKind,
         bpmn_call_activity_ref: bpmnProfile.bpmnCallActivityRef,
-        bpmn_boundary_attached_to_node_key: bpmnProfile.bpmnBoundaryAttachedToNodeKey,
         title: node.title,
         description: node.description,
         actor: node.actor,
         business_rule: node.businessRule,
         input_summary: node.inputSummary,
         output_summary: node.outputSummary,
-        mes_semantics_json: mesSemantics,
         position_x: node.position.x,
         position_y: node.position.y,
         width: node.size.width,
@@ -525,7 +505,7 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
           description: ref.description ?? null,
         })),
         style_json: node.styleJson ?? {},
-        properties_json: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile, mesSemantics),
+        properties_json: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
       }
     }),
     edges: body.edges.map((edge) => {
@@ -537,7 +517,6 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         bpmnConditionExpression: edge.bpmnConditionExpression,
         propertiesJson: edge.propertiesJson,
       })
-      const mesSemantics = normalizeMesSemantics(edge.mesSemantics, edge.propertiesJson)
       return {
         edge_key: edge.edgeKey,
         source_node_key: edge.sourceNodeKey,
@@ -552,9 +531,8 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         label: edge.label,
         condition_text: edge.conditionText,
         data_contract_json: edge.dataContractJson ?? {},
-        mes_semantics_json: mesSemantics,
         style_json: edge.styleJson ?? {},
-        properties_json: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile, mesSemantics),
+        properties_json: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
       }
     }),
   }
@@ -605,10 +583,8 @@ function normalizeBusinessFlowEditorState(
         bpmnGatewayType: node.bpmn_gateway_type,
         bpmnSubProcessKind: node.bpmn_subprocess_kind,
         bpmnCallActivityRef: node.bpmn_call_activity_ref,
-        bpmnBoundaryAttachedToNodeKey: node.bpmn_boundary_attached_to_node_key,
         propertiesJson: node.properties_json,
       })
-      const mesSemantics = normalizeMesSemantics(node.mes_semantics_json, node.properties_json)
       return {
         kind: 'BUSINESS_FLOW_NODE',
         businessFlowId: state.business_flow_id,
@@ -634,10 +610,9 @@ function normalizeBusinessFlowEditorState(
         size: { width: Number(node.width), height: Number(node.height) },
         inputSummary: node.input_summary ?? null,
         outputSummary: node.output_summary ?? null,
-        mesSemantics,
         isOverridden: Boolean(node.is_overridden),
         styleJson: node.style_json ?? null,
-        propertiesJson: mergeBpmnIntoProperties(node.properties_json, bpmnProfile, mesSemantics),
+        propertiesJson: mergeBpmnIntoProperties(node.properties_json, bpmnProfile),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -665,7 +640,6 @@ function normalizeBusinessFlowEditorState(
         propertiesJson: edge.properties_json,
         isCrossLane,
       })
-      const mesSemantics = normalizeMesSemantics(edge.mes_semantics_json, edge.properties_json)
       return {
         kind: 'BUSINESS_FLOW_EDGE',
         businessFlowId: state.business_flow_id,
@@ -677,7 +651,6 @@ function normalizeBusinessFlowEditorState(
         label: edge.label ?? null,
         conditionText: edge.condition_text ?? null,
         dataContract: edge.data_contract_json as BusinessFlowEdgeRecord['dataContract'],
-        mesSemantics,
         isCrossLane,
         sourceType: edge.source_type,
         sourceNodeKey: edge.source_node_key ?? null,
@@ -694,7 +667,7 @@ function normalizeBusinessFlowEditorState(
         originComponentEdgeKey: edge.origin_component_edge_key ?? null,
         isOverridden: Boolean(edge.is_overridden),
         styleJson: edge.style_json ?? null,
-        propertiesJson: mergeBpmnIntoProperties(edge.properties_json, bpmnProfile, mesSemantics),
+        propertiesJson: mergeBpmnIntoProperties(edge.properties_json, bpmnProfile),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }

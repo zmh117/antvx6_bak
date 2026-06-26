@@ -79,9 +79,27 @@ def run_migrations() -> None:
                 migrations_dir / "013_collab_update_audit.sql"
             ).read_text(encoding="utf-8")
             cur.execute(collab_update_audit_sql)
-            bpmn_mes_semantics_sql = (
-                migrations_dir / "014_bpmn_mes_semantics.sql"
+            cur.execute("SELECT to_regclass('public.app_migration_state') AS reg")
+            migration_state_exists = bool(cur.fetchone()["reg"])
+            bpmn_cleanup_applied = False
+            if migration_state_exists:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM app_migration_state
+                        WHERE migration_key = '015_bpmn_generalization_cleanup'
+                    ) AS applied
+                    """
+                )
+                bpmn_cleanup_applied = bool(cur.fetchone()["applied"])
+            if not bpmn_cleanup_applied:
+                bpmn_semantics_sql = (
+                    migrations_dir / "014_bpmn_mes_semantics.sql"
+                ).read_text(encoding="utf-8")
+                cur.execute(bpmn_semantics_sql)
+            bpmn_cleanup_sql = (
+                migrations_dir / "015_bpmn_generalization_cleanup.sql"
             ).read_text(encoding="utf-8")
-            cur.execute(bpmn_mes_semantics_sql)
+            cur.execute(bpmn_cleanup_sql)
             database_connection_service.seed_env_target_connection(cur)
         conn.commit()

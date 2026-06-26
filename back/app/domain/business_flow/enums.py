@@ -18,15 +18,14 @@ BusinessNodeType = Literal[
     "START",
     "END",
     "TASK",
-    "DECISION",
-    "SERVICE",
-    "MANUAL",
     "EVENT",
     "GATEWAY",
     "SUB_PROCESS",
     "CALL_ACTIVITY",
     "DATA_OBJECT",
-    "TEXT_ANNOTATION",
+    "DATA_INPUT",
+    "DATA_OUTPUT",
+    "DATA_STORE",
 ]
 BusinessEdgeEndpointType = Literal["NODE", "LANE"]
 BusinessEdgeType = Literal[
@@ -53,15 +52,14 @@ BUSINESS_NODE_TYPES: tuple[str, ...] = (
     "START",
     "END",
     "TASK",
-    "DECISION",
-    "SERVICE",
-    "MANUAL",
     "EVENT",
     "GATEWAY",
     "SUB_PROCESS",
     "CALL_ACTIVITY",
     "DATA_OBJECT",
-    "TEXT_ANNOTATION",
+    "DATA_INPUT",
+    "DATA_OUTPUT",
+    "DATA_STORE",
 )
 BUSINESS_EDGE_ENDPOINT_TYPES: tuple[str, ...] = ("NODE", "LANE")
 BUSINESS_EDGE_TYPES: tuple[str, ...] = (

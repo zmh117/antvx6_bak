@@ -9,17 +9,17 @@ import type {
   BusinessFlowNodeRecord,
   BusinessFlowNodeType,
   LocalBusinessFlowCanvas,
-  MesSemantics,
   SwimlaneComponentVersion,
 } from '@/entities/business-flow'
 import {
+  BPMN_NODE_OPTIONS,
   bpmnNodeTitle,
+  isDataBpmnElement,
   legacyEdgeTypeForBpmn,
   legacyNodeTypeForBpmn,
   mergeBpmnIntoProperties,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
-  normalizeMesSemantics,
 } from '@/entities/business-flow'
 import type {
   ComponentEditorEdgeDraft,
@@ -64,7 +64,6 @@ export type FlowCellData = {
   bpmnGatewayType?: BpmnNodeProfile['bpmnGatewayType'] | null
   bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
   bpmnCallActivityRef?: string | null
-  bpmnBoundaryAttachedToNodeKey?: string | null
   bpmnFlowType?: BpmnEdgeProfile['bpmnFlowType'] | null
   bpmnSequenceFlowKind?: BpmnEdgeProfile['bpmnSequenceFlowKind'] | null
   bpmnMessageName?: string | null
@@ -75,7 +74,6 @@ export type FlowCellData = {
   businessRule?: string | null
   inputSummary?: string | null
   outputSummary?: string | null
-  mesSemantics?: MesSemantics | null
   erRefs?: BusinessFlowNodeErRef[]
   layoutJson?: BusinessFlowJson | null
   styleJson?: BusinessFlowJson | null
@@ -126,7 +124,6 @@ function nodeProfileFromData(data: Partial<FlowCellData>) {
     bpmnGatewayType: data.bpmnGatewayType,
     bpmnSubProcessKind: data.bpmnSubProcessKind,
     bpmnCallActivityRef: data.bpmnCallActivityRef,
-    bpmnBoundaryAttachedToNodeKey: data.bpmnBoundaryAttachedToNodeKey,
     propertiesJson: data.propertiesJson,
   })
 }
@@ -169,18 +166,14 @@ function nodeBodyAttrs(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'EVENT') {
     if (profile.bpmnEventKind === 'START') return { ...common, stroke: '#22c55e', fill: '#f6fff8' }
     if (profile.bpmnEventKind === 'END') return { ...common, stroke: '#ef4444', strokeWidth: 3, fill: '#fff7f7' }
-    if (profile.bpmnEventKind === 'BOUNDARY') return { ...common, stroke: '#f97316', strokeDasharray: '4 3', fill: '#fff8ed' }
     return { ...common, stroke: '#8b5cf6', fill: '#faf5ff' }
   }
   if (profile.bpmnElementType === 'GATEWAY') return { ...common, stroke: '#f59e0b', fill: '#fffbeb' }
   if (profile.bpmnElementType === 'SUB_PROCESS') return { ...common, stroke: '#2563eb', fill: '#eff6ff' }
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return { ...common, stroke: '#1d4ed8', strokeWidth: 3, fill: '#eff6ff' }
-  if (profile.bpmnElementType === 'DATA_OBJECT') return { ...common, stroke: '#64748b', fill: '#f8fafc' }
-  if (profile.bpmnElementType === 'TEXT_ANNOTATION') return { ...common, stroke: '#94a3b8', strokeDasharray: '5 3', fill: '#ffffff' }
-  if (profile.bpmnTaskType === 'SERVICE') return { ...common, fill: '#eef6ff' }
-  if (profile.bpmnTaskType === 'MANUAL') return { ...common, fill: '#fff8ed' }
-  if (profile.bpmnTaskType === 'BUSINESS_RULE') return { ...common, fill: '#f0fdf4' }
-  if (profile.bpmnTaskType === 'SCRIPT') return { ...common, fill: '#f8fafc' }
+  if (isDataBpmnElement(profile.bpmnElementType)) {
+    return { ...common, stroke: '#64748b', fill: '#f8fafc' }
+  }
   return common
 }
 
@@ -206,10 +199,36 @@ function nodeMarkup(profileOrType: BpmnNodeProfile | BusinessFlowNodeType) {
       { tagName: 'text', selector: 'badge' },
     ]
   }
-  if (profile.bpmnElementType === 'TEXT_ANNOTATION') {
+  if (
+    profile.bpmnElementType === 'DATA_OBJECT' ||
+    profile.bpmnElementType === 'DATA_INPUT' ||
+    profile.bpmnElementType === 'DATA_OUTPUT'
+  ) {
+    return [
+      { tagName: 'polygon', selector: 'body' },
+      { tagName: 'path', selector: 'fold' },
+      { tagName: 'text', selector: 'label' },
+      { tagName: 'text', selector: 'badge' },
+    ]
+  }
+  if (profile.bpmnElementType === 'DATA_STORE') {
     return [
       { tagName: 'rect', selector: 'body' },
+      { tagName: 'ellipse', selector: 'top' },
+      { tagName: 'ellipse', selector: 'bottom' },
       { tagName: 'text', selector: 'label' },
+      { tagName: 'text', selector: 'badge' },
+    ]
+  }
+  if (
+    profile.bpmnElementType === 'SUB_PROCESS' &&
+    profile.bpmnSubProcessKind === 'TRANSACTION'
+  ) {
+    return [
+      { tagName: 'rect', selector: 'body' },
+      { tagName: 'rect', selector: 'inner' },
+      { tagName: 'text', selector: 'label' },
+      { tagName: 'text', selector: 'badge' },
     ]
   }
   return [
@@ -247,26 +266,83 @@ function nodeAttrs(
       badge: badgeAttrs(typeText(profile), '50%', 15, 'middle'),
     }
   }
-  if (profile.bpmnElementType === 'TEXT_ANNOTATION') {
+  if (
+    profile.bpmnElementType === 'DATA_OBJECT' ||
+    profile.bpmnElementType === 'DATA_INPUT' ||
+    profile.bpmnElementType === 'DATA_OUTPUT'
+  ) {
     return {
       body: {
+        refPoints: '0,0 78,0 100,22 100,100 0,100',
+        ...body,
+      },
+      fold: {
+        d: 'M 74 0 L 74 18 L 96 18',
+        fill: 'none',
+        stroke: body.stroke,
+        strokeWidth: 1.2,
+      },
+      label: labelAttrs(title, 11),
+      badge: badgeAttrs(typeText(profile), 8, 14, 'start'),
+    }
+  }
+  if (profile.bpmnElementType === 'DATA_STORE') {
+    return {
+      body: {
+        refX: 1,
+        refY: 9,
+        refWidth: '100%',
+        refWidth2: -2,
+        refHeight: '100%',
+        refHeight2: -18,
         rx: 0,
         ry: 0,
         ...body,
       },
-      label: {
-        ...labelAttrs(title, 12),
-        refX: 10,
-        refY: 16,
-        textAnchor: 'start',
-        textVerticalAnchor: 'top',
+      top: {
+        refCx: '50%',
+        refCy: 10,
+        refRx: '49%',
+        refRy: 9,
+        ...body,
       },
+      bottom: {
+        refCx: '50%',
+        refCy: '100%',
+        refCy2: -10,
+        refRx: '49%',
+        refRy: 9,
+        ...body,
+      },
+      label: labelAttrs(title, 11),
+      badge: badgeAttrs(typeText(profile), 8, 18, 'start'),
+    }
+  }
+  if (
+    profile.bpmnElementType === 'SUB_PROCESS' &&
+    profile.bpmnSubProcessKind === 'TRANSACTION'
+  ) {
+    return {
+      body: { rx: 8, ry: 8, ...body },
+      inner: {
+        x: 4,
+        y: 4,
+        width: 'calc(w - 8)',
+        height: 'calc(h - 8)',
+        rx: 6,
+        ry: 6,
+        fill: 'none',
+        stroke: body.stroke,
+        strokeWidth: 1,
+      },
+      label: labelAttrs(title),
+      badge: badgeAttrs(typeText(profile), 8, 14, 'start'),
     }
   }
   return {
     body: {
-      rx: profile.bpmnElementType === 'DATA_OBJECT' ? 2 : 8,
-      ry: profile.bpmnElementType === 'DATA_OBJECT' ? 2 : 8,
+      rx: 8,
+      ry: 8,
       ...body,
     },
     label: labelAttrs(title),
@@ -307,31 +383,24 @@ function badgeAttrs(text: string, refX: number | string, refY: number | string, 
 
 function typeText(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'EVENT') {
-    if (profile.bpmnEventDefinition && profile.bpmnEventDefinition !== 'NONE') {
-      return profile.bpmnEventDefinition.slice(0, 3)
-    }
     if (profile.bpmnEventKind === 'START') return 'START'
     if (profile.bpmnEventKind === 'END') return 'END'
-    if (profile.bpmnEventKind === 'BOUNDARY') return 'BND'
     return 'EVT'
   }
   if (profile.bpmnElementType === 'GATEWAY') {
     if (profile.bpmnGatewayType === 'PARALLEL') return '+'
     if (profile.bpmnGatewayType === 'INCLUSIVE') return 'O'
-    if (profile.bpmnGatewayType === 'EVENT_BASED') return 'EVT'
     if (profile.bpmnGatewayType === 'COMPLEX') return '*'
     return 'X'
   }
-  if (profile.bpmnElementType === 'SUB_PROCESS') return '+'
+  if (profile.bpmnElementType === 'SUB_PROCESS') {
+    return profile.bpmnSubProcessKind === 'TRANSACTION' ? 'TX' : '+'
+  }
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'CALL'
   if (profile.bpmnElementType === 'DATA_OBJECT') return 'DATA'
-  if (profile.bpmnTaskType === 'SERVICE') return 'API'
-  if (profile.bpmnTaskType === 'MANUAL') return 'MAN'
-  if (profile.bpmnTaskType === 'SCRIPT') return 'SCR'
-  if (profile.bpmnTaskType === 'BUSINESS_RULE') return 'RULE'
-  if (profile.bpmnTaskType === 'RECEIVE') return 'RCV'
-  if (profile.bpmnTaskType === 'SEND') return 'SEND'
-  if (profile.bpmnTaskType === 'USER') return 'USER'
+  if (profile.bpmnElementType === 'DATA_INPUT') return 'IN'
+  if (profile.bpmnElementType === 'DATA_OUTPUT') return 'OUT'
+  if (profile.bpmnElementType === 'DATA_STORE') return 'STORE'
   return 'TASK'
 }
 
@@ -411,32 +480,7 @@ export function registerBusinessFlowShapes() {
     true,
   )
 
-  const profiles: BpmnNodeProfile[] = [
-    { bpmnElementType: 'EVENT', bpmnEventKind: 'START', bpmnEventDefinition: 'NONE' },
-    { bpmnElementType: 'EVENT', bpmnEventKind: 'INTERMEDIATE', bpmnEventDefinition: 'NONE' },
-    { bpmnElementType: 'EVENT', bpmnEventKind: 'END', bpmnEventDefinition: 'NONE' },
-    { bpmnElementType: 'EVENT', bpmnEventKind: 'BOUNDARY', bpmnEventDefinition: 'ERROR' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'NONE' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'USER' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'SERVICE' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'MANUAL' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'SCRIPT' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'BUSINESS_RULE' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'RECEIVE' },
-    { bpmnElementType: 'TASK', bpmnTaskType: 'SEND' },
-    { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'EXCLUSIVE' },
-    { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'PARALLEL' },
-    { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'INCLUSIVE' },
-    { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'EVENT_BASED' },
-    { bpmnElementType: 'GATEWAY', bpmnGatewayType: 'COMPLEX' },
-    { bpmnElementType: 'SUB_PROCESS', bpmnSubProcessKind: 'EMBEDDED' },
-    { bpmnElementType: 'CALL_ACTIVITY' },
-    { bpmnElementType: 'DATA_OBJECT' },
-    { bpmnElementType: 'TEXT_ANNOTATION' },
-    ...(['START', 'END', 'TASK', 'DECISION', 'SERVICE', 'MANUAL', 'EVENT'] as BusinessFlowNodeType[]).map(
-      (nodeType) => normalizeBpmnNodeProfile({ nodeType }),
-    ),
-  ]
+  const profiles = BPMN_NODE_OPTIONS.map((option) => option.profile)
   profiles.forEach((profile) => {
     Graph.registerNode(
       shapeNameForProfile(profile),
@@ -628,6 +672,22 @@ function validatePortConnection({ sourceCell, targetCell, sourceMagnet, targetMa
   return isReusablePort(sourceMagnet) && isReusablePort(targetMagnet)
 }
 
+function isDataNodeCell(cell?: Cell | null) {
+  return Boolean(
+    cell &&
+      isFlowNodeCell(cell) &&
+      isDataBpmnElement(nodeProfileFromData(readCellData(cell)).bpmnElementType),
+  )
+}
+
+export function defaultBpmnEdgeProfileForEdge(edge: Edge) {
+  const bpmnFlowType =
+    isDataNodeCell(edge.getSourceCell()) || isDataNodeCell(edge.getTargetCell())
+      ? 'ASSOCIATION'
+      : 'SEQUENCE'
+  return normalizeBpmnEdgeProfile({ bpmnFlowType })
+}
+
 function isFlowNodeCell(cell: Cell) {
   const role = readCellData(cell).cellRole
   return role === 'FLOW_NODE' || role === 'COMPONENT_NODE'
@@ -656,10 +716,8 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
     bpmnGatewayType: draft.bpmnGatewayType,
     bpmnSubProcessKind: draft.bpmnSubProcessKind,
     bpmnCallActivityRef: draft.bpmnCallActivityRef,
-    bpmnBoundaryAttachedToNodeKey: draft.bpmnBoundaryAttachedToNodeKey,
     propertiesJson: draft.propertiesJson,
   })
-  const mesSemantics = normalizeMesSemantics(draft.mesSemantics, draft.propertiesJson)
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
   return graph.addNode({
     id: draft.nodeKey,
@@ -682,10 +740,9 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       businessRule: draft.businessRule ?? null,
       inputSummary: draft.inputSummary ?? null,
       outputSummary: draft.outputSummary ?? null,
-      mesSemantics,
       erRefs: draft.erRefs ?? [],
       styleJson: draft.styleJson ?? null,
-      propertiesJson: mergeBpmnIntoProperties(draft.propertiesJson, bpmnProfile, mesSemantics),
+      propertiesJson: mergeBpmnIntoProperties(draft.propertiesJson, bpmnProfile),
     } satisfies FlowCellData,
     zIndex: FLOW_NODE_Z_INDEX,
   })
@@ -701,10 +758,8 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
     bpmnGatewayType: record.bpmnGatewayType,
     bpmnSubProcessKind: record.bpmnSubProcessKind,
     bpmnCallActivityRef: record.bpmnCallActivityRef,
-    bpmnBoundaryAttachedToNodeKey: record.bpmnBoundaryAttachedToNodeKey,
     propertiesJson: record.propertiesJson,
   })
-  const mesSemantics = normalizeMesSemantics(record.mesSemantics, record.propertiesJson)
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
   return graph.addNode({
     id: record.nodeKey,
@@ -731,10 +786,9 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       businessRule: record.businessRule ?? null,
       inputSummary: record.inputSummary ?? null,
       outputSummary: record.outputSummary ?? null,
-      mesSemantics,
       erRefs: record.erRefs ?? [],
       styleJson: record.styleJson ?? null,
-      propertiesJson: mergeBpmnIntoProperties(record.propertiesJson, bpmnProfile, mesSemantics),
+      propertiesJson: mergeBpmnIntoProperties(record.propertiesJson, bpmnProfile),
     } satisfies FlowCellData,
     zIndex: FLOW_NODE_Z_INDEX,
   })
@@ -752,7 +806,6 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
       bpmnConditionExpression: edge.bpmnConditionExpression,
       propertiesJson: edge.propertiesJson,
     })
-    const mesSemantics = normalizeMesSemantics(edge.mesSemantics, edge.propertiesJson)
     graph.addEdge({
       id: edge.edgeKey,
       source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
@@ -765,8 +818,7 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
         edgeKey: edge.edgeKey,
         edgeType: legacyEdgeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
-        mesSemantics,
-        propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile, mesSemantics),
+        propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
         title: edge.label ?? '',
       } satisfies FlowCellData,
       zIndex: EDGE_Z_INDEX,
@@ -851,7 +903,6 @@ function addFlowEdgeCell(
     propertiesJson: edge.propertiesJson,
     isCrossLane: edge.isCrossLane,
   })
-  const mesSemantics = normalizeMesSemantics(edge.mesSemantics, edge.propertiesJson)
   graph.addEdge({
     id: edge.edgeKey,
     source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
@@ -866,9 +917,8 @@ function addFlowEdgeCell(
       edgeKey: edge.edgeKey,
       edgeType: legacyEdgeTypeForBpmn(bpmnProfile, edge.isCrossLane),
       ...bpmnProfile,
-      mesSemantics,
       originComponentEdgeKey: edge.originComponentEdgeKey,
-      propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile, mesSemantics),
+      propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
       title: edge.label ?? '',
     } satisfies FlowCellData,
     zIndex: EDGE_Z_INDEX,
@@ -982,10 +1032,8 @@ export function applyBusinessFlowCanvasToGraph(
         bpmnGatewayType: node.bpmnGatewayType,
         bpmnSubProcessKind: node.bpmnSubProcessKind,
         bpmnCallActivityRef: node.bpmnCallActivityRef,
-        bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
         propertiesJson: node.propertiesJson,
       })
-      const mesSemantics = normalizeMesSemantics(node.mesSemantics, node.propertiesJson)
       const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
       const expectedShape = shapeName(nodeType, bpmnProfile)
       const existing = graph.getCellById(node.nodeKey)
@@ -1027,10 +1075,9 @@ export function applyBusinessFlowCanvasToGraph(
           businessRule: node.businessRule ?? null,
           inputSummary: node.inputSummary ?? null,
           outputSummary: node.outputSummary ?? null,
-          mesSemantics,
           erRefs: node.erRefs ?? [],
           styleJson: node.styleJson ?? null,
-          propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile, mesSemantics),
+          propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
         } satisfies FlowCellData,
         { silent: true },
       )
@@ -1049,7 +1096,6 @@ export function applyBusinessFlowCanvasToGraph(
         propertiesJson: edge.propertiesJson,
         isCrossLane: edge.isCrossLane,
       })
-      const mesSemantics = normalizeMesSemantics(edge.mesSemantics, edge.propertiesJson)
       const existing = graph.getCellById(edge.edgeKey)
       if (!(existing instanceof Edge) || readCellData(existing).cellRole !== 'FLOW_EDGE') {
         if (existing) graph.removeCell(existing)
@@ -1070,9 +1116,8 @@ export function applyBusinessFlowCanvasToGraph(
           edgeKey: edge.edgeKey,
           edgeType: legacyEdgeTypeForBpmn(bpmnProfile, edge.isCrossLane),
           ...bpmnProfile,
-          mesSemantics,
           originComponentEdgeKey: edge.originComponentEdgeKey,
-          propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile, mesSemantics),
+          propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
           title: edge.label ?? '',
         } satisfies FlowCellData,
         { silent: true },
@@ -1174,7 +1219,6 @@ export function componentDraftFromGraph(graph: Graph) {
     .map((node) => {
       const data = readCellData(node)
       const bpmnProfile = nodeProfileFromData(data)
-      const mesSemantics = normalizeMesSemantics(data.mesSemantics, data.propertiesJson)
       const position = node.position()
       const size = node.size()
       return {
@@ -1187,12 +1231,11 @@ export function componentDraftFromGraph(graph: Graph) {
         businessRule: data.businessRule ?? null,
         inputSummary: data.inputSummary ?? null,
         outputSummary: data.outputSummary ?? null,
-        mesSemantics,
         erRefs: data.erRefs ?? [],
         position,
         size,
         styleJson: data.styleJson ?? null,
-        propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile, mesSemantics),
+        propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile),
       }
     })
   const edges: ComponentEditorEdgeDraft[] = graph
@@ -1205,8 +1248,12 @@ export function componentDraftFromGraph(graph: Graph) {
       const targetCell = terminalCellId(target)
       if (!sourceCell || !targetCell) return []
       const data = readCellData(edge)
-      const bpmnProfile = edgeProfileFromData(data, { bpmnFlowType: 'SEQUENCE' })
-      const mesSemantics = normalizeMesSemantics(data.mesSemantics, data.propertiesJson)
+      const defaultProfile = defaultBpmnEdgeProfileForEdge(edge)
+      const requestedProfile = edgeProfileFromData(data, defaultProfile)
+      const bpmnProfile =
+        defaultProfile.bpmnFlowType === 'ASSOCIATION'
+          ? defaultProfile
+          : requestedProfile
       return [
         {
           edgeKey: data.edgeKey ?? edge.id,
@@ -1218,9 +1265,8 @@ export function componentDraftFromGraph(graph: Graph) {
           ...bpmnProfile,
           label: data.title ?? readEdgeLabel(edge),
           conditionText: data.bpmnConditionExpression ?? null,
-          mesSemantics,
           styleJson: data.styleJson ?? null,
-          propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile, mesSemantics),
+          propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile),
         },
       ]
     })
@@ -1271,7 +1317,6 @@ export function flowDraftFromGraph(
     .map((node) => {
       const data = readCellData(node)
       const bpmnProfile = nodeProfileFromData(data)
-      const mesSemantics = normalizeMesSemantics(data.mesSemantics, data.propertiesJson)
       const nodeKey = data.nodeKey ?? node.id
       const previousNode = previousNodes.get(nodeKey)
       const parent = node.getParent()
@@ -1300,13 +1345,11 @@ export function flowDraftFromGraph(
         size,
         inputSummary: data.inputSummary ?? previousNode?.inputSummary ?? null,
         outputSummary: data.outputSummary ?? previousNode?.outputSummary ?? null,
-        mesSemantics,
         isOverridden: true,
         styleJson: data.styleJson ?? previousNode?.styleJson ?? null,
         propertiesJson: mergeBpmnIntoProperties(
           data.propertiesJson ?? previousNode?.propertiesJson,
           bpmnProfile,
-          mesSemantics,
         ),
         createdAt: previousNode?.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -1335,7 +1378,11 @@ export function flowDraftFromGraph(
         bpmnMessageName: previousEdge?.bpmnMessageName ?? null,
         bpmnConditionExpression: previousEdge?.bpmnConditionExpression ?? null,
       })
-      const mesSemantics = normalizeMesSemantics(data.mesSemantics, data.propertiesJson ?? previousEdge?.propertiesJson)
+      const enforcedProfile = defaultBpmnEdgeProfileForEdge(edge)
+      const finalProfile =
+        enforcedProfile.bpmnFlowType === 'ASSOCIATION'
+          ? enforcedProfile
+          : bpmnProfile
       return [
         {
           kind: 'BUSINESS_FLOW_EDGE' as const,
@@ -1343,12 +1390,11 @@ export function flowDraftFromGraph(
           edgeId: previousEdge?.edgeId ?? edgeKey,
           edgeKey,
           laneInstanceId: isCrossLane ? null : laneIdByKey.get(sourceLaneKey ?? '') ?? null,
-          edgeType: legacyEdgeTypeForBpmn(bpmnProfile, isCrossLane),
-          ...bpmnProfile,
+          edgeType: legacyEdgeTypeForBpmn(finalProfile, isCrossLane),
+          ...finalProfile,
           label: data.title ?? readEdgeLabel(edge),
           conditionText: data.bpmnConditionExpression ?? previousEdge?.conditionText ?? null,
           dataContract: previousEdge?.dataContract,
-          mesSemantics,
           isCrossLane,
           sourceType: 'NODE' as const,
           sourceNodeKey,
@@ -1363,8 +1409,7 @@ export function flowDraftFromGraph(
           styleJson: data.styleJson ?? previousEdge?.styleJson ?? null,
           propertiesJson: mergeBpmnIntoProperties(
             data.propertiesJson ?? previousEdge?.propertiesJson,
-            bpmnProfile,
-            mesSemantics,
+            finalProfile,
           ),
           createdAt: previousEdge?.createdAt ?? timestamp,
           updatedAt: timestamp,
@@ -1399,7 +1444,6 @@ export function updateNodeBpmnProfile(cell: Cell, profile: BpmnNodeProfile) {
     ...profile,
     propertiesJson: data.propertiesJson,
   })
-  const mesSemantics = normalizeMesSemantics(data.mesSemantics, data.propertiesJson)
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
   const title =
     data.title ?? String(cell.attr('label/text') ?? bpmnNodeTitle(bpmnProfile))
@@ -1409,6 +1453,15 @@ export function updateNodeBpmnProfile(cell: Cell, profile: BpmnNodeProfile) {
     cell.setMarkup(nodeMarkup(bpmnProfile))
     cell.setAttrs(nodeAttrs(bpmnProfile, title))
     cell.setProp('ports', NODE_PORTS)
+    if (isDataBpmnElement(bpmnProfile.bpmnElementType)) {
+      const connectedEdges = cell.model?.getConnectedEdges(cell) ?? []
+      connectedEdges.forEach((edge) => {
+        updateEdgeBpmnProfile(
+          edge,
+          normalizeBpmnEdgeProfile({ bpmnFlowType: 'ASSOCIATION' }),
+        )
+      })
+    }
   }
   cell.setData({
     ...data,
@@ -1416,8 +1469,7 @@ export function updateNodeBpmnProfile(cell: Cell, profile: BpmnNodeProfile) {
     cellRole: data.cellRole ?? 'FLOW_NODE',
     nodeType,
     ...bpmnProfile,
-    mesSemantics,
-    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile, mesSemantics),
+    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile),
   } satisfies FlowCellData)
   return bpmnProfile
 }
@@ -1428,11 +1480,14 @@ export function updateEdgeBpmnProfile(
   isCrossLane = readCellData(edge).edgeType === 'DEPENDENCY',
 ) {
   const data = readCellData(edge)
-  const bpmnProfile = normalizeBpmnEdgeProfile({
+  const requestedProfile = normalizeBpmnEdgeProfile({
     ...profile,
     propertiesJson: data.propertiesJson,
   })
-  const mesSemantics = normalizeMesSemantics(data.mesSemantics, data.propertiesJson)
+  const bpmnProfile =
+    isDataNodeCell(edge.getSourceCell()) || isDataNodeCell(edge.getTargetCell())
+      ? normalizeBpmnEdgeProfile({ bpmnFlowType: 'ASSOCIATION' })
+      : requestedProfile
   edge.attr(edgeAttrs(isCrossLane, bpmnProfile))
   edge.setData({
     ...data,
@@ -1440,8 +1495,7 @@ export function updateEdgeBpmnProfile(
     cellRole: data.cellRole ?? 'FLOW_EDGE',
     edgeType: legacyEdgeTypeForBpmn(bpmnProfile, isCrossLane),
     ...bpmnProfile,
-    mesSemantics,
-    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile, mesSemantics),
+    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile),
   } satisfies FlowCellData)
   return bpmnProfile
 }

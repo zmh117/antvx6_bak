@@ -32,7 +32,6 @@ function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
     bpmnConditionExpression: edge.bpmnConditionExpression,
     label: edge.label,
     conditionText: edge.conditionText,
-    mesSemantics: edge.mesSemantics ?? null,
     dataContractJson: edge.dataContract ?? {},
     styleJson: edge.styleJson ?? {},
     propertiesJson: edge.propertiesJson ?? {},
@@ -53,7 +52,6 @@ function nodePatch(
     bpmnGatewayType: node.bpmnGatewayType,
     bpmnSubProcessKind: node.bpmnSubProcessKind,
     bpmnCallActivityRef: node.bpmnCallActivityRef,
-    bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
     title: node.title,
     x: node.position.x,
     y: node.position.y,
@@ -64,7 +62,6 @@ function nodePatch(
     businessRule: node.businessRule,
     inputSummary: node.inputSummary,
     outputSummary: node.outputSummary,
-    mesSemantics: node.mesSemantics ?? null,
     styleJson: node.styleJson ?? {},
     propertiesJson: node.propertiesJson ?? {},
   }
@@ -83,9 +80,7 @@ function nodeBpmnChanged(prev: BusinessFlowNodeRecord, node: BusinessFlowNodeRec
     prev.bpmnTaskType !== node.bpmnTaskType ||
     prev.bpmnGatewayType !== node.bpmnGatewayType ||
     prev.bpmnSubProcessKind !== node.bpmnSubProcessKind ||
-    (prev.bpmnCallActivityRef ?? '') !== (node.bpmnCallActivityRef ?? '') ||
-    (prev.bpmnBoundaryAttachedToNodeKey ?? '') !==
-      (node.bpmnBoundaryAttachedToNodeKey ?? '')
+    (prev.bpmnCallActivityRef ?? '') !== (node.bpmnCallActivityRef ?? '')
   )
 }
 
@@ -283,11 +278,8 @@ export function buildBusinessFlowOps(
         bpmnGatewayType: node.bpmnGatewayType,
         bpmnSubProcessKind: node.bpmnSubProcessKind,
         bpmnCallActivityRef: node.bpmnCallActivityRef,
-        bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
       })
     }
-    if (!sameJson(prev.mesSemantics, node.mesSemantics))
-      patch.mesSemantics = node.mesSemantics ?? null
     if (!sameJson(prev.styleJson, node.styleJson))
       patch.styleJson = node.styleJson ?? {}
     if (!sameJson(prev.propertiesJson, node.propertiesJson))
@@ -340,7 +332,6 @@ export function buildBusinessFlowOps(
       prev.sourcePort !== edge.sourcePort ||
       prev.targetPort !== edge.targetPort ||
       (prev.conditionText ?? '') !== (edge.conditionText ?? '') ||
-      !sameJson(prev.mesSemantics, edge.mesSemantics) ||
       !sameJson(prev.dataContract, edge.dataContract) ||
       !sameJson(prev.styleJson, edge.styleJson) ||
       !sameJson(prev.propertiesJson, edge.propertiesJson)

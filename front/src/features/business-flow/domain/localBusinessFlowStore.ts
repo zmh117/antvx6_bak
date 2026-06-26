@@ -10,7 +10,6 @@ import type {
   CanvasPosition,
   CanvasSize,
   LocalBusinessFlowCanvas,
-  MesSemantics,
   SwimlaneComponent,
   SwimlaneComponentEdge,
   SwimlaneComponentListItem,
@@ -25,7 +24,6 @@ import {
   mergeBpmnIntoProperties,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
-  normalizeMesSemantics,
 } from '@/entities/business-flow'
 
 const STORAGE_KEY = 'antvx6:business-flow-demo:v1'
@@ -48,14 +46,12 @@ export type ComponentEditorNodeDraft = {
   bpmnGatewayType?: BpmnNodeProfile['bpmnGatewayType'] | null
   bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
   bpmnCallActivityRef?: string | null
-  bpmnBoundaryAttachedToNodeKey?: string | null
   title: string
   description?: string | null
   actor?: string | null
   businessRule?: string | null
   inputSummary?: string | null
   outputSummary?: string | null
-  mesSemantics?: MesSemantics | null
   erRefs?: BusinessFlowNodeErRef[]
   position: CanvasPosition
   size: CanvasSize
@@ -76,7 +72,6 @@ export type ComponentEditorEdgeDraft = {
   bpmnConditionExpression?: string | null
   label?: string | null
   conditionText?: string | null
-  mesSemantics?: MesSemantics | null
   dataContractJson?: Record<string, unknown> | null
   styleJson?: Record<string, unknown> | null
   propertiesJson?: Record<string, unknown> | null
@@ -124,10 +119,8 @@ function makeComponentNode(
     bpmnGatewayType: extra?.bpmnGatewayType,
     bpmnSubProcessKind: extra?.bpmnSubProcessKind,
     bpmnCallActivityRef: extra?.bpmnCallActivityRef,
-    bpmnBoundaryAttachedToNodeKey: extra?.bpmnBoundaryAttachedToNodeKey,
     propertiesJson: extra?.propertiesJson,
   })
-  const mesSemantics = normalizeMesSemantics(extra?.mesSemantics, extra?.propertiesJson)
   const nextNodeType = extra?.nodeType ?? legacyNodeTypeForBpmn(bpmnProfile)
   return {
     id: createLocalId('scn'),
@@ -142,12 +135,11 @@ function makeComponentNode(
     businessRule: extra?.businessRule ?? null,
     inputSummary: extra?.inputSummary ?? null,
     outputSummary: extra?.outputSummary ?? null,
-    mesSemantics,
     erRefs: extra?.erRefs ?? [],
     position: extra?.position ?? position,
     size: extra?.size ?? size ?? bpmnNodeSize(bpmnProfile),
     styleJson: extra?.styleJson ?? null,
-    propertiesJson: mergeBpmnIntoProperties(extra?.propertiesJson, bpmnProfile, mesSemantics),
+    propertiesJson: mergeBpmnIntoProperties(extra?.propertiesJson, bpmnProfile),
   }
 }
 
@@ -158,7 +150,6 @@ function makeComponentEdge(
   label?: string | null,
 ): SwimlaneComponentEdge {
   const bpmnProfile = normalizeBpmnEdgeProfile({ edgeType: 'SEQUENCE' })
-  const mesSemantics = normalizeMesSemantics()
   return {
     id: createLocalId('sce'),
     componentVersionId,
@@ -172,9 +163,8 @@ function makeComponentEdge(
     label: label ?? null,
     conditionText: label ?? null,
     dataContractJson: null,
-    mesSemantics,
     styleJson: null,
-    propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile, mesSemantics),
+    propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile),
   }
 }
 
@@ -257,8 +247,8 @@ function seedStore(): StoreShape {
         '负责查询库存、锁定库存和释放库存。',
         [
           { key: 'inventory_start', type: 'START', title: '收到订单', x: 132, y: 36 },
-          { key: 'inventory_query', type: 'SERVICE', title: '查询库存', x: 92, y: 124 },
-          { key: 'inventory_decide', type: 'DECISION', title: '库存充足?', x: 118, y: 218 },
+          { key: 'inventory_query', type: 'TASK', title: '查询库存', x: 92, y: 124 },
+          { key: 'inventory_decide', type: 'GATEWAY', title: '库存充足?', x: 118, y: 218 },
           { key: 'inventory_lock', type: 'TASK', title: '锁定库存', x: 92, y: 318 },
         ],
         [
@@ -275,8 +265,8 @@ function seedStore(): StoreShape {
         '负责发起支付、确认支付结果和失败补偿。',
         [
           { key: 'payment_start', type: 'EVENT', title: '允许支付', x: 132, y: 42 },
-          { key: 'payment_create', type: 'SERVICE', title: '创建支付单', x: 92, y: 130 },
-          { key: 'payment_wait', type: 'MANUAL', title: '用户支付', x: 92, y: 224 },
+          { key: 'payment_create', type: 'TASK', title: '创建支付单', x: 92, y: 130 },
+          { key: 'payment_wait', type: 'TASK', title: '用户支付', x: 92, y: 224 },
           { key: 'payment_done', type: 'END', title: '支付成功', x: 132, y: 328 },
         ],
         [
@@ -294,7 +284,7 @@ function seedStore(): StoreShape {
         [
           { key: 'shipping_start', type: 'EVENT', title: '支付成功', x: 132, y: 42 },
           { key: 'shipping_pick', type: 'TASK', title: '拣货复核', x: 92, y: 132 },
-          { key: 'shipping_label', type: 'SERVICE', title: '生成面单', x: 92, y: 226 },
+          { key: 'shipping_label', type: 'TASK', title: '生成面单', x: 92, y: 226 },
           { key: 'shipping_end', type: 'END', title: '通知物流', x: 132, y: 330 },
         ],
         [
@@ -499,10 +489,8 @@ export function saveSwimlaneComponentVersion(
           bpmnGatewayType: node.bpmnGatewayType,
           bpmnSubProcessKind: node.bpmnSubProcessKind,
           bpmnCallActivityRef: node.bpmnCallActivityRef,
-          bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey,
           propertiesJson: node.propertiesJson,
         })
-        const mesSemantics = normalizeMesSemantics(node.mesSemantics, node.propertiesJson)
         return {
           id: createLocalId('scn'),
           componentVersionId: versionId,
@@ -515,12 +503,11 @@ export function saveSwimlaneComponentVersion(
           businessRule: node.businessRule ?? null,
           inputSummary: node.inputSummary ?? null,
           outputSummary: node.outputSummary ?? null,
-          mesSemantics,
           erRefs: node.erRefs ?? [],
           position: node.position,
           size: node.size,
           styleJson: node.styleJson ?? null,
-          propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile, mesSemantics),
+          propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
         }
       })
       const edges: SwimlaneComponentEdge[] = values.edges.map((edge) => {
@@ -532,7 +519,6 @@ export function saveSwimlaneComponentVersion(
           bpmnConditionExpression: edge.bpmnConditionExpression,
           propertiesJson: edge.propertiesJson,
         })
-        const mesSemantics = normalizeMesSemantics(edge.mesSemantics, edge.propertiesJson)
         return {
           id: createLocalId('sce'),
           componentVersionId: versionId,
@@ -546,9 +532,8 @@ export function saveSwimlaneComponentVersion(
           label: edge.label ?? null,
           conditionText: edge.conditionText ?? null,
           dataContractJson: edge.dataContractJson ?? null,
-          mesSemantics,
           styleJson: edge.styleJson ?? null,
-          propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile, mesSemantics),
+          propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
         }
       })
       const nextVersion: SwimlaneComponentVersion = {
@@ -707,7 +692,6 @@ export function placeSwimlaneComponent(
 	      bpmnGatewayType: node.bpmnGatewayType ?? null,
 	      bpmnSubProcessKind: node.bpmnSubProcessKind ?? null,
 	      bpmnCallActivityRef: node.bpmnCallActivityRef ?? null,
-	      bpmnBoundaryAttachedToNodeKey: node.bpmnBoundaryAttachedToNodeKey ?? null,
 	      title: node.title,
 	      description: node.description,
 	      actor: node.actor,
@@ -720,7 +704,6 @@ export function placeSwimlaneComponent(
 	      size: node.size,
 	      inputSummary: node.inputSummary,
 	      outputSummary: node.outputSummary,
-	      mesSemantics: node.mesSemantics ?? null,
 	      isOverridden: false,
 	      styleJson: node.styleJson,
 	      propertiesJson: node.propertiesJson,
@@ -747,7 +730,6 @@ export function placeSwimlaneComponent(
 	        label: edge.label,
 	        conditionText: edge.conditionText,
 	        dataContract: edge.dataContractJson as BusinessFlowEdgeRecord['dataContract'],
-	        mesSemantics: edge.mesSemantics ?? null,
         isCrossLane: false,
         sourceType: 'NODE',
         sourceNodeKey,
@@ -795,7 +777,6 @@ export function newComponentNodeDraft(
       : nodeTypeOrProfile,
   )
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
-  const mesSemantics = normalizeMesSemantics()
   return {
     nodeKey: createLocalId('cmp_node'),
     nodeType,
@@ -806,11 +787,10 @@ export function newComponentNodeDraft(
     businessRule: null,
     inputSummary: null,
     outputSummary: null,
-    mesSemantics,
     erRefs: [],
     position,
     size: bpmnNodeSize(bpmnProfile),
     styleJson: null,
-    propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile, mesSemantics),
+    propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile),
   }
 }

@@ -23,21 +23,17 @@ import { businessFlowKeys } from '@/entities/business-flow/api/queryKeys'
 import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { useGraphsQuery } from '@/entities/er-graph/api'
 import type {
-  BpmnEdgeProfile,
-  BpmnNodeProfile,
   LocalBusinessFlowCanvas,
-  MesSemantics,
   SwimlaneComponentListItem,
 } from '@/entities/business-flow'
 import {
   mergeBpmnIntoProperties,
-  normalizeBpmnEdgeProfile,
-  normalizeMesSemantics,
 } from '@/entities/business-flow'
 import {
   addMissingBusinessFlowCells,
   bindBusinessFlowDeleteKeys,
   createBusinessFlowGraph,
+  defaultBpmnEdgeProfileForEdge,
   fitLaneToChildren,
   flowDraftFromGraph,
   graphPointFromEvent,
@@ -62,8 +58,7 @@ import { NodeErBindingEditor } from '@/features/business-flow/presentation/compo
 import {
   BpmnEdgeProfileFields,
   BpmnNodeProfileFields,
-  MesSemanticsFields,
-} from '@/features/business-flow/presentation/components/BpmnMesFields'
+} from '@/features/business-flow/presentation/components/BpmnFields'
 import {
   buildBusinessFlowOps,
   isLayoutOnlyBusinessFlowOps,
@@ -80,21 +75,6 @@ const PRESENCE_LABELS: Record<BusinessFlowPresenceActivity, string> = {
   editing: '正在编辑',
   dragging: '正在移动',
   connecting: '已连接',
-}
-
-function updateCellMesSemantics(
-  cell: Cell,
-  profile: BpmnNodeProfile | BpmnEdgeProfile,
-  mesSemantics: MesSemantics,
-) {
-  const data = readCellData(cell)
-  const normalized = normalizeMesSemantics(mesSemantics)
-  cell.setData({
-    ...data,
-    mesSemantics: normalized,
-    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, profile, normalized),
-  })
-  return normalized
 }
 
 type PresenceHighlight = {
@@ -508,21 +488,15 @@ export function BusinessFlowEditor({
     })
     graph.on('edge:connected', ({ edge }) => {
       const data = readCellData(edge)
-      const bpmnProfile = normalizeBpmnEdgeProfile({ edgeType: 'SEQUENCE' })
-      const mesSemantics = normalizeMesSemantics()
+      const bpmnProfile = defaultBpmnEdgeProfileForEdge(edge)
       edge.setData({
         ...data,
         cellRole: 'FLOW_EDGE',
         businessFlowId,
         edgeKey: data.edgeKey ?? edge.id,
-        edgeType: 'SEQUENCE',
+        edgeType: bpmnProfile.bpmnFlowType === 'ASSOCIATION' ? 'ASSOCIATION' : 'SEQUENCE',
         ...bpmnProfile,
-        mesSemantics,
-        propertiesJson: mergeBpmnIntoProperties(
-          data.propertiesJson,
-          bpmnProfile,
-          mesSemantics,
-        ),
+        propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile),
         title: '',
       })
       setSelected(readSelectedBusinessCell(edge))
@@ -1177,21 +1151,6 @@ function BusinessInspector({
             }}
           />
         </div>
-        <div>
-          <div className="mb-2 text-xs font-semibold">MES 语义</div>
-          <MesSemanticsFields
-            value={selected.mesSemantics}
-            onChange={(mesSemantics) => {
-              const nextMesSemantics = updateCellMesSemantics(
-                selected.cell,
-                selected.bpmnProfile,
-                mesSemantics,
-              )
-              onChange({ ...selected, mesSemantics: nextMesSemantics })
-              onPersist()
-            }}
-          />
-        </div>
       </div>
     )
   }
@@ -1295,21 +1254,6 @@ function BusinessInspector({
           onChange={(profile) => {
             const bpmnProfile = updateNodeBpmnProfile(selected.cell, profile)
             onChange({ ...selected, bpmnProfile })
-            onPersist()
-          }}
-        />
-      </div>
-      <div>
-        <div className="mb-2 text-xs font-semibold">MES 语义</div>
-        <MesSemanticsFields
-          value={selected.mesSemantics}
-          onChange={(mesSemantics) => {
-            const nextMesSemantics = updateCellMesSemantics(
-              selected.cell,
-              selected.bpmnProfile,
-              mesSemantics,
-            )
-            onChange({ ...selected, mesSemantics: nextMesSemantics })
             onPersist()
           }}
         />
