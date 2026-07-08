@@ -969,6 +969,289 @@ export function addMissingBusinessFlowCells(
   return added
 }
 
+export type BusinessFlowCanvasPatch = {
+  laneUpserts?: string[]
+  laneDeletes?: string[]
+  nodeUpserts?: string[]
+  nodeDeletes?: string[]
+  edgeUpserts?: string[]
+  edgeDeletes?: string[]
+  erRefNodeKeys?: string[]
+}
+
+export type BusinessFlowCanvasPatchResult =
+  | { applied: true }
+  | { applied: false; reason: string }
+
+function upsertLaneCell(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+  lane: LocalBusinessFlowCanvas['laneInstances'][number],
+) {
+  const existing = graph.getCellById(lane.instanceKey)
+  if (!(existing instanceof Node) || readCellData(existing).cellRole !== 'LANE_INSTANCE') {
+    if (existing) graph.removeCell(existing)
+    addLaneInstanceCell(graph, canvas, lane)
+    return
+  }
+  existing.position(lane.position.x, lane.position.y)
+  existing.resize(lane.size.width, lane.size.height)
+  existing.attr('label/text', lane.displayName)
+  existing.attr('owner/text', lane.ownerRole ?? '')
+  existing.setZIndex(LANE_Z_INDEX_BASE + lane.zIndex)
+  existing.setData(
+    {
+      ...readCellData(existing),
+      boundedContext: 'business-flow',
+      cellRole: 'LANE_INSTANCE',
+      businessFlowId: canvas.businessFlowId,
+      laneInstanceId: lane.laneInstanceId,
+      laneInstanceKey: lane.instanceKey,
+      componentId: lane.componentId,
+      componentVersionId: lane.componentVersionId,
+      title: lane.displayName,
+      layoutJson: lane.layoutJson ?? null,
+    } satisfies FlowCellData,
+    { silent: true },
+  )
+}
+
+function upsertFlowNodeCell(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+  node: BusinessFlowNodeRecord,
+  laneById: Map<string, LocalBusinessFlowCanvas['laneInstances'][number]>,
+  laneKeyById: Map<string, string>,
+) {
+  const laneKey = laneKeyById.get(node.laneInstanceId)
+  const laneRecord = laneById.get(node.laneInstanceId)
+  const lane = laneKey ? graph.getCellById(laneKey) : null
+  if (laneKey && !(lane instanceof Node)) {
+    return { applied: false, reason: `missing-lane:${laneKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  const bpmnProfile = normalizeBpmnNodeProfile({
+    nodeType: node.nodeType,
+    bpmnElementType: node.bpmnElementType,
+    bpmnEventKind: node.bpmnEventKind,
+    bpmnEventDefinition: node.bpmnEventDefinition,
+    bpmnTaskType: node.bpmnTaskType,
+    bpmnGatewayType: node.bpmnGatewayType,
+    bpmnSubProcessKind: node.bpmnSubProcessKind,
+    bpmnCallActivityRef: node.bpmnCallActivityRef,
+    propertiesJson: node.propertiesJson,
+  })
+  const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
+  const expectedShape = shapeName(nodeType, bpmnProfile)
+  const existing = graph.getCellById(node.nodeKey)
+  if (
+    !(existing instanceof Node) ||
+    readCellData(existing).cellRole !== 'FLOW_NODE' ||
+    existing.shape !== expectedShape
+  ) {
+    if (existing) graph.removeCell(existing)
+    addFlowNodeCell(graph, node, laneById, laneKeyById)
+    return { applied: true } satisfies BusinessFlowCanvasPatchResult
+  }
+  if (lane instanceof Node) {
+    lane.addChild(existing)
+    existing.position(node.position.x, node.position.y, { relative: true })
+  } else {
+    existing.position(
+      laneRecord ? laneRecord.position.x + node.position.x : node.position.x,
+      laneRecord ? laneRecord.position.y + node.position.y : node.position.y,
+    )
+  }
+  existing.resize(node.size.width, node.size.height)
+  existing.attr(nodeAttrs(bpmnProfile, node.title))
+  existing.setData(
+    {
+      ...readCellData(existing),
+      boundedContext: 'business-flow',
+      cellRole: 'FLOW_NODE',
+      businessFlowId: canvas.businessFlowId,
+      laneInstanceId: node.laneInstanceId,
+      laneInstanceKey: laneKey,
+      nodeKey: node.nodeKey,
+      originComponentNodeKey: node.originComponentNodeKey,
+      nodeType,
+      ...bpmnProfile,
+      title: node.title,
+      description: node.description ?? null,
+      actor: node.actor ?? null,
+      businessRule: node.businessRule ?? null,
+      inputSummary: node.inputSummary ?? null,
+      outputSummary: node.outputSummary ?? null,
+      erRefs: node.erRefs ?? [],
+      styleJson: node.styleJson ?? null,
+      propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
+    } satisfies FlowCellData,
+    { silent: true },
+  )
+  return { applied: true } satisfies BusinessFlowCanvasPatchResult
+}
+
+function upsertFlowEdgeCell(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+  edge: BusinessFlowEdgeRecord,
+) {
+  if (!edge.sourceNodeKey || !edge.targetNodeKey) {
+    return { applied: false, reason: `missing-edge-terminal:${edge.edgeKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  if (!graph.getCellById(edge.sourceNodeKey)) {
+    return { applied: false, reason: `missing-source:${edge.sourceNodeKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  if (!graph.getCellById(edge.targetNodeKey)) {
+    return { applied: false, reason: `missing-target:${edge.targetNodeKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  const bpmnProfile = normalizeBpmnEdgeProfile({
+    edgeType: edge.edgeType,
+    bpmnFlowType: edge.bpmnFlowType,
+    bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
+    bpmnMessageName: edge.bpmnMessageName,
+    bpmnConditionExpression: edge.bpmnConditionExpression,
+    propertiesJson: edge.propertiesJson,
+    isCrossLane: edge.isCrossLane,
+  })
+  const existing = graph.getCellById(edge.edgeKey)
+  if (!(existing instanceof Edge) || readCellData(existing).cellRole !== 'FLOW_EDGE') {
+    if (existing) graph.removeCell(existing)
+    addFlowEdgeCell(graph, canvas, edge)
+    return { applied: true } satisfies BusinessFlowCanvasPatchResult
+  }
+  existing.setSource({ cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined })
+  existing.setTarget({ cell: edge.targetNodeKey, port: edge.targetPort ?? undefined })
+  existing.attr(edgeAttrs(edge.isCrossLane, bpmnProfile))
+  existing.setLabels(edgeLabels(edge.label))
+  existing.setData(
+    {
+      ...readCellData(existing),
+      boundedContext: 'business-flow',
+      cellRole: 'FLOW_EDGE',
+      businessFlowId: canvas.businessFlowId,
+      laneInstanceId: edge.laneInstanceId ?? undefined,
+      edgeKey: edge.edgeKey,
+      edgeType: legacyEdgeTypeForBpmn(bpmnProfile, edge.isCrossLane),
+      ...bpmnProfile,
+      originComponentEdgeKey: edge.originComponentEdgeKey,
+      propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
+      title: edge.label ?? '',
+    } satisfies FlowCellData,
+    { silent: true },
+  )
+  existing.setZIndex(EDGE_Z_INDEX)
+  return { applied: true } satisfies BusinessFlowCanvasPatchResult
+}
+
+function removePatchedLane(graph: Graph, laneKey: string, nodeDeletes: Set<string>) {
+  const cell = graph.getCellById(laneKey)
+  if (!cell) return { applied: true } satisfies BusinessFlowCanvasPatchResult
+  if (!(cell instanceof Node) || readCellData(cell).cellRole !== 'LANE_INSTANCE') {
+    return { applied: false, reason: `unexpected-lane-cell:${laneKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  const childNodes = flowNodeChildren(cell)
+  const hasUndeletedChild = childNodes.some((child) => !nodeDeletes.has(child.id))
+  if (hasUndeletedChild) {
+    return { applied: false, reason: `lane-delete-has-children:${laneKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  graph.removeCell(cell)
+  return { applied: true } satisfies BusinessFlowCanvasPatchResult
+}
+
+function removePatchedNode(graph: Graph, nodeKey: string, edgeDeletes: Set<string>) {
+  const cell = graph.getCellById(nodeKey)
+  if (!cell) return { applied: true } satisfies BusinessFlowCanvasPatchResult
+  if (!(cell instanceof Node) || readCellData(cell).cellRole !== 'FLOW_NODE') {
+    return { applied: false, reason: `unexpected-node-cell:${nodeKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  const connectedEdges = graph.getConnectedEdges(cell)
+  const hasUndeletedEdge = connectedEdges.some((edge) => !edgeDeletes.has(edge.id))
+  if (hasUndeletedEdge) {
+    return { applied: false, reason: `node-delete-has-edges:${nodeKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  graph.removeCell(cell)
+  return { applied: true } satisfies BusinessFlowCanvasPatchResult
+}
+
+function removePatchedEdge(graph: Graph, edgeKey: string) {
+  const cell = graph.getCellById(edgeKey)
+  if (!cell) return { applied: true } satisfies BusinessFlowCanvasPatchResult
+  if (!(cell instanceof Edge) || readCellData(cell).cellRole !== 'FLOW_EDGE') {
+    return { applied: false, reason: `unexpected-edge-cell:${edgeKey}` } satisfies BusinessFlowCanvasPatchResult
+  }
+  graph.removeCell(cell)
+  return { applied: true } satisfies BusinessFlowCanvasPatchResult
+}
+
+export function applyBusinessFlowCanvasPatchToGraph(
+  graph: Graph,
+  canvas: LocalBusinessFlowCanvas,
+  patch: BusinessFlowCanvasPatch,
+): BusinessFlowCanvasPatchResult {
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  const lanesByKey = new Map(canvas.laneInstances.map((lane) => [lane.instanceKey, lane]))
+  const nodesByKey = new Map(canvas.nodes.map((node) => [node.nodeKey, node]))
+  const edgesByKey = new Map(canvas.edges.map((edge) => [edge.edgeKey, edge]))
+  const nodeDeletes = new Set(patch.nodeDeletes ?? [])
+  const edgeDeletes = new Set(patch.edgeDeletes ?? [])
+  let result: BusinessFlowCanvasPatchResult = { applied: true }
+
+  graph.batchUpdate(() => {
+    for (const edgeKey of edgeDeletes) {
+      result = removePatchedEdge(graph, edgeKey)
+      if (!result.applied) return
+    }
+    for (const nodeKey of nodeDeletes) {
+      result = removePatchedNode(graph, nodeKey, edgeDeletes)
+      if (!result.applied) return
+    }
+    for (const laneKey of patch.laneDeletes ?? []) {
+      result = removePatchedLane(graph, laneKey, nodeDeletes)
+      if (!result.applied) return
+    }
+    for (const laneKey of patch.laneUpserts ?? []) {
+      const lane = lanesByKey.get(laneKey)
+      if (!lane) {
+        result = { applied: false, reason: `missing-lane-record:${laneKey}` }
+        return
+      }
+      upsertLaneCell(graph, canvas, lane)
+    }
+    for (const nodeKey of patch.nodeUpserts ?? []) {
+      const node = nodesByKey.get(nodeKey)
+      if (!node) {
+        result = { applied: false, reason: `missing-node-record:${nodeKey}` }
+        return
+      }
+      result = upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById)
+      if (!result.applied) return
+    }
+    normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
+    const edgeUpserts = new Set(patch.edgeUpserts ?? [])
+    for (const nodeKey of patch.erRefNodeKeys ?? []) {
+      const node = nodesByKey.get(nodeKey)
+      const existing = graph.getCellById(nodeKey)
+      if (!node || !(existing instanceof Node) || readCellData(existing).cellRole !== 'FLOW_NODE') {
+        result = { applied: false, reason: `missing-er-ref-node:${nodeKey}` }
+        return
+      }
+      result = upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById)
+      if (!result.applied) return
+    }
+    for (const edgeKey of edgeUpserts) {
+      const edge = edgesByKey.get(edgeKey)
+      if (!edge) {
+        result = { applied: false, reason: `missing-edge-record:${edgeKey}` }
+        return
+      }
+      result = upsertFlowEdgeCell(graph, canvas, edge)
+      if (!result.applied) return
+    }
+  })
+  return result
+}
+
 export function applyBusinessFlowCanvasToGraph(
   graph: Graph,
   canvas: LocalBusinessFlowCanvas,
@@ -990,139 +1273,16 @@ export function applyBusinessFlowCanvasToGraph(
       if (role === 'LANE_INSTANCE' && !incomingLaneKeys.has(node.id)) graph.removeCell(node)
     })
 
-    canvas.laneInstances.forEach((lane) => {
-      const existing = graph.getCellById(lane.instanceKey)
-      if (!(existing instanceof Node) || readCellData(existing).cellRole !== 'LANE_INSTANCE') {
-        if (existing) graph.removeCell(existing)
-        addLaneInstanceCell(graph, canvas, lane)
-        return
-      }
-      existing.position(lane.position.x, lane.position.y)
-      existing.resize(lane.size.width, lane.size.height)
-      existing.attr('label/text', lane.displayName)
-      existing.attr('owner/text', lane.ownerRole ?? '')
-      existing.setZIndex(LANE_Z_INDEX_BASE + lane.zIndex)
-      existing.setData(
-        {
-          ...readCellData(existing),
-          boundedContext: 'business-flow',
-          cellRole: 'LANE_INSTANCE',
-          businessFlowId: canvas.businessFlowId,
-          laneInstanceId: lane.laneInstanceId,
-          laneInstanceKey: lane.instanceKey,
-          componentId: lane.componentId,
-          componentVersionId: lane.componentVersionId,
-          title: lane.displayName,
-          layoutJson: lane.layoutJson ?? null,
-        } satisfies FlowCellData,
-        { silent: true },
-      )
-    })
+    canvas.laneInstances.forEach((lane) => upsertLaneCell(graph, canvas, lane))
 
     canvas.nodes.forEach((node) => {
-      const laneKey = laneKeyById.get(node.laneInstanceId)
-      const laneRecord = laneById.get(node.laneInstanceId)
-      const lane = laneKey ? graph.getCellById(laneKey) : null
-      const bpmnProfile = normalizeBpmnNodeProfile({
-        nodeType: node.nodeType,
-        bpmnElementType: node.bpmnElementType,
-        bpmnEventKind: node.bpmnEventKind,
-        bpmnEventDefinition: node.bpmnEventDefinition,
-        bpmnTaskType: node.bpmnTaskType,
-        bpmnGatewayType: node.bpmnGatewayType,
-        bpmnSubProcessKind: node.bpmnSubProcessKind,
-        bpmnCallActivityRef: node.bpmnCallActivityRef,
-        propertiesJson: node.propertiesJson,
-      })
-      const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
-      const expectedShape = shapeName(nodeType, bpmnProfile)
-      const existing = graph.getCellById(node.nodeKey)
-      if (
-        !(existing instanceof Node) ||
-        readCellData(existing).cellRole !== 'FLOW_NODE' ||
-        existing.shape !== expectedShape
-      ) {
-        if (existing) graph.removeCell(existing)
-        addFlowNodeCell(graph, node, laneById, laneKeyById)
-        return
-      }
-      if (lane instanceof Node) {
-        lane.addChild(existing)
-        existing.position(node.position.x, node.position.y, { relative: true })
-      } else {
-        existing.position(
-          laneRecord ? laneRecord.position.x + node.position.x : node.position.x,
-          laneRecord ? laneRecord.position.y + node.position.y : node.position.y,
-        )
-      }
-      existing.resize(node.size.width, node.size.height)
-      existing.attr(nodeAttrs(bpmnProfile, node.title))
-      existing.setData(
-        {
-          ...readCellData(existing),
-          boundedContext: 'business-flow',
-          cellRole: 'FLOW_NODE',
-          businessFlowId: canvas.businessFlowId,
-          laneInstanceId: node.laneInstanceId,
-          laneInstanceKey: laneKey,
-          nodeKey: node.nodeKey,
-          originComponentNodeKey: node.originComponentNodeKey,
-          nodeType,
-          ...bpmnProfile,
-          title: node.title,
-          description: node.description ?? null,
-          actor: node.actor ?? null,
-          businessRule: node.businessRule ?? null,
-          inputSummary: node.inputSummary ?? null,
-          outputSummary: node.outputSummary ?? null,
-          erRefs: node.erRefs ?? [],
-          styleJson: node.styleJson ?? null,
-          propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
-        } satisfies FlowCellData,
-        { silent: true },
-      )
+      upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById)
     })
 
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
 
     canvas.edges.forEach((edge) => {
-      if (!edge.sourceNodeKey || !edge.targetNodeKey) return
-      const bpmnProfile = normalizeBpmnEdgeProfile({
-        edgeType: edge.edgeType,
-        bpmnFlowType: edge.bpmnFlowType,
-        bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
-        bpmnMessageName: edge.bpmnMessageName,
-        bpmnConditionExpression: edge.bpmnConditionExpression,
-        propertiesJson: edge.propertiesJson,
-        isCrossLane: edge.isCrossLane,
-      })
-      const existing = graph.getCellById(edge.edgeKey)
-      if (!(existing instanceof Edge) || readCellData(existing).cellRole !== 'FLOW_EDGE') {
-        if (existing) graph.removeCell(existing)
-        addFlowEdgeCell(graph, canvas, edge)
-        return
-      }
-      existing.setSource({ cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined })
-      existing.setTarget({ cell: edge.targetNodeKey, port: edge.targetPort ?? undefined })
-      existing.attr(edgeAttrs(edge.isCrossLane, bpmnProfile))
-      existing.setLabels(edgeLabels(edge.label))
-      existing.setData(
-        {
-          ...readCellData(existing),
-          boundedContext: 'business-flow',
-          cellRole: 'FLOW_EDGE',
-          businessFlowId: canvas.businessFlowId,
-          laneInstanceId: edge.laneInstanceId ?? undefined,
-          edgeKey: edge.edgeKey,
-          edgeType: legacyEdgeTypeForBpmn(bpmnProfile, edge.isCrossLane),
-          ...bpmnProfile,
-          originComponentEdgeKey: edge.originComponentEdgeKey,
-          propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
-          title: edge.label ?? '',
-        } satisfies FlowCellData,
-        { silent: true },
-      )
-      existing.setZIndex(EDGE_Z_INDEX)
+      upsertFlowEdgeCell(graph, canvas, edge)
     })
   })
 }
@@ -1425,6 +1585,146 @@ export function flowDraftFromGraph(
     laneInstances: lanes,
     nodes,
     edges,
+  }
+}
+
+export function flowLaneRecordFromCell(
+  lane: Node,
+  canvas: Pick<LocalBusinessFlowCanvas, 'businessFlowId'> & Partial<Pick<LocalBusinessFlowCanvas, 'laneInstances'>>,
+): LocalBusinessFlowCanvas['laneInstances'][number] | null {
+  const data = readCellData(lane)
+  if (data.cellRole !== 'LANE_INSTANCE') return null
+  const timestamp = new Date().toISOString()
+  const laneKey = data.laneInstanceKey ?? lane.id
+  const previousLane = canvas.laneInstances?.find((item) => item.instanceKey === laneKey)
+  const position = lane.position()
+  const size = lane.size()
+  return {
+    kind: 'LANE_INSTANCE',
+    businessFlowId: canvas.businessFlowId,
+    laneInstanceId: data.laneInstanceId ?? previousLane?.laneInstanceId ?? laneKey,
+    instanceKey: laneKey,
+    componentId: data.componentId ?? previousLane?.componentId ?? '',
+    componentVersionId: data.componentVersionId ?? previousLane?.componentVersionId ?? '',
+    componentName: previousLane?.componentName ?? data.title ?? String(lane.attr('label/text') ?? '泳道实例'),
+    componentVersionNo: previousLane?.componentVersionNo ?? 1,
+    displayName: String(lane.attr('label/text') ?? data.title ?? '泳道实例'),
+    ownerRole: String(lane.attr('owner/text') ?? previousLane?.ownerRole ?? ''),
+    isOverridden: true,
+    position,
+    size,
+    zIndex: previousLane?.zIndex ?? lane.getZIndex() ?? 1,
+    layoutJson: (data.layoutJson as BusinessFlowJson | null | undefined) ?? previousLane?.layoutJson ?? null,
+    overrideJson: previousLane?.overrideJson ?? null,
+    status: previousLane?.status ?? 'ACTIVE',
+    createdAt: previousLane?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  }
+}
+
+export function flowNodeRecordFromCell(
+  node: Node,
+  canvas: Pick<LocalBusinessFlowCanvas, 'businessFlowId' | 'nodes' | 'laneInstances'>,
+): BusinessFlowNodeRecord | null {
+  const data = readCellData(node)
+  if (data.cellRole !== 'FLOW_NODE') return null
+  const timestamp = new Date().toISOString()
+  const bpmnProfile = nodeProfileFromData(data)
+  const nodeKey = data.nodeKey ?? node.id
+  const previousNode = canvas.nodes.find((item) => item.nodeKey === nodeKey)
+  const laneIdByKey = new Map(canvas.laneInstances.map((lane) => [lane.instanceKey, lane.laneInstanceId]))
+  const parent = node.getParent()
+  const laneKey =
+    data.laneInstanceKey ??
+    (parent instanceof Node && readCellData(parent).cellRole === 'LANE_INSTANCE' ? parent.id : undefined)
+  const position =
+    parent instanceof Node && readCellData(parent).cellRole === 'LANE_INSTANCE'
+      ? node.position({ relative: true })
+      : node.position()
+  const size = node.size()
+  return {
+    kind: 'BUSINESS_FLOW_NODE',
+    businessFlowId: canvas.businessFlowId,
+    nodeId: previousNode?.nodeId ?? nodeKey,
+    nodeKey,
+    laneInstanceId: data.laneInstanceId ?? laneIdByKey.get(laneKey ?? '') ?? previousNode?.laneInstanceId ?? '',
+    originComponentNodeKey: data.originComponentNodeKey ?? previousNode?.originComponentNodeKey ?? null,
+    nodeType: legacyNodeTypeForBpmn(bpmnProfile),
+    ...bpmnProfile,
+    title: data.title ?? String(node.attr('label/text') ?? '任务'),
+    description: data.description ?? null,
+    actor: data.actor ?? null,
+    businessRule: data.businessRule ?? null,
+    erRefs: data.erRefs ?? previousNode?.erRefs ?? [],
+    position,
+    size,
+    inputSummary: data.inputSummary ?? previousNode?.inputSummary ?? null,
+    outputSummary: data.outputSummary ?? previousNode?.outputSummary ?? null,
+    isOverridden: true,
+    styleJson: data.styleJson ?? previousNode?.styleJson ?? null,
+    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson ?? previousNode?.propertiesJson, bpmnProfile),
+    createdAt: previousNode?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  }
+}
+
+export function flowEdgeRecordFromCell(
+  edge: Edge,
+  canvas: Pick<LocalBusinessFlowCanvas, 'businessFlowId' | 'edges' | 'laneInstances'>,
+): BusinessFlowEdgeRecord | null {
+  const data = readCellData(edge)
+  if (data.cellRole !== 'FLOW_EDGE') return null
+  const source = edge.getSource()
+  const target = edge.getTarget()
+  const sourceCell = terminalCellId(source)
+  const targetCell = terminalCellId(target)
+  if (!sourceCell || !targetCell) return null
+  const timestamp = new Date().toISOString()
+  const edgeKey = data.edgeKey ?? edge.id
+  const previousEdge = canvas.edges.find((item) => item.edgeKey === edgeKey)
+  const sourceNode = edge.getSourceCell()
+  const targetNode = edge.getTargetCell()
+  const sourceLaneKey = sourceNode instanceof Node ? sourceNode.getParent()?.id : undefined
+  const targetLaneKey = targetNode instanceof Node ? targetNode.getParent()?.id : undefined
+  const laneIdByKey = new Map(canvas.laneInstances.map((lane) => [lane.instanceKey, lane.laneInstanceId]))
+  const isCrossLane = Boolean(sourceLaneKey && targetLaneKey && sourceLaneKey !== targetLaneKey)
+  const bpmnProfile = edgeProfileFromData(data, {
+    bpmnFlowType: previousEdge?.bpmnFlowType ?? 'SEQUENCE',
+    bpmnSequenceFlowKind: previousEdge?.bpmnSequenceFlowKind ?? 'NORMAL',
+    bpmnMessageName: previousEdge?.bpmnMessageName ?? null,
+    bpmnConditionExpression: previousEdge?.bpmnConditionExpression ?? null,
+  })
+  const enforcedProfile = defaultBpmnEdgeProfileForEdge(edge)
+  const finalProfile =
+    enforcedProfile.bpmnFlowType === 'ASSOCIATION'
+      ? enforcedProfile
+      : bpmnProfile
+  return {
+    kind: 'BUSINESS_FLOW_EDGE',
+    businessFlowId: canvas.businessFlowId,
+    edgeId: previousEdge?.edgeId ?? edgeKey,
+    edgeKey,
+    laneInstanceId: isCrossLane ? null : laneIdByKey.get(sourceLaneKey ?? '') ?? null,
+    edgeType: legacyEdgeTypeForBpmn(finalProfile, isCrossLane),
+    ...finalProfile,
+    label: data.title ?? readEdgeLabel(edge),
+    conditionText: data.bpmnConditionExpression ?? previousEdge?.conditionText ?? null,
+    dataContract: previousEdge?.dataContract,
+    isCrossLane,
+    sourceType: 'NODE',
+    sourceNodeKey: sourceCell,
+    sourceLaneInstanceKey: null,
+    sourcePort: terminalPort(source),
+    targetType: 'NODE',
+    targetNodeKey: targetCell,
+    targetLaneInstanceKey: null,
+    targetPort: terminalPort(target),
+    originComponentEdgeKey: data.originComponentEdgeKey ?? previousEdge?.originComponentEdgeKey ?? null,
+    isOverridden: true,
+    styleJson: data.styleJson ?? previousEdge?.styleJson ?? null,
+    propertiesJson: mergeBpmnIntoProperties(data.propertiesJson ?? previousEdge?.propertiesJson, finalProfile),
+    createdAt: previousEdge?.createdAt ?? timestamp,
+    updatedAt: timestamp,
   }
 }
 

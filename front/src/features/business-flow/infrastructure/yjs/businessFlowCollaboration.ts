@@ -10,11 +10,22 @@ import type {
   LocalBusinessFlowCanvas,
 } from '@/entities/business-flow'
 import {
+  applyBusinessFlowCanvasPatchToGraph,
+  type BusinessFlowCanvasPatch,
+  flowEdgeRecordFromCell,
   applyBusinessFlowCanvasToGraph,
   flowDraftFromGraph,
+  flowLaneRecordFromCell,
+  flowNodeRecordFromCell,
   readCellData,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
-import { COLLAB_WS_URL } from '@/shared/api/config'
+import {
+  compactBusinessFlowCollabPatchPlan,
+  deriveBusinessFlowCollabPatchPlan,
+  type BusinessFlowCollabPatchEntry,
+  type BusinessFlowCollabPatchPlan,
+} from '@/features/business-flow/infrastructure/yjs/businessFlowCollabPatch'
+import { BUSINESS_FLOW_INCREMENTAL_COLLAB, COLLAB_WS_URL } from '@/shared/api/config'
 
 const LOCAL_ORIGIN = 'business-flow-x6-local'
 
@@ -451,33 +462,6 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
   }
 }
 
-function writePatchFromDraft(
-  doc: Y.Doc,
-  draft: LocalBusinessFlowCanvas,
-  kind: 'lane' | 'node' | 'edge',
-  key: string,
-  origin = LOCAL_ORIGIN,
-) {
-  const lanes = doc.getMap('lanes')
-  const nodes = doc.getMap('nodes')
-  const edges = doc.getMap('edges')
-  const erRefs = doc.getMap('erRefs')
-  const laneKeyById = new Map(draft.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  doc.transact(() => {
-    if (kind === 'lane') {
-      const lane = draft.laneInstances.find((item) => item.instanceKey === key)
-      if (lane) writeLaneToDoc(lanes, draft, lane)
-    } else if (kind === 'node') {
-      const node = draft.nodes.find((item) => item.nodeKey === key)
-      if (node) writeNodeToDoc(nodes, erRefs, laneKeyById, node)
-    } else {
-      const edge = draft.edges.find((item) => item.edgeKey === key)
-      if (edge) writeEdgeToDoc(edges, edge)
-    }
-    doc.getMap('meta').set('updatedAt', new Date().toISOString())
-  }, origin)
-}
-
 function deleteCellsFromDoc(doc: Y.Doc, cells: Cell[], origin = LOCAL_ORIGIN) {
   const nodes = doc.getMap('nodes')
   const edges = doc.getMap('edges')
@@ -507,6 +491,369 @@ function deleteCellsFromDoc(doc: Y.Doc, cells: Cell[], origin = LOCAL_ORIGIN) {
   }, origin)
 }
 
+function replaceByKey<T>(
+  items: T[],
+  keyOf: (item: T) => string,
+  key: string,
+  nextItem: T,
+) {
+  const index = items.findIndex((item) => keyOf(item) === key)
+  if (index < 0) return [...items, nextItem]
+  const nextItems = [...items]
+  nextItems[index] = nextItem
+  return nextItems
+}
+
+function withoutKeys<T>(items: T[], keyOf: (item: T) => string, keys: Set<string>) {
+  if (keys.size === 0) return items
+  return items.filter((item) => !keys.has(keyOf(item)))
+}
+
+function laneFromDocEntry(
+  doc: Y.Doc,
+  base: LocalBusinessFlowCanvas,
+  laneKey: string,
+): LocalBusinessFlowCanvas['laneInstances'][number] | null {
+  const rawValue = doc.getMap('lanes').get(laneKey)
+  if (!rawValue) return null
+  const raw = mapObject(rawValue)
+  const timestamp = new Date().toISOString()
+  const previous = base.laneInstances.find((lane) => lane.instanceKey === laneKey)
+  const instanceKey = stringValue(raw.instance_key || raw.instanceKey, laneKey)
+  return {
+    kind: 'LANE_INSTANCE',
+    businessFlowId: base.businessFlowId,
+    laneInstanceId: stringValue(raw.id || raw.lane_instance_id || raw.laneInstanceId, previous?.laneInstanceId ?? instanceKey),
+    instanceKey,
+    componentId: stringValue(raw.component_id || raw.componentId, previous?.componentId ?? ''),
+    componentVersionId: stringValue(raw.component_version_id || raw.componentVersionId, previous?.componentVersionId ?? ''),
+    componentName: stringValue(raw.component_name || raw.componentName || raw.display_name || raw.displayName, previous?.componentName ?? '泳道实例'),
+    componentVersionNo: numberValue(raw.component_version_no || raw.componentVersionNo, previous?.componentVersionNo ?? 1),
+    displayName: stringValue(raw.display_name || raw.displayName, previous?.displayName ?? '泳道实例'),
+    ownerRole: raw.owner_role || raw.ownerRole ? String(raw.owner_role || raw.ownerRole) : previous?.ownerRole ?? null,
+    isOverridden: true,
+    position: {
+      x: numberValue(raw.position_x ?? raw.x, previous?.position.x ?? 0),
+      y: numberValue(raw.position_y ?? raw.y, previous?.position.y ?? 0),
+    },
+    size: {
+      width: numberValue(raw.width, previous?.size.width ?? 360),
+      height: numberValue(raw.height, previous?.size.height ?? 360),
+    },
+    zIndex: numberValue(raw.z_index || raw.zIndex, previous?.zIndex ?? 1),
+    layoutJson: (raw.layout_json || raw.layoutJson || previous?.layoutJson || {}) as Record<string, unknown>,
+    overrideJson: (raw.override_json || raw.overrideJson || previous?.overrideJson || {}) as Record<string, unknown>,
+    status: previous?.status ?? 'ACTIVE',
+    createdAt: previous?.createdAt ?? base.createdAt,
+    updatedAt: timestamp,
+  }
+}
+
+function nodeFromDocEntry(
+  doc: Y.Doc,
+  base: LocalBusinessFlowCanvas,
+  lanes: LocalBusinessFlowCanvas['laneInstances'],
+  nodeKey: string,
+): BusinessFlowNodeRecord | null {
+  const rawValue = doc.getMap('nodes').get(nodeKey)
+  if (!rawValue) return null
+  const raw = mapObject(rawValue)
+  const timestamp = new Date().toISOString()
+  const previous = base.nodes.find((node) => node.nodeKey === nodeKey)
+  const laneIdByKey = new Map(lanes.map((lane) => [lane.instanceKey, lane.laneInstanceId]))
+  const refsByNodeKey = refsByNodeKeyFromDoc(doc)
+  const laneInstanceKey = raw.lane_instance_key || raw.laneInstanceKey
+    ? String(raw.lane_instance_key || raw.laneInstanceKey)
+    : null
+  const laneInstanceId =
+    stringValue(raw.lane_instance_id || raw.laneInstanceId) ||
+    (laneInstanceKey ? laneIdByKey.get(laneInstanceKey) : undefined) ||
+    previous?.laneInstanceId ||
+    ''
+  return {
+    kind: 'BUSINESS_FLOW_NODE',
+    businessFlowId: base.businessFlowId,
+    nodeId: stringValue(raw.id, previous?.nodeId ?? nodeKey),
+    nodeKey,
+    laneInstanceId,
+    originComponentNodeKey: raw.origin_component_node_key || raw.originComponentNodeKey
+      ? String(raw.origin_component_node_key || raw.originComponentNodeKey)
+      : previous?.originComponentNodeKey ?? null,
+    nodeType: stringValue(raw.node_type || raw.nodeType, previous?.nodeType ?? 'TASK') as BusinessFlowNodeType,
+    bpmnElementType: raw.bpmn_element_type || raw.bpmnElementType
+      ? String(raw.bpmn_element_type || raw.bpmnElementType) as BusinessFlowNodeRecord['bpmnElementType']
+      : previous?.bpmnElementType ?? null,
+    bpmnEventKind: raw.bpmn_event_kind || raw.bpmnEventKind
+      ? String(raw.bpmn_event_kind || raw.bpmnEventKind) as BusinessFlowNodeRecord['bpmnEventKind']
+      : previous?.bpmnEventKind ?? null,
+    bpmnEventDefinition: raw.bpmn_event_definition || raw.bpmnEventDefinition
+      ? String(raw.bpmn_event_definition || raw.bpmnEventDefinition) as BusinessFlowNodeRecord['bpmnEventDefinition']
+      : previous?.bpmnEventDefinition ?? null,
+    bpmnTaskType: raw.bpmn_task_type || raw.bpmnTaskType
+      ? String(raw.bpmn_task_type || raw.bpmnTaskType) as BusinessFlowNodeRecord['bpmnTaskType']
+      : previous?.bpmnTaskType ?? null,
+    bpmnGatewayType: raw.bpmn_gateway_type || raw.bpmnGatewayType
+      ? String(raw.bpmn_gateway_type || raw.bpmnGatewayType) as BusinessFlowNodeRecord['bpmnGatewayType']
+      : previous?.bpmnGatewayType ?? null,
+    bpmnSubProcessKind: raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind
+      ? String(raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind) as BusinessFlowNodeRecord['bpmnSubProcessKind']
+      : previous?.bpmnSubProcessKind ?? null,
+    bpmnCallActivityRef: raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef
+      ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
+      : previous?.bpmnCallActivityRef ?? null,
+    title: stringValue(raw.title, previous?.title ?? '任务'),
+    description: raw.description ? String(raw.description) : previous?.description ?? null,
+    actor: raw.actor ? String(raw.actor) : previous?.actor ?? null,
+    businessRule: raw.business_rule || raw.businessRule
+      ? String(raw.business_rule || raw.businessRule)
+      : previous?.businessRule ?? null,
+    erRefs: refsByNodeKey.get(nodeKey) ?? [],
+    position: {
+      x: numberValue(raw.position_x ?? raw.x, previous?.position.x ?? 0),
+      y: numberValue(raw.position_y ?? raw.y, previous?.position.y ?? 0),
+    },
+    size: {
+      width: numberValue(raw.width, previous?.size.width ?? 120),
+      height: numberValue(raw.height, previous?.size.height ?? 60),
+    },
+    inputSummary: raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : previous?.inputSummary ?? null,
+    outputSummary: raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : previous?.outputSummary ?? null,
+    isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden ?? previous?.isOverridden),
+    styleJson: (raw.style_json || raw.styleJson || previous?.styleJson || {}) as Record<string, unknown>,
+    propertiesJson: (raw.properties_json || raw.propertiesJson || previous?.propertiesJson || {}) as Record<string, unknown>,
+    createdAt: previous?.createdAt ?? base.createdAt,
+    updatedAt: timestamp,
+  }
+}
+
+function edgeFromDocEntry(
+  doc: Y.Doc,
+  base: LocalBusinessFlowCanvas,
+  nodes: BusinessFlowNodeRecord[],
+  edgeKey: string,
+): BusinessFlowEdgeRecord | null {
+  const rawValue = doc.getMap('edges').get(edgeKey)
+  if (!rawValue) return null
+  const raw = mapObject(rawValue)
+  const timestamp = new Date().toISOString()
+  const previous = base.edges.find((edge) => edge.edgeKey === edgeKey)
+  const sourceNodeKey = raw.source_node_key || raw.sourceNodeKey
+    ? String(raw.source_node_key || raw.sourceNodeKey)
+    : null
+  const targetNodeKey = raw.target_node_key || raw.targetNodeKey
+    ? String(raw.target_node_key || raw.targetNodeKey)
+    : null
+  const nodeLaneByKey = new Map(nodes.map((node) => [node.nodeKey, node.laneInstanceId]))
+  const sourceLane = sourceNodeKey ? nodeLaneByKey.get(sourceNodeKey) : null
+  const targetLane = targetNodeKey ? nodeLaneByKey.get(targetNodeKey) : null
+  const isCrossLane = Boolean(sourceLane && targetLane && sourceLane !== targetLane)
+  return {
+    kind: 'BUSINESS_FLOW_EDGE',
+    businessFlowId: base.businessFlowId,
+    edgeId: stringValue(raw.id, previous?.edgeId ?? edgeKey),
+    edgeKey,
+    laneInstanceId: raw.lane_instance_id || raw.laneInstanceId
+      ? String(raw.lane_instance_id || raw.laneInstanceId)
+      : isCrossLane ? null : sourceLane ?? previous?.laneInstanceId ?? null,
+    edgeType: stringValue(raw.edge_type || raw.edgeType, previous?.edgeType ?? (isCrossLane ? 'DEPENDENCY' : 'SEQUENCE')) as BusinessFlowEdgeRecord['edgeType'],
+    bpmnFlowType: raw.bpmn_flow_type || raw.bpmnFlowType
+      ? String(raw.bpmn_flow_type || raw.bpmnFlowType) as BusinessFlowEdgeRecord['bpmnFlowType']
+      : previous?.bpmnFlowType ?? null,
+    bpmnSequenceFlowKind: raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind
+      ? String(raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind) as BusinessFlowEdgeRecord['bpmnSequenceFlowKind']
+      : previous?.bpmnSequenceFlowKind ?? null,
+    bpmnMessageName: raw.bpmn_message_name || raw.bpmnMessageName
+      ? String(raw.bpmn_message_name || raw.bpmnMessageName)
+      : previous?.bpmnMessageName ?? null,
+    bpmnConditionExpression: raw.bpmn_condition_expression || raw.bpmnConditionExpression
+      ? String(raw.bpmn_condition_expression || raw.bpmnConditionExpression)
+      : previous?.bpmnConditionExpression ?? null,
+    label: raw.label ? String(raw.label) : previous?.label ?? null,
+    conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : previous?.conditionText ?? null,
+    dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || previous?.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
+    isCrossLane,
+    sourceType: stringValue(raw.source_type || raw.sourceType, previous?.sourceType ?? 'NODE') as BusinessFlowEdgeRecord['sourceType'],
+    sourceNodeKey,
+    sourceLaneInstanceKey: raw.source_lane_instance_key || raw.sourceLaneInstanceKey
+      ? String(raw.source_lane_instance_key || raw.sourceLaneInstanceKey)
+      : previous?.sourceLaneInstanceKey ?? null,
+    sourcePort: raw.source_port || raw.sourcePort ? String(raw.source_port || raw.sourcePort) : previous?.sourcePort ?? null,
+    targetType: stringValue(raw.target_type || raw.targetType, previous?.targetType ?? 'NODE') as BusinessFlowEdgeRecord['targetType'],
+    targetNodeKey,
+    targetLaneInstanceKey: raw.target_lane_instance_key || raw.targetLaneInstanceKey
+      ? String(raw.target_lane_instance_key || raw.targetLaneInstanceKey)
+      : previous?.targetLaneInstanceKey ?? null,
+    targetPort: raw.target_port || raw.targetPort ? String(raw.target_port || raw.targetPort) : previous?.targetPort ?? null,
+    originComponentEdgeKey: raw.origin_component_edge_key || raw.originComponentEdgeKey
+      ? String(raw.origin_component_edge_key || raw.originComponentEdgeKey)
+      : previous?.originComponentEdgeKey ?? null,
+    isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden ?? previous?.isOverridden),
+    styleJson: (raw.style_json || raw.styleJson || previous?.styleJson || {}) as Record<string, unknown>,
+    propertiesJson: (raw.properties_json || raw.propertiesJson || previous?.propertiesJson || {}) as Record<string, unknown>,
+    createdAt: previous?.createdAt ?? base.createdAt,
+    updatedAt: timestamp,
+  }
+}
+
+function patchToCanvasAndGraphPatch(
+  doc: Y.Doc,
+  base: LocalBusinessFlowCanvas,
+  plan: BusinessFlowCollabPatchPlan,
+): { canvas: LocalBusinessFlowCanvas; patch: BusinessFlowCanvasPatch } | { fallbackReason: string } {
+  const laneDeletes = new Set<string>()
+  const nodeDeletes = new Set<string>()
+  const edgeDeletes = new Set<string>()
+  const laneUpserts = new Set<string>()
+  const nodeUpserts = new Set<string>()
+  const edgeUpserts = new Set<string>()
+  const erRefNodeKeys = new Set<string>()
+  const materialEntries = plan.entries.filter((entry) => entry.kind !== 'meta')
+  if (materialEntries.length === 0) {
+    return {
+      canvas: { ...base, updatedAt: new Date().toISOString() },
+      patch: {},
+    }
+  }
+
+  let nextCanvas: LocalBusinessFlowCanvas = {
+    ...base,
+    laneInstances: [...base.laneInstances],
+    nodes: [...base.nodes],
+    edges: [...base.edges],
+    updatedAt: new Date().toISOString(),
+  }
+
+  const applyEntry = (entry: BusinessFlowCollabPatchEntry): string | null => {
+    if (entry.kind === 'lane') {
+      if (entry.action === 'delete') {
+        laneDeletes.add(entry.key)
+        nextCanvas = {
+          ...nextCanvas,
+          laneInstances: withoutKeys(nextCanvas.laneInstances, (lane) => lane.instanceKey, new Set([entry.key])),
+        }
+        return null
+      }
+      const lane = laneFromDocEntry(doc, nextCanvas, entry.key)
+      if (!lane) return `missing-lane-record:${entry.key}`
+      laneUpserts.add(entry.key)
+      nextCanvas = {
+        ...nextCanvas,
+        laneInstances: replaceByKey(nextCanvas.laneInstances, (item) => item.instanceKey, entry.key, lane),
+      }
+      return null
+    }
+    if (entry.kind === 'node') {
+      if (entry.action === 'delete') {
+        nodeDeletes.add(entry.key)
+        nextCanvas = {
+          ...nextCanvas,
+          nodes: withoutKeys(nextCanvas.nodes, (node) => node.nodeKey, new Set([entry.key])),
+        }
+        return null
+      }
+      const node = nodeFromDocEntry(doc, nextCanvas, nextCanvas.laneInstances, entry.key)
+      if (!node) return `missing-node-record:${entry.key}`
+      nodeUpserts.add(entry.key)
+      nextCanvas = {
+        ...nextCanvas,
+        nodes: replaceByKey(nextCanvas.nodes, (item) => item.nodeKey, entry.key, node),
+      }
+      return null
+    }
+    if (entry.kind === 'edge') {
+      if (entry.action === 'delete') {
+        edgeDeletes.add(entry.key)
+        nextCanvas = {
+          ...nextCanvas,
+          edges: withoutKeys(nextCanvas.edges, (edge) => edge.edgeKey, new Set([entry.key])),
+        }
+        return null
+      }
+      const edge = edgeFromDocEntry(doc, nextCanvas, nextCanvas.nodes, entry.key)
+      if (!edge) return `missing-edge-record:${entry.key}`
+      edgeUpserts.add(entry.key)
+      nextCanvas = {
+        ...nextCanvas,
+        edges: replaceByKey(nextCanvas.edges, (item) => item.edgeKey, entry.key, edge),
+      }
+      return null
+    }
+    if (entry.kind === 'erRef' && entry.affectedNodeKey) {
+      const node = nodeFromDocEntry(doc, nextCanvas, nextCanvas.laneInstances, entry.affectedNodeKey)
+      if (!node) return entry.action === 'delete' ? null : `missing-er-ref-node:${entry.affectedNodeKey}`
+      erRefNodeKeys.add(entry.affectedNodeKey)
+      nextCanvas = {
+        ...nextCanvas,
+        nodes: replaceByKey(nextCanvas.nodes, (item) => item.nodeKey, entry.affectedNodeKey ?? '', node),
+      }
+    }
+    return null
+  }
+
+  for (const entry of materialEntries) {
+    const fallbackReason = applyEntry(entry)
+    if (fallbackReason) return { fallbackReason }
+  }
+
+  return {
+    canvas: nextCanvas,
+    patch: {
+      laneUpserts: Array.from(laneUpserts),
+      laneDeletes: Array.from(laneDeletes),
+      nodeUpserts: Array.from(nodeUpserts),
+      nodeDeletes: Array.from(nodeDeletes),
+      edgeUpserts: Array.from(edgeUpserts),
+      edgeDeletes: Array.from(edgeDeletes),
+      erRefNodeKeys: Array.from(erRefNodeKeys),
+    },
+  }
+}
+
+function nextCanvasWithLane(base: LocalBusinessFlowCanvas, lane: LocalBusinessFlowCanvas['laneInstances'][number]) {
+  return {
+    ...base,
+    laneInstances: replaceByKey(base.laneInstances, (item) => item.instanceKey, lane.instanceKey, lane),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function nextCanvasWithNode(base: LocalBusinessFlowCanvas, node: BusinessFlowNodeRecord) {
+  return {
+    ...base,
+    nodes: replaceByKey(base.nodes, (item) => item.nodeKey, node.nodeKey, node),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function nextCanvasWithEdge(base: LocalBusinessFlowCanvas, edge: BusinessFlowEdgeRecord) {
+  return {
+    ...base,
+    edges: replaceByKey(base.edges, (item) => item.edgeKey, edge.edgeKey, edge),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function nextCanvasWithoutCells(base: LocalBusinessFlowCanvas, cells: Cell[]) {
+  const nodeKeys = new Set<string>()
+  const edgeKeys = new Set<string>()
+  cells.forEach((cell) => {
+    const data = readCellData(cell)
+    if (data.cellRole === 'FLOW_EDGE') edgeKeys.add(data.edgeKey ?? cell.id)
+    if (data.cellRole === 'FLOW_NODE') nodeKeys.add(data.nodeKey ?? cell.id)
+  })
+  return {
+    ...base,
+    nodes: withoutKeys(base.nodes, (node) => node.nodeKey, nodeKeys),
+    edges: base.edges.filter((edge) => {
+      if (edgeKeys.has(edge.edgeKey)) return false
+      if (edge.sourceNodeKey && nodeKeys.has(edge.sourceNodeKey)) return false
+      if (edge.targetNodeKey && nodeKeys.has(edge.targetNodeKey)) return false
+      return true
+    }),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 export function createBusinessFlowCollaboration(
   options: BusinessFlowCollaborationOptions,
 ): BusinessFlowCollaborationController {
@@ -527,15 +874,55 @@ export function createBusinessFlowCollaboration(
     disconnectTimer = undefined
   }
 
-  const applyDocToGraph = () => {
+  const applyDocToGraph = (reason = 'full-apply') => {
     const base = options.getCanvas()
     if (!base) return null
     const nextCanvas = canvasFromDoc(doc, base)
     options.setApplyingRemote(true)
     try {
+      if (import.meta.env.DEV) {
+        console.debug('[business-flow-collab] full apply', { reason })
+      }
       applyBusinessFlowCanvasToGraph(options.graph, nextCanvas)
       options.onRemoteApply(nextCanvas)
       return nextCanvas
+    } finally {
+      options.setApplyingRemote(false)
+    }
+  }
+
+  const applyDocPatchToGraph = (transaction: Y.Transaction) => {
+    const base = options.getCanvas()
+    if (!base) return null
+    if (!BUSINESS_FLOW_INCREMENTAL_COLLAB) {
+      return applyDocToGraph('incremental-disabled')
+    }
+    const plan = compactBusinessFlowCollabPatchPlan(
+      deriveBusinessFlowCollabPatchPlan(doc, transaction),
+    )
+    if (plan.fallbackReason) {
+      return applyDocToGraph(plan.fallbackReason)
+    }
+    const materialized = patchToCanvasAndGraphPatch(doc, base, plan)
+    if ('fallbackReason' in materialized) {
+      return applyDocToGraph(materialized.fallbackReason)
+    }
+    options.setApplyingRemote(true)
+    try {
+      const result = applyBusinessFlowCanvasPatchToGraph(
+        options.graph,
+        materialized.canvas,
+        materialized.patch,
+      )
+      if (!result.applied) {
+        options.setApplyingRemote(false)
+        return applyDocToGraph(result.reason)
+      }
+      options.onRemoteApply(materialized.canvas)
+      return materialized.canvas
+    } catch (error) {
+      options.setApplyingRemote(false)
+      return applyDocToGraph(error instanceof Error ? error.message : 'patch-apply-error')
     } finally {
       options.setApplyingRemote(false)
     }
@@ -545,7 +932,7 @@ export function createBusinessFlowCollaboration(
     if ((transaction.local && transaction.origin === LOCAL_ORIGIN) || applying) return
     applying = true
     try {
-      applyDocToGraph()
+      applyDocPatchToGraph(transaction)
     } finally {
       applying = false
     }
@@ -645,31 +1032,46 @@ export function createBusinessFlowCollaboration(
       return pushDraft(origin)
     },
     patchLane(node, origin = LOCAL_ORIGIN) {
-      const draft = readDraft()
-      if (!draft) return null
-      writePatchFromDraft(doc, draft, 'lane', node.id, origin)
-      return draft
+      const previous = options.getCanvas()
+      if (!previous) return null
+      const lane = flowLaneRecordFromCell(node, previous)
+      if (!lane) return pushDraft(origin)
+      const nextCanvas = nextCanvasWithLane(previous, lane)
+      doc.transact(() => {
+        writeLaneToDoc(doc.getMap('lanes'), nextCanvas, lane)
+        doc.getMap('meta').set('updatedAt', new Date().toISOString())
+      }, origin)
+      return nextCanvas
     },
     patchNode(node, origin = LOCAL_ORIGIN) {
-      const draft = readDraft()
-      if (!draft) return null
-      writePatchFromDraft(doc, draft, 'node', readCellData(node).nodeKey ?? node.id, origin)
-      return draft
+      const previous = options.getCanvas()
+      if (!previous) return null
+      const flowNode = flowNodeRecordFromCell(node, previous)
+      if (!flowNode) return pushDraft(origin)
+      const nextCanvas = nextCanvasWithNode(previous, flowNode)
+      const laneKeyById = new Map(nextCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+      doc.transact(() => {
+        writeNodeToDoc(doc.getMap('nodes'), doc.getMap('erRefs'), laneKeyById, flowNode)
+        doc.getMap('meta').set('updatedAt', new Date().toISOString())
+      }, origin)
+      return nextCanvas
     },
     patchEdge(edge, origin = LOCAL_ORIGIN) {
-      const draft = readDraft()
-      if (!draft) return null
-      writePatchFromDraft(doc, draft, 'edge', readCellData(edge).edgeKey ?? edge.id, origin)
-      return draft
+      const previous = options.getCanvas()
+      if (!previous) return null
+      const flowEdge = flowEdgeRecordFromCell(edge, previous)
+      if (!flowEdge) return pushDraft(origin)
+      const nextCanvas = nextCanvasWithEdge(previous, flowEdge)
+      doc.transact(() => {
+        writeEdgeToDoc(doc.getMap('edges'), flowEdge)
+        doc.getMap('meta').set('updatedAt', new Date().toISOString())
+      }, origin)
+      return nextCanvas
     },
     removeCells(cells, origin = LOCAL_ORIGIN) {
-      const draft = readDraft()
-      if (!draft) {
-        deleteCellsFromDoc(doc, cells, origin)
-        return null
-      }
-      writeCanvasToDoc(draft, doc, origin)
-      return draft
+      const previous = options.getCanvas()
+      deleteCellsFromDoc(doc, cells, origin)
+      return previous ? nextCanvasWithoutCells(previous, cells) : null
     },
     isRealtimeEnabled() {
       return connected

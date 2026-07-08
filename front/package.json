@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:collab": "tsc -p tsconfig.collab-test.json && node --test node_modules/.tmp/collab-tests/tests/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

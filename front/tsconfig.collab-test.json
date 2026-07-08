@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "outDir": "node_modules/.tmp/collab-tests",
+    "rootDir": "."
+  },
+  "include": [
+    "src/features/business-flow/infrastructure/yjs/businessFlowCollabPatch.ts",
+    "tests/**/*.ts"
+  ]
+}
