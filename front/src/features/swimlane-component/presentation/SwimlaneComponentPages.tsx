@@ -122,6 +122,7 @@ import {
   readCellData,
   removeBusinessFlowCells,
   renderComponentVersion,
+  settleProcessContainerEmbedding,
   updateEdgeBpmnProfile,
   updateEdgeText,
   updateNodeBpmnProfile,
@@ -944,6 +945,7 @@ export function SwimlaneComponentEditorPage({
     const point = graphPointFromEvent(graph, event.nativeEvent)
     const draft = newComponentNodeDraft(profile, { x: point.x - 60, y: point.y - 24 })
     const node = addComponentNode(graph, draft)
+    settleProcessContainerEmbedding(graph, node)
     graph.cleanSelection()
     graph.select(node)
   }

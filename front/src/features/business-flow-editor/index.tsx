@@ -490,19 +490,20 @@ export function BusinessFlowEditor({
       if (!persistRealtimeCell(node)) schedulePersistRef.current()
     })
     graph.on('node:resized', ({ node }) => {
-      if (
-        renderingRef.current ||
-        readCellData(node).cellRole !== 'LANE_INSTANCE'
-      )
+      if (renderingRef.current) return
+      const role = readCellData(node).cellRole
+      if (role === 'LANE_INSTANCE') {
+        normalizingRef.current = true
+        try {
+          graph.batchUpdate(() => {
+            rememberManualLaneSize(node)
+            fitLaneToChildren(node, { preserveManualSize: true })
+          })
+        } finally {
+          normalizingRef.current = false
+        }
+      } else if (role !== 'FLOW_NODE') {
         return
-      normalizingRef.current = true
-      try {
-        graph.batchUpdate(() => {
-          rememberManualLaneSize(node)
-          fitLaneToChildren(node, { preserveManualSize: true })
-        })
-      } finally {
-        normalizingRef.current = false
       }
       publishCellPresence(node, 'dragging')
       if (!persistRealtimeCell(node)) schedulePersistRef.current()

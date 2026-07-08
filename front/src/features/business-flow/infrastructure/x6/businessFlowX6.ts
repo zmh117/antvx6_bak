@@ -17,6 +17,7 @@ import {
   BPMN_NODE_OPTIONS,
   bpmnNodeTitle,
   isDataBpmnElement,
+  isProcessContainerConfig,
   legacyEdgeTypeForBpmn,
   legacyNodeTypeForBpmn,
   mergeBpmnIntoProperties,
@@ -89,6 +90,7 @@ export type FlowCellData = {
 }
 
 type Point = { x: number; y: number }
+type Bounds = { x: number; y: number; width: number; height: number }
 type TerminalData = ReturnType<Edge['getSource']>
 
 export const BUSINESS_FLOW_LANE_LAYOUT = {
@@ -98,6 +100,16 @@ export const BUSINESS_FLOW_LANE_LAYOUT = {
   paddingBottom: 32,
   minWidth: 360,
   minHeight: 360,
+}
+
+const PROCESS_CONTAINER_LAYOUT = {
+  headerHeight: 38,
+  paddingLeft: 24,
+  paddingRight: 32,
+  paddingTop: 44,
+  paddingBottom: 32,
+  minWidth: 260,
+  minHeight: 170,
 }
 
 const LANE_Z_INDEX_BASE = 10
@@ -166,10 +178,11 @@ function isProcessContainerProfile(profile: BpmnNodeProfile) {
 }
 
 function isProcessContainerCell(cell?: Cell | null) {
+  if (!(cell instanceof Node) || !isFlowNodeCell(cell)) return false
+  const data = readCellData(cell)
   return Boolean(
-    cell instanceof Node &&
-      isFlowNodeCell(cell) &&
-      isProcessContainerProfile(nodeProfileFromData(readCellData(cell))),
+    isProcessContainerProfile(nodeProfileFromData(data)) &&
+      isProcessContainerConfig(data.processContainerJson),
   )
 }
 
@@ -247,6 +260,18 @@ function nodeMarkup(profileOrType: BpmnNodeProfile | BusinessFlowNodeType) {
     return [
       { tagName: 'rect', selector: 'body' },
       { tagName: 'rect', selector: 'inner' },
+      { tagName: 'text', selector: 'label' },
+      { tagName: 'text', selector: 'badge' },
+    ]
+  }
+  if (
+    profile.bpmnElementType === 'SUB_PROCESS' &&
+    profile.bpmnSubProcessKind === 'EMBEDDED'
+  ) {
+    return [
+      { tagName: 'rect', selector: 'body' },
+      { tagName: 'rect', selector: 'header' },
+      { tagName: 'rect', selector: 'content' },
       { tagName: 'text', selector: 'label' },
       { tagName: 'text', selector: 'badge' },
     ]
@@ -349,6 +374,57 @@ function nodeAttrs(
       badge: badgeAttrs(typeText(profile), 8, 14, 'start'),
     }
   }
+  if (
+    profile.bpmnElementType === 'SUB_PROCESS' &&
+    profile.bpmnSubProcessKind === 'EMBEDDED'
+  ) {
+    return {
+      body: {
+        rx: 8,
+        ry: 8,
+        ...body,
+        strokeWidth: 1.8,
+      },
+      header: {
+        refWidth: '100%',
+        height: PROCESS_CONTAINER_LAYOUT.headerHeight,
+        rx: 8,
+        ry: 8,
+        fill: '#dbeafe',
+        stroke: body.stroke,
+        strokeWidth: 1.8,
+      },
+      content: {
+        x: 12,
+        y: PROCESS_CONTAINER_LAYOUT.headerHeight + 8,
+        width: 'calc(w - 24)',
+        height: `calc(h - ${PROCESS_CONTAINER_LAYOUT.headerHeight + 20})`,
+        rx: 6,
+        ry: 6,
+        fill: '#ffffff',
+        stroke: '#bfdbfe',
+        strokeDasharray: '6 4',
+        strokeWidth: 1.2,
+        pointerEvents: 'none',
+      },
+      label: {
+        text: title,
+        refX: 14,
+        refY: 19,
+        fill: '#1e3a8a',
+        fontSize: 12,
+        fontWeight: 700,
+        textAnchor: 'start',
+        textVerticalAnchor: 'middle',
+        textWrap: {
+          width: -62,
+          height: PROCESS_CONTAINER_LAYOUT.headerHeight - 8,
+          ellipsis: true,
+        },
+      },
+      badge: badgeAttrs(typeText(profile), '100%', 19, 'end'),
+    }
+  }
   return {
     body: {
       rx: 8,
@@ -378,7 +454,7 @@ function labelAttrs(text: string, fontSize = 12) {
   }
 }
 
-function badgeAttrs(text: string, refX: number | string, refY: number | string, anchor: 'start' | 'middle') {
+function badgeAttrs(text: string, refX: number | string, refY: number | string, anchor: 'start' | 'middle' | 'end') {
   return {
     text,
     refX,
@@ -507,6 +583,13 @@ export function registerBusinessFlowShapes() {
 
 export function createBusinessFlowGraph(container: HTMLElement) {
   registerBusinessFlowShapes()
+  let activeProcessContainerTarget: Node | null = null
+  const updateProcessContainerTarget = (node: Node | null) => {
+    if (activeProcessContainerTarget?.id === node?.id) return
+    if (activeProcessContainerTarget) setProcessContainerDropTarget(activeProcessContainerTarget, false)
+    activeProcessContainerTarget = node
+    if (activeProcessContainerTarget) setProcessContainerDropTarget(activeProcessContainerTarget, true)
+  }
   const graph = new Graph({
     container,
     autoResize: true,
@@ -573,12 +656,14 @@ export function createBusinessFlowGraph(container: HTMLElement) {
     new Transform({
       resizing: {
         enabled(node) {
-          return readCellData(node).cellRole === 'LANE_INSTANCE'
+          return readCellData(node).cellRole === 'LANE_INSTANCE' || isProcessContainerCell(node)
         },
         minWidth(node) {
+          if (isProcessContainerCell(node)) return minProcessContainerSize(node).width
           return minLaneSize(node).width
         },
         minHeight(node) {
+          if (isProcessContainerCell(node)) return minProcessContainerSize(node).height
           return minLaneSize(node).height
         },
         orthogonal: true,
@@ -590,8 +675,23 @@ export function createBusinessFlowGraph(container: HTMLElement) {
   graph.on('node:moved', ({ node }) => {
     const role = readCellData(node).cellRole
     if (!(node instanceof Node) || (role !== 'FLOW_NODE' && role !== 'COMPONENT_NODE')) return
-    reparentFlowNodeByGeometry(graph, node)
+    settleProcessContainerEmbedding(graph, node)
+    updateProcessContainerTarget(null)
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true, shrinkToFit: false })
+  })
+  graph.on('node:change:position', ({ node, options }) => {
+    const role = readCellData(node).cellRole
+    if (!(node instanceof Node) || (role !== 'FLOW_NODE' && role !== 'COMPONENT_NODE')) return
+    if (options?.translateBy && options.translateBy !== node.id) return
+    updateProcessContainerTarget(processContainerDropTargetForNode(graph, node))
+  })
+  graph.on('node:resized', ({ node }) => {
+    if (!(node instanceof Node) || !isProcessContainerCell(node)) return
+    graph.batchUpdate(() => {
+      fitProcessContainerToChildren(node, { shrinkToFit: false })
+      const lane = laneAncestor(node)
+      if (lane) fitLaneToChildren(lane, { preserveManualSize: true, shrinkToFit: false })
+    })
   })
   return graph
 }
@@ -714,6 +814,73 @@ function processContainerParent(node: Node): Node | null {
   return isProcessContainerCell(parent) ? parent as Node : null
 }
 
+function processContainerContentBounds(container: Node): Bounds {
+  const bbox = container.getBBox()
+  const x = bbox.x + 12
+  const y = bbox.y + PROCESS_CONTAINER_LAYOUT.headerHeight + 8
+  const width = Math.max(0, bbox.width - 24)
+  const height = Math.max(0, bbox.height - PROCESS_CONTAINER_LAYOUT.headerHeight - 20)
+  return { x, y, width, height }
+}
+
+function processContainerContentContainsBounds(container: Node, bounds: Bounds) {
+  const content = processContainerContentBounds(container)
+  return (
+    bounds.x >= content.x &&
+    bounds.y >= content.y &&
+    bounds.x + bounds.width <= content.x + content.width &&
+    bounds.y + bounds.height <= content.y + content.height
+  )
+}
+
+function setProcessContainerDropTarget(container: Node, active: boolean) {
+  container.attr({
+    body: {
+      stroke: active ? '#0f766e' : '#2563eb',
+      strokeWidth: active ? 2.4 : 1.8,
+      fill: active ? '#ecfdf5' : '#eff6ff',
+    },
+    header: {
+      fill: active ? '#99f6e4' : '#dbeafe',
+      stroke: active ? '#0f766e' : '#2563eb',
+      strokeWidth: active ? 2.4 : 1.8,
+    },
+    content: {
+      stroke: active ? '#0f766e' : '#bfdbfe',
+      strokeWidth: active ? 1.8 : 1.2,
+      fill: active ? '#f0fdfa' : '#ffffff',
+    },
+  })
+}
+
+function processContainerDropTargetForNode(graph: Graph, node: Node) {
+  if (isProcessContainerCell(node)) return null
+  if (!isFlowNodeCell(node)) return null
+  const lane = laneAncestor(node)
+  const bbox = node.getBBox()
+  const candidates = graph
+    .getNodes()
+    .filter((candidate) => (
+      candidate.id !== node.id &&
+      isProcessContainerCell(candidate) &&
+      (!lane || laneAncestor(candidate)?.id === lane.id) &&
+      processContainerContentContainsBounds(candidate, bbox)
+    ))
+    .sort((left, right) => {
+      const leftSize = left.size()
+      const rightSize = right.size()
+      return leftSize.width * leftSize.height - rightSize.width * rightSize.height
+    })
+  return candidates[0] ?? null
+}
+
+function refreshConnectedEdges(graph: Graph, node: Node) {
+  graph.getConnectedEdges(node).forEach((edge) => {
+    const view = graph.findViewByCell(edge) as { update?: () => void } | null
+    view?.update?.()
+  })
+}
+
 function laneKeyForNodeCell(node: Node) {
   const data = readCellData(node)
   const lane = laneAncestor(node)
@@ -728,49 +895,54 @@ function nodePositionForStorage(node: Node) {
   return node.position()
 }
 
-function reparentFlowNodeByGeometry(graph: Graph, node: Node) {
+export function settleProcessContainerEmbedding(graph: Graph, node: Node) {
   if (isProcessContainerCell(node)) return
   const lane = laneAncestor(node)
   const currentContainer = processContainerParent(node)
-  const bbox = node.getBBox()
-  const center = bbox.getCenter()
-  const candidates = graph
-    .getNodes()
-    .filter((candidate) => (
-      candidate.id !== node.id &&
-      isProcessContainerCell(candidate) &&
-      (!lane || laneAncestor(candidate)?.id === lane.id) &&
-      candidate.getBBox().containsPoint(center)
-    ))
-  const nextContainer = candidates[0] ?? null
+  const nextContainer = processContainerDropTargetForNode(graph, node)
   if (nextContainer && currentContainer?.id !== nextContainer.id) {
     const absolute = node.position()
-    nextContainer.addChild(node)
-    const parentPosition = nextContainer.position()
-    node.position(absolute.x - parentPosition.x, absolute.y - parentPosition.y, { relative: true })
-    node.setData(
-      {
-        ...readCellData(node),
-        laneInstanceKey: lane?.id ?? readCellData(node).laneInstanceKey,
-        containerNodeKey: nextContainer.id,
-      },
-      { silent: true },
-    )
+    graph.batchUpdate(() => {
+      nextContainer.addChild(node)
+      const parentPosition = nextContainer.position()
+      node.position(absolute.x - parentPosition.x, absolute.y - parentPosition.y, { relative: true })
+      node.setData(
+        {
+          ...readCellData(node),
+          laneInstanceKey: lane?.id ?? readCellData(node).laneInstanceKey,
+          containerNodeKey: nextContainer.id,
+        },
+        { silent: true },
+      )
+      fitProcessContainerToChildren(nextContainer, { shrinkToFit: false })
+      if (lane) fitLaneToChildren(lane, { preserveManualSize: true, shrinkToFit: false })
+      refreshConnectedEdges(graph, node)
+    })
     return
   }
-  if (!nextContainer && currentContainer && lane) {
+  if (!nextContainer && currentContainer) {
     const absolute = node.position()
-    lane.addChild(node)
-    const lanePosition = lane.position()
-    node.position(absolute.x - lanePosition.x, absolute.y - lanePosition.y, { relative: true })
-    node.setData(
-      {
-        ...readCellData(node),
-        laneInstanceKey: lane.id,
-        containerNodeKey: null,
-      },
-      { silent: true },
-    )
+    graph.batchUpdate(() => {
+      if (lane) {
+        lane.addChild(node)
+        const lanePosition = lane.position()
+        node.position(absolute.x - lanePosition.x, absolute.y - lanePosition.y, { relative: true })
+      } else {
+        node.setParent(null, { silent: true })
+        node.position(absolute.x, absolute.y)
+      }
+      node.setData(
+        {
+          ...readCellData(node),
+          laneInstanceKey: lane?.id ?? readCellData(node).laneInstanceKey,
+          containerNodeKey: null,
+        },
+        { silent: true },
+      )
+      fitProcessContainerToChildren(currentContainer, { shrinkToFit: true })
+      if (lane) fitLaneToChildren(lane, { preserveManualSize: true, shrinkToFit: false })
+      refreshConnectedEdges(graph, node)
+    })
   }
 }
 
@@ -838,11 +1010,7 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       semanticProfileVersion: draft.semanticProfileVersion ?? null,
       semanticPayloadJson: draft.semanticPayloadJson ?? {},
       taskUiJson: draft.taskUiJson ?? null,
-      processContainerJson: draft.processContainerJson ?? (
-        isProcessContainerProfile(bpmnProfile)
-          ? { containerMode: 'embedded', calledProcessRef: null, calledProcessVersion: null }
-          : null
-      ),
+      processContainerJson: draft.processContainerJson ?? null,
       containerNodeKey: draft.containerNodeKey ?? null,
       erRefs: draft.erRefs ?? [],
       styleJson: draft.styleJson ?? null,
@@ -894,11 +1062,7 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       semanticProfileVersion: record.semanticProfileVersion ?? null,
       semanticPayloadJson: record.semanticPayloadJson ?? {},
       taskUiJson: record.taskUiJson ?? null,
-      processContainerJson: record.processContainerJson ?? (
-        isProcessContainerProfile(bpmnProfile)
-          ? { containerMode: 'embedded', calledProcessRef: null, calledProcessVersion: null }
-          : null
-      ),
+      processContainerJson: record.processContainerJson ?? null,
       containerNodeKey: record.containerNodeKey ?? null,
       erRefs: record.erRefs ?? [],
       styleJson: record.styleJson ?? null,
@@ -1263,11 +1427,7 @@ function upsertFlowNodeCell(
       semanticProfileVersion: node.semanticProfileVersion ?? null,
       semanticPayloadJson: node.semanticPayloadJson ?? {},
       taskUiJson: node.taskUiJson ?? null,
-      processContainerJson: node.processContainerJson ?? (
-        isProcessContainerProfile(bpmnProfile)
-          ? { containerMode: 'embedded', calledProcessRef: null, calledProcessVersion: null }
-          : null
-      ),
+      processContainerJson: node.processContainerJson ?? null,
       erRefs: node.erRefs ?? [],
       styleJson: node.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
@@ -1510,13 +1670,17 @@ function fitProcessContainerToChildren(
   const children = flowNodeChildren(container)
   if (!children.length) return false
   let changed = false
-  let maxRight = 160
-  let maxBottom = 90
+  let maxRight = PROCESS_CONTAINER_LAYOUT.paddingLeft
+  let maxBottom = PROCESS_CONTAINER_LAYOUT.paddingTop
   children.forEach((child) => {
     const relativePosition = child.position({ relative: true })
     const size = child.size()
-    const nextX = options.clampChildren ?? true ? Math.max(24, relativePosition.x) : relativePosition.x
-    const nextY = options.clampChildren ?? true ? Math.max(44, relativePosition.y) : relativePosition.y
+    const nextX = options.clampChildren ?? true
+      ? Math.max(PROCESS_CONTAINER_LAYOUT.paddingLeft, relativePosition.x)
+      : relativePosition.x
+    const nextY = options.clampChildren ?? true
+      ? Math.max(PROCESS_CONTAINER_LAYOUT.paddingTop, relativePosition.y)
+      : relativePosition.y
     if (nextX !== relativePosition.x || nextY !== relativePosition.y) {
       child.position(nextX, nextY, { relative: true })
       changed = true
@@ -1524,8 +1688,14 @@ function fitProcessContainerToChildren(
     maxRight = Math.max(maxRight, nextX + size.width)
     maxBottom = Math.max(maxBottom, nextY + size.height)
   })
-  const requiredWidth = Math.max(260, maxRight + 32)
-  const requiredHeight = Math.max(170, maxBottom + 32)
+  const requiredWidth = Math.max(
+    PROCESS_CONTAINER_LAYOUT.minWidth,
+    maxRight + PROCESS_CONTAINER_LAYOUT.paddingRight,
+  )
+  const requiredHeight = Math.max(
+    PROCESS_CONTAINER_LAYOUT.minHeight,
+    maxBottom + PROCESS_CONTAINER_LAYOUT.paddingBottom,
+  )
   const currentSize = container.size()
   const canShrink = options.shrinkToFit ?? true
   const width = canShrink ? requiredWidth : Math.max(currentSize.width, requiredWidth)
@@ -1535,6 +1705,34 @@ function fitProcessContainerToChildren(
     changed = true
   }
   return changed
+}
+
+function minProcessContainerSize(container: Node) {
+  const children = flowNodeChildren(container)
+  if (!children.length) {
+    return {
+      width: PROCESS_CONTAINER_LAYOUT.minWidth,
+      height: PROCESS_CONTAINER_LAYOUT.minHeight,
+    }
+  }
+  let maxRight = PROCESS_CONTAINER_LAYOUT.paddingLeft
+  let maxBottom = PROCESS_CONTAINER_LAYOUT.paddingTop
+  children.forEach((child) => {
+    const position = child.position({ relative: true })
+    const size = child.size()
+    maxRight = Math.max(maxRight, position.x + size.width)
+    maxBottom = Math.max(maxBottom, position.y + size.height)
+  })
+  return {
+    width: Math.max(
+      PROCESS_CONTAINER_LAYOUT.minWidth,
+      maxRight + PROCESS_CONTAINER_LAYOUT.paddingRight,
+    ),
+    height: Math.max(
+      PROCESS_CONTAINER_LAYOUT.minHeight,
+      maxBottom + PROCESS_CONTAINER_LAYOUT.paddingBottom,
+    ),
+  }
 }
 
 export function fitLaneToChildren(
@@ -1630,11 +1828,7 @@ export function componentDraftFromGraph(graph: Graph) {
         semanticProfileVersion: data.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? {},
         taskUiJson: data.taskUiJson ?? null,
-        processContainerJson: data.processContainerJson ?? (
-          isProcessContainerProfile(bpmnProfile)
-            ? { containerMode: 'embedded', calledProcessRef: null, calledProcessVersion: null }
-            : null
-        ),
+        processContainerJson: data.processContainerJson ?? null,
         containerNodeKey: containerParent?.id ?? null,
         erRefs: data.erRefs ?? [],
         position,
@@ -1754,11 +1948,7 @@ export function flowDraftFromGraph(
         semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
         taskUiJson: data.taskUiJson ?? previousNode?.taskUiJson ?? null,
-        processContainerJson: data.processContainerJson ?? previousNode?.processContainerJson ?? (
-          isProcessContainerProfile(bpmnProfile)
-            ? { containerMode: 'embedded', calledProcessRef: null, calledProcessVersion: null }
-            : null
-        ),
+        processContainerJson: data.processContainerJson ?? previousNode?.processContainerJson ?? null,
         containerNodeKey: containerParent?.id ?? null,
         isOverridden: true,
         styleJson: data.styleJson ?? previousNode?.styleJson ?? null,
@@ -1917,11 +2107,7 @@ export function flowNodeRecordFromCell(
     semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
     semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
     taskUiJson: data.taskUiJson ?? previousNode?.taskUiJson ?? null,
-    processContainerJson: data.processContainerJson ?? previousNode?.processContainerJson ?? (
-      isProcessContainerProfile(bpmnProfile)
-        ? { containerMode: 'embedded', calledProcessRef: null, calledProcessVersion: null }
-        : null
-    ),
+    processContainerJson: data.processContainerJson ?? previousNode?.processContainerJson ?? null,
     containerNodeKey: containerParent?.id ?? null,
     isOverridden: true,
     styleJson: data.styleJson ?? previousNode?.styleJson ?? null,

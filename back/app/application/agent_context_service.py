@@ -19,6 +19,7 @@ from app.domain.business_flow.semantic_profile import (
 from app.domain.business_flow.task_ui import (
     edge_scope,
     is_process_container,
+    process_container_quality_issues,
     process_container_payload,
     task_ui_payload,
 )
@@ -376,6 +377,10 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                 "calledProcessRef": process_container_payload(node.get("process_container_json")).get("calledProcessRef"),
                 "calledProcessVersion": process_container_payload(node.get("process_container_json")).get("calledProcessVersion"),
                 "childStepKeys": child_keys_by_container.get(str(node.get("node_key")), []),
+                "qualityIssues": process_container_quality_issues(
+                    node,
+                    child_keys_by_container.get(str(node.get("node_key")), []),
+                ),
             }
             for node in nodes
             if is_process_container(node)

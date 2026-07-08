@@ -108,7 +108,8 @@ def is_process_container(node: Mapping[str, Any]) -> bool:
     return (
         node.get("bpmn_element_type") == "SUB_PROCESS"
         and node.get("bpmn_subprocess_kind") == "EMBEDDED"
-    ) or payload.get("containerMode") in CONTAINER_MODES
+        and payload.get("containerMode") in CONTAINER_MODES
+    )
 
 
 def container_structure_error(nodes: list[Mapping[str, Any]]) -> str | None:
@@ -118,6 +119,8 @@ def container_structure_error(nodes: list[Mapping[str, Any]]) -> str | None:
         container_key = _text(node.get("container_node_key"))
         if not container_key:
             continue
+        if is_process_container(node):
+            return "process containers cannot be nested"
         if container_key == node_key:
             return f"node {node_key} cannot contain itself"
         container = node_by_key.get(container_key)
