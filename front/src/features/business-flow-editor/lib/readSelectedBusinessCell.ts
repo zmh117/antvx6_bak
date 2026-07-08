@@ -4,6 +4,8 @@ import type {
   BpmnEdgeProfile,
   BpmnNodeProfile,
   BusinessFlowNodeErRef,
+  ProcessContainerConfig,
+  TaskUiContext,
 } from '@/entities/business-flow'
 import {
   normalizeBpmnEdgeProfile,
@@ -24,6 +26,12 @@ export type SelectedBusinessCell =
       businessRule: string
       inputSummary: string
       outputSummary: string
+      semanticProfileKey: string
+      semanticProfileVersion: number | null
+      semanticPayloadJson: Record<string, unknown>
+      taskUiJson: TaskUiContext | null
+      processContainerJson: ProcessContainerConfig | null
+      containerNodeKey: string | null
       bpmnProfile: BpmnNodeProfile
       erRefs: BusinessFlowNodeErRef[]
     }
@@ -31,6 +39,9 @@ export type SelectedBusinessCell =
       kind: 'edge'
       cell: Edge
       label: string
+      semanticProfileKey: string
+      semanticProfileVersion: number | null
+      semanticPayloadJson: Record<string, unknown>
       bpmnProfile: BpmnEdgeProfile
     }
   | null
@@ -50,6 +61,9 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       kind: 'edge',
       cell: cell as Edge,
       label: data.title ?? '',
+      semanticProfileKey: data.semanticProfileKey ?? '',
+      semanticProfileVersion: data.semanticProfileVersion ?? null,
+      semanticPayloadJson: data.semanticPayloadJson ?? {},
       bpmnProfile,
     }
   }
@@ -82,6 +96,12 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       businessRule: data.businessRule ?? '',
       inputSummary: data.inputSummary ?? '',
       outputSummary: data.outputSummary ?? '',
+      semanticProfileKey: data.semanticProfileKey ?? '',
+      semanticProfileVersion: data.semanticProfileVersion ?? null,
+      semanticPayloadJson: data.semanticPayloadJson ?? {},
+      taskUiJson: data.taskUiJson ?? null,
+      processContainerJson: data.processContainerJson ?? null,
+      containerNodeKey: data.containerNodeKey ?? null,
       bpmnProfile,
       erRefs: data.erRefs ?? [],
     }

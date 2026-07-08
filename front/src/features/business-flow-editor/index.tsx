@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Edge, Graph, Node, type Cell } from '@antv/x6'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, GripVertical, Layers3, Trash2, X } from 'lucide-react'
+import { ArrowLeft, GripVertical, Layers3, Plus, Trash2, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,14 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
   useApplyBusinessFlowChangesMutation,
@@ -24,9 +32,22 @@ import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { useGraphsQuery } from '@/entities/er-graph/api'
 import type {
   LocalBusinessFlowCanvas,
+  ProcessContainerConfig,
   SwimlaneComponentListItem,
+  TaskUiContext,
+  TaskUiOperationStep,
 } from '@/entities/business-flow'
 import {
+  BUSINESS_SEMANTIC_PROFILES,
+  TASK_UI_ACTIONS_BY_ELEMENT,
+  TASK_UI_ACTION_TYPES,
+  TASK_UI_ELEMENT_TYPES,
+  normalizeProcessContainerConfig,
+  normalizeTaskUiContext,
+  semanticPayload,
+  taskUiQualityIssues,
+  textArrayValue,
+  updateSemanticPayload,
   mergeBpmnIntoProperties,
 } from '@/entities/business-flow'
 import {
@@ -1151,6 +1172,18 @@ function BusinessInspector({
             }}
           />
         </div>
+        <SemanticProfileEditor
+          targetScope="EDGE"
+          profileKey={selected.semanticProfileKey}
+          profileVersion={selected.semanticProfileVersion}
+          payload={selected.semanticPayloadJson}
+          onChange={(next) => {
+            selected.cell.setData({ ...readCellData(selected.cell), ...next })
+            onChange({ ...selected, ...next })
+            onPersist()
+          }}
+        />
+        <SemanticQualityHints selected={selected} />
       </div>
     )
   }
@@ -1258,6 +1291,27 @@ function BusinessInspector({
           }}
         />
       </div>
+      {selected.bpmnProfile.bpmnElementType === 'TASK' ? (
+        <TaskUiContextEditor
+          value={selected.taskUiJson}
+          onChange={(taskUiJson) => {
+            selected.cell.setData({ ...readCellData(selected.cell), taskUiJson })
+            onChange({ ...selected, taskUiJson })
+            onPersist()
+          }}
+        />
+      ) : null}
+      {selected.bpmnProfile.bpmnElementType === 'SUB_PROCESS' &&
+      selected.bpmnProfile.bpmnSubProcessKind === 'EMBEDDED' ? (
+        <ProcessContainerEditor
+          value={selected.processContainerJson}
+          onChange={(processContainerJson) => {
+            selected.cell.setData({ ...readCellData(selected.cell), processContainerJson })
+            onChange({ ...selected, processContainerJson })
+            onPersist()
+          }}
+        />
+      ) : null}
       <NodeErBindingEditor
         erRefs={selected.erRefs}
         erGraphs={erGraphs}
@@ -1267,6 +1321,424 @@ function BusinessInspector({
           onPersist()
         }}
       />
+    </div>
+  )
+}
+
+function TaskUiContextEditor({
+  value,
+  onChange,
+}: {
+  value: TaskUiContext | null
+  onChange: (value: TaskUiContext) => void
+}) {
+  const data = normalizeTaskUiContext(value)
+  const update = (next: Partial<TaskUiContext>) => onChange({ ...data, ...next })
+  const updateStep = (index: number, patch: Partial<TaskUiOperationStep>) => {
+    const steps = data.uiSteps.map((step, itemIndex) => (
+      itemIndex === index ? { ...step, ...patch } : step
+    ))
+    update({ uiSteps: steps.map((step, itemIndex) => ({ ...step, stepNo: itemIndex + 1 })) })
+  }
+  const issues = taskUiQualityIssues(data)
+  return (
+    <div>
+      <div className="mb-2 text-xs font-semibold">Task Web 用例上下文</div>
+      <FieldGroup>
+        <Field>
+          <FieldLabel>页面名称</FieldLabel>
+          <Input
+            value={data.page?.pageName ?? ''}
+            onChange={(event) => update({ page: { ...data.page, pageName: event.target.value } })}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>路由模式</FieldLabel>
+          <Input
+            value={data.page?.routePattern ?? ''}
+            onChange={(event) => update({ page: { ...data.page, routePattern: event.target.value } })}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>模块</FieldLabel>
+          <Input
+            value={data.page?.moduleName ?? ''}
+            onChange={(event) => update({ page: { ...data.page, moduleName: event.target.value } })}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>预期结果</FieldLabel>
+          <Textarea
+            rows={2}
+            value={(data.expectedResults ?? []).join('\n')}
+            onChange={(event) => update({ expectedResults: textArrayValue(event.target.value) })}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>断言</FieldLabel>
+          <Textarea
+            rows={2}
+            value={(data.assertions ?? []).join('\n')}
+            onChange={(event) => update({ assertions: textArrayValue(event.target.value) })}
+          />
+        </Field>
+      </FieldGroup>
+      <div className="mt-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold">UI Steps</div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const nextNo = data.uiSteps.length + 1
+              update({
+                uiSteps: [
+                  ...data.uiSteps,
+                  {
+                    id: createUiStepId(),
+                    stepNo: nextNo,
+                    elementType: 'Input',
+                    elementName: '',
+                    actionType: 'input',
+                    value: '',
+                    businessMeaning: '',
+                    expectedResult: '',
+                    negativeTestHints: [],
+                  },
+                ],
+              })
+            }}
+          >
+            <Plus className="mr-1 size-3" />
+            添加
+          </Button>
+        </div>
+        {data.uiSteps.map((step, index) => {
+          const elementType = String(step.elementType || 'Input') as keyof typeof TASK_UI_ACTIONS_BY_ELEMENT
+          const actions = TASK_UI_ACTIONS_BY_ELEMENT[elementType] ?? TASK_UI_ACTION_TYPES
+          return (
+            <div key={step.id} className="space-y-2 rounded-md border p-2">
+              <div className="flex items-center justify-between gap-2">
+                <Input
+                  className="h-8 w-16"
+                  type="number"
+                  value={step.stepNo}
+                  onChange={(event) => updateStep(index, { stepNo: Number(event.target.value) || index + 1 })}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => update({ uiSteps: data.uiSteps.filter((_, itemIndex) => itemIndex !== index) })}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Select
+                  value={String(step.elementType || 'Input')}
+                  onValueChange={(elementTypeValue) => {
+                    const nextActions = TASK_UI_ACTIONS_BY_ELEMENT[elementTypeValue as keyof typeof TASK_UI_ACTIONS_BY_ELEMENT] ?? TASK_UI_ACTION_TYPES
+                    updateStep(index, {
+                      elementType: elementTypeValue,
+                      actionType: nextActions.includes(step.actionType as never)
+                        ? step.actionType
+                        : nextActions[0],
+                    })
+                  }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {TASK_UI_ELEMENT_TYPES.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={String(step.actionType || actions[0])}
+                  onValueChange={(actionType) => updateStep(index, { actionType })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {actions.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Input
+                placeholder="控件名称"
+                value={step.elementName}
+                onChange={(event) => updateStep(index, { elementName: event.target.value })}
+              />
+              <Input
+                placeholder="输入值或选择值"
+                value={typeof step.value === 'string' || typeof step.value === 'number' ? String(step.value) : ''}
+                onChange={(event) => updateStep(index, { value: event.target.value })}
+              />
+              <Textarea
+                rows={2}
+                placeholder="业务含义"
+                value={step.businessMeaning ?? ''}
+                onChange={(event) => updateStep(index, { businessMeaning: event.target.value })}
+              />
+              <Textarea
+                rows={2}
+                placeholder="预期结果"
+                value={step.expectedResult ?? ''}
+                onChange={(event) => updateStep(index, { expectedResult: event.target.value })}
+              />
+              <Textarea
+                rows={2}
+                placeholder="负向用例提示，每行一个"
+                value={(step.negativeTestHints ?? []).join('\n')}
+                onChange={(event) => updateStep(index, { negativeTestHints: textArrayValue(event.target.value) })}
+              />
+            </div>
+          )
+        })}
+        {issues.length ? (
+          <div className="space-y-1 rounded-md bg-amber-50 p-2 text-xs text-amber-700">
+            {issues.map((issue) => <div key={issue}>{issue}</div>)}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function ProcessContainerEditor({
+  value,
+  onChange,
+}: {
+  value: ProcessContainerConfig | null
+  onChange: (value: ProcessContainerConfig) => void
+}) {
+  const data = normalizeProcessContainerConfig(value)
+  return (
+    <div>
+      <div className="mb-2 text-xs font-semibold">流程容器</div>
+      <FieldGroup>
+        <Field>
+          <FieldLabel>模式</FieldLabel>
+          <Select
+            value={data.containerMode}
+            onValueChange={(containerMode) => onChange({ ...data, containerMode: containerMode as ProcessContainerConfig['containerMode'] })}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="embedded">embedded</SelectItem>
+              <SelectItem value="reusableCall">reusableCall</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        {data.containerMode === 'reusableCall' ? (
+          <>
+            <Field>
+              <FieldLabel>被调用流程</FieldLabel>
+              <Input
+                value={data.calledProcessRef ?? ''}
+                onChange={(event) => onChange({ ...data, calledProcessRef: event.target.value })}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>版本策略</FieldLabel>
+              <Input
+                value={data.calledProcessVersion ?? ''}
+                onChange={(event) => onChange({ ...data, calledProcessVersion: event.target.value })}
+              />
+            </Field>
+          </>
+        ) : null}
+      </FieldGroup>
+    </div>
+  )
+}
+
+function createUiStepId() {
+  const uuid =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+  return `ui_step_${uuid.replaceAll('-', '').slice(0, 12)}`
+}
+
+function SemanticProfileEditor({
+  targetScope,
+  profileKey,
+  profileVersion,
+  payload,
+  onChange,
+}: {
+  targetScope: 'NODE' | 'EDGE'
+  profileKey: string
+  profileVersion: number | null
+  payload: Record<string, unknown>
+  onChange: (next: {
+    semanticProfileKey: string
+    semanticProfileVersion: number | null
+    semanticPayloadJson: Record<string, unknown>
+  }) => void
+}) {
+  const profiles = BUSINESS_SEMANTIC_PROFILES.filter(
+    (profile) => profile.targetScope === targetScope,
+  )
+  const selectedProfile = profiles.find((profile) => profile.profileKey === profileKey)
+  const data = semanticPayload(payload)
+  const updatePayload = (key: string, value: unknown) => {
+    onChange({
+      semanticProfileKey: profileKey,
+      semanticProfileVersion: profileVersion,
+      semanticPayloadJson: updateSemanticPayload(data, key, value),
+    })
+  }
+  return (
+    <div>
+      <div className="mb-2 text-xs font-semibold">业务语义 Profile</div>
+      <FieldGroup>
+        <Field>
+          <FieldLabel>Profile</FieldLabel>
+          <Select
+            value={profileKey || 'none'}
+            onValueChange={(value) => {
+              const profile = profiles.find((item) => item.profileKey === value)
+              onChange({
+                semanticProfileKey: value === 'none' ? '' : value,
+                semanticProfileVersion: profile?.version ?? null,
+                semanticPayloadJson: {},
+              })
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue>
+                {selectedProfile?.name ?? '未选择'}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="none">未选择</SelectItem>
+                {profiles.map((profile) => (
+                  <SelectItem key={profile.profileKey} value={profile.profileKey}>
+                    {profile.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+        {targetScope === 'NODE' && profileKey ? (
+          <>
+            <Field>
+              <FieldLabel>操作类型</FieldLabel>
+              <Input
+                value={String(data.operationType ?? '')}
+                onChange={(event) => updatePayload('operationType', event.target.value.trim())}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>业务对象</FieldLabel>
+              <Input
+                value={String(data.businessObject ?? '')}
+                onChange={(event) => updatePayload('businessObject', event.target.value.trim())}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>前置条件</FieldLabel>
+              <Textarea
+                rows={2}
+                value={textArrayValue(data.preconditions).join('\n')}
+                onChange={(event) => updatePayload('preconditions', textArrayValue(event.target.value))}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>后置条件</FieldLabel>
+              <Textarea
+                rows={2}
+                value={textArrayValue(data.postconditions).join('\n')}
+                onChange={(event) => updatePayload('postconditions', textArrayValue(event.target.value))}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>校验规则</FieldLabel>
+              <Textarea
+                rows={2}
+                value={textArrayValue(data.validationRules).join('\n')}
+                onChange={(event) => updatePayload('validationRules', textArrayValue(event.target.value))}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>异常处理</FieldLabel>
+              <Textarea
+                rows={2}
+                value={textArrayValue(data.exceptionHandlers).join('\n')}
+                onChange={(event) => updatePayload('exceptionHandlers', textArrayValue(event.target.value))}
+              />
+            </Field>
+          </>
+        ) : null}
+        {targetScope === 'EDGE' && profileKey ? (
+          <>
+            <Field>
+              <FieldLabel>条件</FieldLabel>
+              <Textarea
+                rows={2}
+                value={String(data.condition ?? '')}
+                onChange={(event) => updatePayload('condition', event.target.value.trim())}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>交接</FieldLabel>
+              <Input
+                value={String(data.handoff ?? '')}
+                onChange={(event) => updatePayload('handoff', event.target.value.trim())}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>消息</FieldLabel>
+              <Input
+                value={String(data.message ?? '')}
+                onChange={(event) => updatePayload('message', event.target.value.trim())}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>异常类型</FieldLabel>
+              <Input
+                value={String(data.exceptionType ?? '')}
+                onChange={(event) => updatePayload('exceptionType', event.target.value.trim())}
+              />
+            </Field>
+          </>
+        ) : null}
+      </FieldGroup>
+    </div>
+  )
+}
+
+function SemanticQualityHints({ selected }: { selected: Exclude<SelectedBusinessCell, null> }) {
+  const hints: string[] = []
+  if (selected.kind === 'node') {
+    const payload = semanticPayload(selected.semanticPayloadJson)
+    if (selected.semanticProfileKey && !payload.operationType) hints.push('任务缺少操作类型')
+    if (selected.semanticProfileKey && selected.erRefs.length === 0) hints.push('关键任务缺少 ER 绑定')
+    if (
+      ['DATA_OBJECT', 'DATA_INPUT', 'DATA_OUTPUT', 'DATA_STORE'].includes(
+        selected.bpmnProfile.bpmnElementType,
+      ) &&
+      !payload.businessObject &&
+      selected.erRefs.length === 0
+    ) {
+      hints.push('数据节点缺少业务对象或 ER 绑定')
+    }
+  }
+  if (selected.kind === 'edge') {
+    const payload = semanticPayload(selected.semanticPayloadJson)
+    if (selected.semanticProfileKey && !payload.condition && !selected.bpmnProfile.bpmnConditionExpression) {
+      hints.push('语义连线缺少条件')
+    }
+  }
+  if (!hints.length) return null
+  return (
+    <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+      {hints.map((hint) => (
+        <div key={hint}>{hint}</div>
+      ))}
     </div>
   )
 }

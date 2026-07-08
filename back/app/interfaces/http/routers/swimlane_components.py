@@ -13,6 +13,16 @@ from app.domain.business_flow.bpmn import (
     node_profile_error,
     strip_mes_json,
 )
+from app.domain.business_flow.semantic_profile import (
+    semantic_payload,
+    semantic_payload_error,
+    semantic_profile_key,
+)
+from app.domain.business_flow.task_ui import (
+    container_structure_error,
+    process_container_payload,
+    task_ui_payload,
+)
 from app.interfaces.http.schemas.business_flow import (
     SwimlaneComponentCreateRequest,
     SwimlaneComponentResponse,
@@ -55,6 +65,9 @@ def _node_response(row: dict) -> dict:
         "height": float(row["height"]),
         "er_refs": row.get("er_refs") or [],
         "style_json": row.get("style_json") or {},
+        "semantic_payload_json": row.get("semantic_payload_json") or {},
+        "task_ui_json": row.get("task_ui_json") or {},
+        "process_container_json": row.get("process_container_json") or {},
         "properties_json": strip_mes_json(row.get("properties_json") or {}),
     }
 
@@ -63,9 +76,24 @@ def _edge_response(row: dict) -> dict:
     return {
         **row,
         "data_contract_json": row.get("data_contract_json") or {},
+        "semantic_payload_json": row.get("semantic_payload_json") or {},
         "style_json": row.get("style_json") or {},
         "properties_json": strip_mes_json(row.get("properties_json") or {}),
     }
+
+
+def _ensure_valid_semantic_payload(
+    profile_key: str | None,
+    payload: dict | None,
+    target_scope: str,
+    target_key: str,
+) -> None:
+    error = semantic_payload_error(profile_key, payload, target_scope)  # type: ignore[arg-type]
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid semantic profile {target_key}: {error}",
+        )
 
 
 def _component_node_er_refs_by_node_id(
@@ -137,7 +165,9 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
                    bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                    bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
                    bpmn_call_activity_ref,
-                   position_x, position_y, width, height, style_json, properties_json
+                   position_x, position_y, width, height, style_json, properties_json,
+                   semantic_profile_key, semantic_profile_version, semantic_payload_json,
+                   task_ui_json, process_container_json, container_node_key
             FROM swimlane_component_node
             WHERE component_version_id = %s
             ORDER BY created_at ASC, node_key ASC
@@ -159,7 +189,8 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
                    source_port, target_port, edge_type, label, condition_text,
                    bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
                    bpmn_condition_expression, data_contract_json,
-                   style_json, properties_json
+                   style_json, properties_json,
+                   semantic_profile_key, semantic_profile_version, semantic_payload_json
             FROM swimlane_component_edge
             WHERE component_version_id = %s
             ORDER BY created_at ASC, edge_key ASC
@@ -221,6 +252,18 @@ def _validate_component_graph(body: SwimlaneComponentVersionSaveRequest) -> None
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"invalid BPMN node {node_key}: {error}",
             )
+        _ensure_valid_semantic_payload(
+            semantic_profile_key(node.get("semantic_profile_key")),
+            semantic_payload(node.get("semantic_payload_json")),
+            "NODE",
+            node_key,
+        )
+    structure_error = container_structure_error(list(nodes_by_key.values()))
+    if structure_error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid process container structure: {structure_error}",
+        )
     for edge in body.edges:
         if edge.source_node_key not in node_key_set or edge.target_node_key not in node_key_set:
             raise HTTPException(
@@ -237,6 +280,12 @@ def _validate_component_graph(body: SwimlaneComponentVersionSaveRequest) -> None
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"invalid BPMN edge {edge.edge_key}: {error}",
             )
+        _ensure_valid_semantic_payload(
+            semantic_profile_key(edge.semantic_profile_key),
+            semantic_payload(edge.semantic_payload_json),
+            "EDGE",
+            edge.edge_key,
+        )
 
 
 def _insert_version_payload(
@@ -281,9 +330,11 @@ def _insert_version_payload(
                 bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                 bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
                 bpmn_call_activity_ref,
-                position_x, position_y, width, height, style_json, properties_json
+                position_x, position_y, width, height, style_json, properties_json,
+                semantic_profile_key, semantic_profile_version, semantic_payload_json,
+                task_ui_json, process_container_json, container_node_key
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -309,6 +360,12 @@ def _insert_version_payload(
                 node.height,
                 Jsonb(node.style_json),
                 Jsonb(strip_mes_json(node.properties_json)),
+                node.semantic_profile_key,
+                node.semantic_profile_version,
+                Jsonb(semantic_payload(node.semantic_payload_json)),
+                Jsonb(task_ui_payload(node.task_ui_json)),
+                Jsonb(process_container_payload(node.process_container_json)),
+                node.container_node_key,
             ),
         )
         node_id = cur.fetchone()["id"]
@@ -340,9 +397,10 @@ def _insert_version_payload(
                 source_port, target_port, edge_type, label, condition_text,
                 bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
                 bpmn_condition_expression, data_contract_json,
-                style_json, properties_json
+                style_json, properties_json,
+                semantic_profile_key, semantic_profile_version, semantic_payload_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 version_id,
@@ -361,6 +419,9 @@ def _insert_version_payload(
                 Jsonb(edge.data_contract_json),
                 Jsonb(edge.style_json),
                 Jsonb(strip_mes_json(edge.properties_json)),
+                edge.semantic_profile_key,
+                edge.semantic_profile_version,
+                Jsonb(semantic_payload(edge.semantic_payload_json)),
             ),
         )
     return version_id
@@ -628,7 +689,9 @@ def publish_swimlane_component_version(
                            bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                            bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
                            bpmn_call_activity_ref,
-                           style_json, properties_json
+                           style_json, properties_json,
+                           semantic_profile_key, semantic_profile_version, semantic_payload_json,
+                           task_ui_json, process_container_json, container_node_key
                     FROM swimlane_component_node
                     WHERE component_version_id = %s
                     ORDER BY created_at ASC, node_key ASC
@@ -660,7 +723,8 @@ def publish_swimlane_component_version(
                            edge_type, label, condition_text, bpmn_flow_type,
                            bpmn_sequence_flow_kind, bpmn_message_name,
                            bpmn_condition_expression, data_contract_json,
-                           style_json, properties_json
+                           style_json, properties_json,
+                           semantic_profile_key, semantic_profile_version, semantic_payload_json
                     FROM swimlane_component_edge
                     WHERE component_version_id = %s
                     ORDER BY created_at ASC, edge_key ASC

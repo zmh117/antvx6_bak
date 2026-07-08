@@ -37,6 +37,7 @@ export type AgentContextResponse = {
   version: number
   text: string
   documents: Record<string, unknown>[]
+  business_flow_context?: Record<string, unknown>
 }
 
 export async function fetchGraphLoad(graphId = DEFAULT_GRAPH_ID) {

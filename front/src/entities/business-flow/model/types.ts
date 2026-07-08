@@ -33,6 +33,85 @@ export type BusinessFlowErRefType = 'READ' | 'CREATE' | 'UPDATE' | 'DELETE' | 'C
 
 export type BusinessFlowJson = Record<string, unknown>
 
+export type TaskUiElementType =
+  | 'Button'
+  | 'Input'
+  | 'Select'
+  | 'Checkbox'
+  | 'Radio'
+  | 'DatePicker'
+  | 'Upload'
+  | 'DataTable'
+  | 'Dialog'
+  | 'Label'
+
+export type TaskUiActionType =
+  | 'click'
+  | 'input'
+  | 'select'
+  | 'check'
+  | 'uncheck'
+  | 'upload'
+  | 'assertVisible'
+  | 'assertText'
+  | 'assertData'
+  | 'wait'
+
+export type TaskUiPageContext = {
+  pageName?: string | null
+  routePattern?: string | null
+  moduleName?: string | null
+}
+
+export type TaskUiOperationStep = {
+  id: string
+  stepNo: number
+  elementType: TaskUiElementType | string
+  elementName: string
+  actionType: TaskUiActionType | string
+  value?: unknown
+  businessMeaning?: string | null
+  expectedResult?: string | null
+  negativeTestHints?: string[]
+}
+
+export type TaskUiContext = {
+  page?: TaskUiPageContext | null
+  uiSteps: TaskUiOperationStep[]
+  expectedResults?: string[]
+  assertions?: string[]
+}
+
+export type ProcessContainerMode = 'embedded' | 'reusableCall'
+
+export type ProcessContainerConfig = {
+  containerMode: ProcessContainerMode
+  calledProcessRef?: string | null
+  calledProcessVersion?: string | null
+}
+
+export type BusinessFlowEdgeScope =
+  | 'topLevel'
+  | 'insideContainer'
+  | 'crossContainerBoundary'
+
+export type BusinessSemanticProfileTarget = 'FLOW' | 'NODE' | 'EDGE'
+
+export type BusinessSemanticProfileKey =
+  | 'generic-business-operation'
+  | 'mes-manufacturing-node'
+  | 'mes-manufacturing-edge'
+
+export type BusinessSemanticProfile = {
+  profileKey: BusinessSemanticProfileKey | string
+  domain: 'generic' | 'mes' | string
+  targetScope: BusinessSemanticProfileTarget
+  version: number
+  name: string
+  description?: string | null
+  taxonomyJson?: BusinessFlowJson | null
+}
+
 export type BpmnElementType =
   | 'EVENT'
   | 'TASK'
@@ -101,6 +180,12 @@ export type SwimlaneComponentNode = {
   businessRule?: string | null
   inputSummary?: string | null
   outputSummary?: string | null
+  semanticProfileKey?: string | null
+  semanticProfileVersion?: number | null
+  semanticPayloadJson?: BusinessFlowJson | null
+  taskUiJson?: TaskUiContext | null
+  processContainerJson?: ProcessContainerConfig | null
+  containerNodeKey?: string | null
   position: CanvasPosition
   size: CanvasSize
   erRefs?: BusinessFlowNodeErRef[]
@@ -124,6 +209,9 @@ export type SwimlaneComponentEdge = {
   label?: string | null
   conditionText?: string | null
   dataContractJson?: BusinessFlowJson | null
+  semanticProfileKey?: string | null
+  semanticProfileVersion?: number | null
+  semanticPayloadJson?: BusinessFlowJson | null
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
 }
@@ -222,6 +310,12 @@ export type BusinessFlowNodeData = {
   description?: string | null
   actor?: string | null
   businessRule?: string | null
+  semanticProfileKey?: string | null
+  semanticProfileVersion?: number | null
+  semanticPayloadJson?: BusinessFlowJson | null
+  taskUiJson?: TaskUiContext | null
+  processContainerJson?: ProcessContainerConfig | null
+  containerNodeKey?: string | null
   erRefs?: BusinessFlowNodeErRef[]
 }
 
@@ -232,6 +326,9 @@ export type BusinessFlowNodeRecord = BusinessFlowNodeData & {
   inputSummary?: string | null
   outputSummary?: string | null
   isOverridden: boolean
+  taskUiJson?: TaskUiContext | null
+  processContainerJson?: ProcessContainerConfig | null
+  containerNodeKey?: string | null
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
   createdAt: string
@@ -253,6 +350,9 @@ export type BusinessFlowEdgeData = {
     input?: string[]
     output?: string[]
   }
+  semanticProfileKey?: string | null
+  semanticProfileVersion?: number | null
+  semanticPayloadJson?: BusinessFlowJson | null
   isCrossLane: boolean
 }
 

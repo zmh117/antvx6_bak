@@ -12,6 +12,16 @@ from uuid import UUID
 
 import psycopg
 
+from app.domain.business_flow.semantic_profile import (
+    business_flow_quality_issues,
+    semantic_payload,
+)
+from app.domain.business_flow.task_ui import (
+    edge_scope,
+    is_process_container,
+    process_container_payload,
+    task_ui_payload,
+)
 from app.infrastructure.db.repositories import agent_context_repository as repo
 from app.services.agent_labels import match_operator_label
 
@@ -52,6 +62,96 @@ def _json_summary(value: Any) -> str:
     if not value:
         return ""
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _semantic_line(prefix: str, item: dict[str, Any]) -> str:
+    profile_key = item.get("semantic_profile_key")
+    payload = semantic_payload(item.get("semantic_payload_json"))
+    if not profile_key and not payload:
+        return ""
+    return f"  {prefix}：{profile_key or ''} {_json_summary(payload)}".rstrip()
+
+
+def _task_ui_line(node: dict[str, Any]) -> str:
+    payload = task_ui_payload(node.get("task_ui_json"))
+    if not payload:
+        return ""
+    return f"  Task UI：{_json_summary(payload)}"
+
+
+def _flow_paths(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    node_by_key = {node.get("node_key"): node for node in nodes if node.get("node_key")}
+    outgoing: dict[str, list[dict[str, Any]]] = {}
+    for edge in edges:
+        source = edge.get("source_node_key")
+        if source:
+            outgoing.setdefault(source, []).append(edge)
+
+    starts = [
+        node["node_key"]
+        for node in nodes
+        if node.get("bpmn_event_kind") == "START" and node.get("node_key")
+    ]
+    if not starts and nodes:
+        starts = [nodes[0]["node_key"]]
+
+    happy_paths: list[list[str]] = []
+    branch_paths: list[dict[str, Any]] = []
+    exception_paths: list[dict[str, Any]] = []
+
+    def walk(node_key: str, path: list[str], depth: int = 0) -> None:
+        if depth > 30 or node_key in path:
+            happy_paths.append(path + [node_key])
+            return
+        next_path = path + [node_key]
+        next_edges = outgoing.get(node_key, [])
+        if not next_edges:
+            happy_paths.append(next_path)
+            return
+        normal_edges = [
+            edge for edge in next_edges
+            if edge.get("bpmn_sequence_flow_kind") not in {"EXCEPTION"}
+        ]
+        if len(next_edges) > 1:
+            branch_paths.append(
+                {
+                    "fromStepKey": node_key,
+                    "branches": [
+                        {
+                            "edgeKey": edge.get("edge_key"),
+                            "toStepKey": edge.get("target_node_key"),
+                            "condition": edge.get("condition_text")
+                            or edge.get("bpmn_condition_expression")
+                            or semantic_payload(edge.get("semantic_payload_json")).get("condition"),
+                        }
+                        for edge in next_edges
+                    ],
+                }
+            )
+        for edge in next_edges:
+            if edge.get("bpmn_sequence_flow_kind") == "EXCEPTION":
+                exception_paths.append(
+                    {
+                        "fromStepKey": node_key,
+                        "edgeKey": edge.get("edge_key"),
+                        "toStepKey": edge.get("target_node_key"),
+                        "exceptionType": semantic_payload(edge.get("semantic_payload_json")).get("exceptionType"),
+                    }
+                )
+                continue
+            target = edge.get("target_node_key")
+            if target and target in node_by_key:
+                walk(target, next_path, depth + 1)
+        if not normal_edges:
+            happy_paths.append(next_path)
+
+    for start in starts[:5]:
+        walk(start, [])
+    return {
+        "happyPaths": happy_paths[:20],
+        "branchPaths": branch_paths[:50],
+        "exceptionPaths": exception_paths[:50],
+    }
 
 
 def enrich_relation_documents(
@@ -167,6 +267,8 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                     else "",
                     f"  输入：{node.get('input_summary') or ''}" if node.get("input_summary") else "",
                     f"  输出：{node.get('output_summary') or ''}" if node.get("output_summary") else "",
+                    _semantic_line("业务语义", node),
+                    _task_ui_line(node),
                 ],
             )
         )
@@ -191,6 +293,7 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                     f"  数据契约：{_json_summary(edge.get('data_contract_json'))}"
                     if edge.get("data_contract_json")
                     else "",
+                    _semantic_line("连线语义", edge),
                 ],
             )
         )
@@ -247,6 +350,124 @@ def swimlane_binding_doc_from_row(flow: dict[str, Any], ref: dict[str, Any]) -> 
         "ref_relation_key": None,
         "usage_type": (ref.get("ref_type") or "READ").lower(),
     }
+
+
+def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str, Any]:
+    flows: list[dict[str, Any]] = []
+    for flow in repo.fetch_swimlane_business_flow_rows(cur, graph_id):
+        nodes = repo.fetch_swimlane_flow_nodes(cur, flow["id"])
+        edges = repo.fetch_swimlane_flow_edges(cur, flow["id"])
+        refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
+        refs_by_node_key: dict[str, list[dict[str, Any]]] = {}
+        for ref in refs:
+            refs_by_node_key.setdefault(ref["node_key"], []).append(ref)
+        quality_issues = business_flow_quality_issues(nodes, edges, refs_by_node_key)
+        child_keys_by_container: dict[str, list[str]] = {}
+        node_by_key = {node.get("node_key"): node for node in nodes if node.get("node_key")}
+        for node in nodes:
+            container_key = node.get("container_node_key")
+            if container_key and node.get("node_key"):
+                child_keys_by_container.setdefault(str(container_key), []).append(str(node["node_key"]))
+        containers = [
+            {
+                "containerKey": node.get("node_key"),
+                "title": node.get("title"),
+                "containerMode": process_container_payload(node.get("process_container_json")).get("containerMode") or "embedded",
+                "calledProcessRef": process_container_payload(node.get("process_container_json")).get("calledProcessRef"),
+                "calledProcessVersion": process_container_payload(node.get("process_container_json")).get("calledProcessVersion"),
+                "childStepKeys": child_keys_by_container.get(str(node.get("node_key")), []),
+            }
+            for node in nodes
+            if is_process_container(node)
+        ]
+        profile_keys = sorted(
+            {
+                str(item.get("semantic_profile_key"))
+                for item in [*nodes, *edges]
+                if item.get("semantic_profile_key")
+            }
+        )
+        step_context = [
+            {
+                "stepKey": node.get("node_key"),
+                "title": node.get("title"),
+                "nodeType": node.get("node_type"),
+                "bpmn": {
+                    "elementType": node.get("bpmn_element_type"),
+                    "eventKind": node.get("bpmn_event_kind"),
+                    "taskType": node.get("bpmn_task_type"),
+                    "gatewayType": node.get("bpmn_gateway_type"),
+                    "subProcessKind": node.get("bpmn_subprocess_kind"),
+                },
+                "lane": node.get("lane_name"),
+                "actor": node.get("actor"),
+                "businessRule": node.get("business_rule"),
+                "inputSummary": node.get("input_summary"),
+                "outputSummary": node.get("output_summary"),
+                "semantic": {
+                    "profileKey": node.get("semantic_profile_key"),
+                    "profileVersion": node.get("semantic_profile_version"),
+                    "payload": semantic_payload(node.get("semantic_payload_json")),
+                },
+                "erRefs": refs_by_node_key.get(node.get("node_key") or "", []),
+                "taskUi": task_ui_payload(node.get("task_ui_json")),
+                "processContainer": process_container_payload(node.get("process_container_json")),
+                "containerNodeKey": node.get("container_node_key"),
+            }
+            for node in nodes
+        ]
+        edge_context = [
+            {
+                "edgeKey": edge.get("edge_key"),
+                "label": edge.get("label"),
+                "sourceStepKey": edge.get("source_node_key"),
+                "targetStepKey": edge.get("target_node_key"),
+                "edgeType": edge.get("edge_type"),
+                "bpmn": {
+                    "flowType": edge.get("bpmn_flow_type"),
+                    "sequenceFlowKind": edge.get("bpmn_sequence_flow_kind"),
+                    "messageName": edge.get("bpmn_message_name"),
+                    "conditionExpression": edge.get("bpmn_condition_expression"),
+                },
+                "conditionText": edge.get("condition_text"),
+                "dataContract": edge.get("data_contract_json") or {},
+                "semantic": {
+                    "profileKey": edge.get("semantic_profile_key"),
+                    "profileVersion": edge.get("semantic_profile_version"),
+                    "payload": semantic_payload(edge.get("semantic_payload_json")),
+                },
+                "edgeScope": edge_scope(
+                    edge.get("source_container_node_key"),
+                    edge.get("target_container_node_key"),
+                ),
+            }
+            for edge in edges
+        ]
+        paths = _flow_paths(nodes, edges)
+        flows.append(
+            {
+                "flowId": str(flow["id"]),
+                "code": flow["code"],
+                "name": flow["name"],
+                "description": flow.get("description"),
+                "profileKeys": profile_keys,
+                "steps": step_context,
+                "edges": edge_context,
+                "containers": containers,
+                "erRefs": refs,
+                "rules": [
+                    {
+                        "stepKey": node.get("node_key"),
+                        "businessRule": node.get("business_rule"),
+                    }
+                    for node in nodes
+                    if node.get("business_rule")
+                ],
+                "qualityIssues": quality_issues,
+                **paths,
+            }
+        )
+    return {"businessFlows": flows}
 
 
 def fetch_business_flow_documents(
@@ -355,6 +576,7 @@ class AgentContextService:
 
         docs = enrich_relation_documents(cur, graph_id, docs)
         docs = merge_documents(docs + fetch_business_flow_documents(cur, graph_id, q, docs))
+        business_flow_context = build_business_flow_context(cur, graph_id)
 
         sections: list[str] = []
         rel_lines: list[str] = []
@@ -393,12 +615,15 @@ class AgentContextService:
                 text += "\n\n逻辑关联：\n" + "\n".join(rel_lines)
         if flow_lines:
             text += "\n\n业务流程绑定：\n" + "\n".join(flow_lines)
+        if business_flow_context.get("businessFlows"):
+            text += "\n\n结构化业务流程上下文已随响应的 businessFlowContext 返回。"
 
         return {
             "graph_id": str(graph_id),
             "version": version,
             "text": text,
             "documents": docs,
+            "businessFlowContext": business_flow_context,
         }
 
 

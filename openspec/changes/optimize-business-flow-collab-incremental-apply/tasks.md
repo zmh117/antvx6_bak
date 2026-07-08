@@ -44,6 +44,6 @@
 
 - [x] 7.1 Run frontend build/type checks after the collaboration and X6 changes
 - [x] 7.2 Run unit tests for patch extraction, bounded apply, local direct writes, fallback behavior, and serialization parity
-- [ ] 7.3 Perform a two-client browser smoke test covering node move, node edit, edge reconnect, lane resize, cell delete, ER reference edit, and recovery fallback
-- [ ] 7.4 Measure large-diagram single-cell edit latency and verify documented fallback reasons are the only full-apply triggers
+- [x] 7.3 Perform a two-client browser smoke test covering node move, node edit, edge reconnect, lane resize, cell delete, ER reference edit, and recovery fallback
+- [x] 7.4 Measure large-diagram single-cell edit latency and verify documented fallback reasons are the only full-apply triggers
 - [x] 7.5 Document rollback by disabling incremental apply and routing all transactions through the existing full-canvas apply path

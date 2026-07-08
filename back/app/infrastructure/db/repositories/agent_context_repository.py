@@ -157,6 +157,9 @@ def fetch_swimlane_flow_nodes(cur: psycopg.Cursor, business_flow_id: UUID) -> li
                n.bpmn_element_type, n.bpmn_event_kind, n.bpmn_event_definition,
                n.bpmn_task_type, n.bpmn_gateway_type, n.bpmn_subprocess_kind,
                n.bpmn_call_activity_ref,
+               n.semantic_profile_key, n.semantic_profile_version,
+               n.semantic_payload_json,
+               n.task_ui_json, n.process_container_json, n.container_node_key,
                n.input_summary, n.output_summary,
                li.display_name AS lane_name
         FROM business_flow_node n
@@ -174,10 +177,17 @@ def fetch_swimlane_flow_edges(cur: psycopg.Cursor, business_flow_id: UUID) -> li
         """
         SELECT edge_key, edge_type, label, condition_text, data_contract_json,
                bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-               bpmn_condition_expression
+               bpmn_condition_expression,
+               semantic_profile_key, semantic_profile_version, semantic_payload_json,
+               source_node.container_node_key AS source_container_node_key,
+               target_node.container_node_key AS target_container_node_key,
+               source_node.node_key AS source_node_key,
+               target_node.node_key AS target_node_key
         FROM business_flow_edge
-        WHERE business_flow_id = %s
-        ORDER BY created_at ASC, edge_key ASC
+        LEFT JOIN business_flow_node source_node ON source_node.id = business_flow_edge.source_node_id
+        LEFT JOIN business_flow_node target_node ON target_node.id = business_flow_edge.target_node_id
+        WHERE business_flow_edge.business_flow_id = %s
+        ORDER BY business_flow_edge.created_at ASC, edge_key ASC
         """,
         (business_flow_id,),
     )

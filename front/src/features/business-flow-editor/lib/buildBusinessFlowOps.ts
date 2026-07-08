@@ -33,6 +33,9 @@ function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
     label: edge.label,
     conditionText: edge.conditionText,
     dataContractJson: edge.dataContract ?? {},
+    semanticProfileKey: edge.semanticProfileKey ?? null,
+    semanticProfileVersion: edge.semanticProfileVersion ?? null,
+    semanticPayloadJson: edge.semanticPayloadJson ?? {},
     styleJson: edge.styleJson ?? {},
     propertiesJson: edge.propertiesJson ?? {},
   }
@@ -62,6 +65,12 @@ function nodePatch(
     businessRule: node.businessRule,
     inputSummary: node.inputSummary,
     outputSummary: node.outputSummary,
+    semanticProfileKey: node.semanticProfileKey ?? null,
+    semanticProfileVersion: node.semanticProfileVersion ?? null,
+    semanticPayloadJson: node.semanticPayloadJson ?? {},
+    taskUiJson: node.taskUiJson ?? {},
+    processContainerJson: node.processContainerJson ?? {},
+    containerNodeKey: node.containerNodeKey ?? null,
     styleJson: node.styleJson ?? {},
     propertiesJson: node.propertiesJson ?? {},
   }
@@ -268,6 +277,18 @@ export function buildBusinessFlowOps(
       patch.inputSummary = node.inputSummary ?? null
     if ((prev.outputSummary ?? '') !== (node.outputSummary ?? ''))
       patch.outputSummary = node.outputSummary ?? null
+    if ((prev.semanticProfileKey ?? '') !== (node.semanticProfileKey ?? ''))
+      patch.semanticProfileKey = node.semanticProfileKey ?? null
+    if ((prev.semanticProfileVersion ?? null) !== (node.semanticProfileVersion ?? null))
+      patch.semanticProfileVersion = node.semanticProfileVersion ?? null
+    if (!sameJson(prev.semanticPayloadJson, node.semanticPayloadJson))
+      patch.semanticPayloadJson = node.semanticPayloadJson ?? {}
+    if (!sameJson(prev.taskUiJson, node.taskUiJson))
+      patch.taskUiJson = node.taskUiJson ?? {}
+    if (!sameJson(prev.processContainerJson, node.processContainerJson))
+      patch.processContainerJson = node.processContainerJson ?? {}
+    if ((prev.containerNodeKey ?? '') !== (node.containerNodeKey ?? ''))
+      patch.containerNodeKey = node.containerNodeKey ?? null
     if (nodeBpmnChanged(prev, node)) {
       Object.assign(patch, {
         nodeType: node.nodeType,
@@ -333,6 +354,9 @@ export function buildBusinessFlowOps(
       prev.targetPort !== edge.targetPort ||
       (prev.conditionText ?? '') !== (edge.conditionText ?? '') ||
       !sameJson(prev.dataContract, edge.dataContract) ||
+      (prev.semanticProfileKey ?? '') !== (edge.semanticProfileKey ?? '') ||
+      (prev.semanticProfileVersion ?? null) !== (edge.semanticProfileVersion ?? null) ||
+      !sameJson(prev.semanticPayloadJson, edge.semanticPayloadJson) ||
       !sameJson(prev.styleJson, edge.styleJson) ||
       !sameJson(prev.propertiesJson, edge.propertiesJson)
     ) {

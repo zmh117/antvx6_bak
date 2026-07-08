@@ -10,11 +10,13 @@ import type {
   CanvasPosition,
   CanvasSize,
   LocalBusinessFlowCanvas,
+  ProcessContainerConfig,
   SwimlaneComponent,
   SwimlaneComponentEdge,
   SwimlaneComponentListItem,
   SwimlaneComponentNode,
   SwimlaneComponentVersion,
+  TaskUiContext,
 } from '@/entities/business-flow'
 import {
   bpmnNodeSize,
@@ -52,6 +54,12 @@ export type ComponentEditorNodeDraft = {
   businessRule?: string | null
   inputSummary?: string | null
   outputSummary?: string | null
+  semanticProfileKey?: string | null
+  semanticProfileVersion?: number | null
+  semanticPayloadJson?: Record<string, unknown> | null
+  taskUiJson?: TaskUiContext | null
+  processContainerJson?: ProcessContainerConfig | null
+  containerNodeKey?: string | null
   erRefs?: BusinessFlowNodeErRef[]
   position: CanvasPosition
   size: CanvasSize
@@ -73,6 +81,9 @@ export type ComponentEditorEdgeDraft = {
   label?: string | null
   conditionText?: string | null
   dataContractJson?: Record<string, unknown> | null
+  semanticProfileKey?: string | null
+  semanticProfileVersion?: number | null
+  semanticPayloadJson?: Record<string, unknown> | null
   styleJson?: Record<string, unknown> | null
   propertiesJson?: Record<string, unknown> | null
 }
@@ -135,6 +146,12 @@ function makeComponentNode(
     businessRule: extra?.businessRule ?? null,
     inputSummary: extra?.inputSummary ?? null,
     outputSummary: extra?.outputSummary ?? null,
+    semanticProfileKey: extra?.semanticProfileKey ?? null,
+    semanticProfileVersion: extra?.semanticProfileVersion ?? null,
+    semanticPayloadJson: extra?.semanticPayloadJson ?? {},
+    taskUiJson: extra?.taskUiJson ?? null,
+    processContainerJson: extra?.processContainerJson ?? null,
+    containerNodeKey: extra?.containerNodeKey ?? null,
     erRefs: extra?.erRefs ?? [],
     position: extra?.position ?? position,
     size: extra?.size ?? size ?? bpmnNodeSize(bpmnProfile),
@@ -163,6 +180,9 @@ function makeComponentEdge(
     label: label ?? null,
     conditionText: label ?? null,
     dataContractJson: null,
+    semanticProfileKey: null,
+    semanticProfileVersion: null,
+    semanticPayloadJson: {},
     styleJson: null,
     propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile),
   }
@@ -503,6 +523,12 @@ export function saveSwimlaneComponentVersion(
           businessRule: node.businessRule ?? null,
           inputSummary: node.inputSummary ?? null,
           outputSummary: node.outputSummary ?? null,
+          semanticProfileKey: node.semanticProfileKey ?? null,
+          semanticProfileVersion: node.semanticProfileVersion ?? null,
+          semanticPayloadJson: node.semanticPayloadJson ?? {},
+          taskUiJson: node.taskUiJson ?? null,
+          processContainerJson: node.processContainerJson ?? null,
+          containerNodeKey: node.containerNodeKey ?? null,
           erRefs: node.erRefs ?? [],
           position: node.position,
           size: node.size,
@@ -532,6 +558,9 @@ export function saveSwimlaneComponentVersion(
           label: edge.label ?? null,
           conditionText: edge.conditionText ?? null,
           dataContractJson: edge.dataContractJson ?? null,
+          semanticProfileKey: edge.semanticProfileKey ?? null,
+          semanticProfileVersion: edge.semanticProfileVersion ?? null,
+          semanticPayloadJson: edge.semanticPayloadJson ?? {},
           styleJson: edge.styleJson ?? null,
           propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
         }
@@ -673,10 +702,11 @@ export function placeSwimlaneComponent(
     createdAt: timestamp,
     updatedAt: timestamp,
   }
-  const keyMap = new Map<string, string>()
+  const keyMap = new Map(
+    found.version.nodes.map((node) => [node.nodeKey, `${laneKey}_${node.nodeKey}`]),
+  )
   const nodes: BusinessFlowNodeRecord[] = found.version.nodes.map((node) => {
-    const nodeKey = `${laneKey}_${node.nodeKey}`
-    keyMap.set(node.nodeKey, nodeKey)
+    const nodeKey = keyMap.get(node.nodeKey) ?? `${laneKey}_${node.nodeKey}`
     return {
       kind: 'BUSINESS_FLOW_NODE',
       businessFlowId,
@@ -696,6 +726,12 @@ export function placeSwimlaneComponent(
 	      description: node.description,
 	      actor: node.actor,
 	      businessRule: node.businessRule,
+	      semanticProfileKey: node.semanticProfileKey,
+	      semanticProfileVersion: node.semanticProfileVersion,
+	      semanticPayloadJson: node.semanticPayloadJson,
+	      taskUiJson: node.taskUiJson ?? null,
+	      processContainerJson: node.processContainerJson ?? null,
+	      containerNodeKey: node.containerNodeKey ? keyMap.get(node.containerNodeKey) ?? null : null,
 	      erRefs: node.erRefs ?? [],
       position: {
         x: position.x + 24 + node.position.x,
@@ -730,6 +766,9 @@ export function placeSwimlaneComponent(
 	        label: edge.label,
 	        conditionText: edge.conditionText,
 	        dataContract: edge.dataContractJson as BusinessFlowEdgeRecord['dataContract'],
+	        semanticProfileKey: edge.semanticProfileKey,
+	        semanticProfileVersion: edge.semanticProfileVersion,
+	        semanticPayloadJson: edge.semanticPayloadJson,
         isCrossLane: false,
         sourceType: 'NODE',
         sourceNodeKey,
@@ -787,6 +826,15 @@ export function newComponentNodeDraft(
     businessRule: null,
     inputSummary: null,
     outputSummary: null,
+    semanticProfileKey: null,
+    semanticProfileVersion: null,
+    semanticPayloadJson: {},
+    taskUiJson: null,
+    processContainerJson: bpmnProfile.bpmnElementType === 'SUB_PROCESS' &&
+      bpmnProfile.bpmnSubProcessKind === 'EMBEDDED'
+      ? { containerMode: 'embedded', calledProcessRef: null, calledProcessVersion: null }
+      : null,
+    containerNodeKey: null,
     erRefs: [],
     position,
     size: bpmnNodeSize(bpmnProfile),

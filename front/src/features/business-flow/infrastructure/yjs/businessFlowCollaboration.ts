@@ -174,6 +174,12 @@ function writeNodeToDoc(
     business_rule: node.businessRule ?? null,
     input_summary: node.inputSummary ?? null,
     output_summary: node.outputSummary ?? null,
+    semantic_profile_key: node.semanticProfileKey ?? null,
+    semantic_profile_version: node.semanticProfileVersion ?? null,
+    semantic_payload_json: node.semanticPayloadJson ?? {},
+    task_ui_json: node.taskUiJson ?? {},
+    process_container_json: node.processContainerJson ?? {},
+    container_node_key: node.containerNodeKey ?? null,
     position_x: node.position.x,
     position_y: node.position.y,
     width: node.size.width,
@@ -220,6 +226,9 @@ function writeEdgeToDoc(edges: Y.Map<unknown>, edge: BusinessFlowEdgeRecord) {
     label: edge.label ?? null,
     condition_text: edge.conditionText ?? null,
     data_contract_json: edge.dataContract ?? {},
+    semantic_profile_key: edge.semanticProfileKey ?? null,
+    semantic_profile_version: edge.semanticProfileVersion ?? null,
+    semantic_payload_json: edge.semanticPayloadJson ?? {},
     origin_component_edge_key: edge.originComponentEdgeKey ?? null,
     is_overridden: edge.isOverridden,
     style_json: edge.styleJson ?? {},
@@ -371,6 +380,18 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       businessRule: raw.business_rule || raw.businessRule
         ? String(raw.business_rule || raw.businessRule)
         : null,
+      semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
+        ? String(raw.semantic_profile_key || raw.semanticProfileKey)
+        : null,
+      semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
+        ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
+        : null,
+      semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || {}) as Record<string, unknown>,
+      taskUiJson: (raw.task_ui_json || raw.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson'],
+      processContainerJson: (raw.process_container_json || raw.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
+      containerNodeKey: raw.container_node_key || raw.containerNodeKey
+        ? String(raw.container_node_key || raw.containerNodeKey)
+        : null,
       erRefs: refsByNodeKey.get(nodeKey) ?? [],
       position: {
         x: numberValue(raw.position_x ?? raw.x),
@@ -427,6 +448,13 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       label: raw.label ? String(raw.label) : null,
       conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : null,
       dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
+      semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
+        ? String(raw.semantic_profile_key || raw.semanticProfileKey)
+        : null,
+      semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
+        ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
+        : null,
+      semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || {}) as Record<string, unknown>,
       isCrossLane,
       sourceType: stringValue(raw.source_type || raw.sourceType, 'NODE') as BusinessFlowEdgeRecord['sourceType'],
       sourceNodeKey,
@@ -607,6 +635,18 @@ function nodeFromDocEntry(
     businessRule: raw.business_rule || raw.businessRule
       ? String(raw.business_rule || raw.businessRule)
       : previous?.businessRule ?? null,
+    semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
+      ? String(raw.semantic_profile_key || raw.semanticProfileKey)
+      : previous?.semanticProfileKey ?? null,
+    semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
+      ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
+      : previous?.semanticProfileVersion ?? null,
+    semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || previous?.semanticPayloadJson || {}) as Record<string, unknown>,
+    taskUiJson: (raw.task_ui_json || raw.taskUiJson || previous?.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson'],
+    processContainerJson: (raw.process_container_json || raw.processContainerJson || previous?.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
+    containerNodeKey: raw.container_node_key || raw.containerNodeKey
+      ? String(raw.container_node_key || raw.containerNodeKey)
+      : previous?.containerNodeKey ?? null,
     erRefs: refsByNodeKey.get(nodeKey) ?? [],
     position: {
       x: numberValue(raw.position_x ?? raw.x, previous?.position.x ?? 0),
@@ -671,6 +711,13 @@ function edgeFromDocEntry(
     label: raw.label ? String(raw.label) : previous?.label ?? null,
     conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : previous?.conditionText ?? null,
     dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || previous?.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
+    semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
+      ? String(raw.semantic_profile_key || raw.semanticProfileKey)
+      : previous?.semanticProfileKey ?? null,
+    semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
+      ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
+      : previous?.semanticProfileVersion ?? null,
+    semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || previous?.semanticPayloadJson || {}) as Record<string, unknown>,
     isCrossLane,
     sourceType: stringValue(raw.source_type || raw.sourceType, previous?.sourceType ?? 'NODE') as BusinessFlowEdgeRecord['sourceType'],
     sourceNodeKey,

@@ -45,6 +45,12 @@ class SwimlaneComponentNodeDTO(BaseModel):
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
+    semantic_profile_key: str | None = None
+    semantic_profile_version: int | None = None
+    semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    task_ui_json: dict[str, Any] = Field(default_factory=dict)
+    process_container_json: dict[str, Any] = Field(default_factory=dict)
+    container_node_key: str | None = None
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -70,6 +76,9 @@ class SwimlaneComponentEdgeDTO(BaseModel):
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    semantic_profile_key: str | None = None
+    semantic_profile_version: int | None = None
+    semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -141,6 +150,12 @@ class SwimlaneComponentNodeInput(BaseModel):
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
+    semantic_profile_key: str | None = None
+    semantic_profile_version: int | None = None
+    semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    task_ui_json: dict[str, Any] = Field(default_factory=dict)
+    process_container_json: dict[str, Any] = Field(default_factory=dict)
+    container_node_key: str | None = None
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -164,6 +179,9 @@ class SwimlaneComponentEdgeInput(BaseModel):
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    semantic_profile_key: str | None = None
+    semantic_profile_version: int | None = None
+    semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -218,6 +236,12 @@ class BusinessFlowNodeDTO(BaseModel):
     business_rule: str | None = None
     input_summary: str | None = None
     output_summary: str | None = None
+    semantic_profile_key: str | None = None
+    semantic_profile_version: int | None = None
+    semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    task_ui_json: dict[str, Any] = Field(default_factory=dict)
+    process_container_json: dict[str, Any] = Field(default_factory=dict)
+    container_node_key: str | None = None
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -252,6 +276,9 @@ class BusinessFlowEdgeDTO(BaseModel):
     label: str | None = None
     condition_text: str | None = None
     data_contract_json: dict[str, Any] = Field(default_factory=dict)
+    semantic_profile_key: str | None = None
+    semantic_profile_version: int | None = None
+    semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
     origin_component_edge_key: str | None = None
     is_overridden: bool = False
     style_json: dict[str, Any] = Field(default_factory=dict)
@@ -299,6 +326,7 @@ class BusinessFlowEditorStateResponse(BaseModel):
     lane_instances: list[BusinessFlowLaneInstanceDTO] = Field(default_factory=list)
     nodes: list[BusinessFlowNodeDTO] = Field(default_factory=list)
     edges: list[BusinessFlowEdgeDTO] = Field(default_factory=list)
+    quality_issues: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class BusinessFlowHistoryOpDTO(BaseModel):

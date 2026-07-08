@@ -101,5 +101,13 @@ def run_migrations() -> None:
                 migrations_dir / "015_bpmn_generalization_cleanup.sql"
             ).read_text(encoding="utf-8")
             cur.execute(bpmn_cleanup_sql)
+            semantic_profile_sql = (
+                migrations_dir / "016_business_semantic_profile.sql"
+            ).read_text(encoding="utf-8")
+            cur.execute(semantic_profile_sql)
+            task_ui_process_container_sql = (
+                migrations_dir / "017_bpmn_task_ui_process_container.sql"
+            ).read_text(encoding="utf-8")
+            cur.execute(task_ui_process_container_sql)
             database_connection_service.seed_env_target_connection(cur)
         conn.commit()

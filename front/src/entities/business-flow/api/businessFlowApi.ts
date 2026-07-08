@@ -14,10 +14,12 @@ import type {
   BusinessFlowNodeType,
   CanvasPosition,
   LocalBusinessFlowCanvas,
+  ProcessContainerConfig,
   SwimlaneComponent,
   SwimlaneComponentEdge,
   SwimlaneComponentNode,
   SwimlaneComponentVersion,
+  TaskUiContext,
 } from '@/entities/business-flow/model/types'
 
 export type BusinessFlowBinding = {
@@ -106,6 +108,12 @@ type ApiSwimlaneComponentNode = {
   business_rule?: string | null
   input_summary?: string | null
   output_summary?: string | null
+  semantic_profile_key?: string | null
+  semantic_profile_version?: number | null
+  semantic_payload_json?: BusinessFlowJson | null
+  task_ui_json?: TaskUiContext | null
+  process_container_json?: ProcessContainerConfig | null
+  container_node_key?: string | null
   position_x: number
   position_y: number
   width: number
@@ -138,6 +146,9 @@ type ApiSwimlaneComponentEdge = {
   label?: string | null
   condition_text?: string | null
   data_contract_json?: BusinessFlowJson | null
+  semantic_profile_key?: string | null
+  semantic_profile_version?: number | null
+  semantic_payload_json?: BusinessFlowJson | null
   style_json?: BusinessFlowJson | null
   properties_json?: BusinessFlowJson | null
 }
@@ -197,6 +208,12 @@ export type SaveSwimlaneComponentVersionBody = {
 	    businessRule?: string | null
 	    inputSummary?: string | null
 	    outputSummary?: string | null
+      semanticProfileKey?: string | null
+      semanticProfileVersion?: number | null
+      semanticPayloadJson?: BusinessFlowJson | null
+      taskUiJson?: TaskUiContext | null
+      processContainerJson?: ProcessContainerConfig | null
+      containerNodeKey?: string | null
 	    position: CanvasPosition
     size: { width: number; height: number }
     erRefs?: Array<{
@@ -224,6 +241,9 @@ export type SaveSwimlaneComponentVersionBody = {
 	    label?: string | null
 	    conditionText?: string | null
 	    dataContractJson?: BusinessFlowJson | null
+      semanticProfileKey?: string | null
+      semanticProfileVersion?: number | null
+      semanticPayloadJson?: BusinessFlowJson | null
 	    styleJson?: BusinessFlowJson | null
     propertiesJson?: BusinessFlowJson | null
   }>
@@ -291,6 +311,12 @@ type ApiBusinessFlowNode = {
   business_rule?: string | null
   input_summary?: string | null
   output_summary?: string | null
+  semantic_profile_key?: string | null
+  semantic_profile_version?: number | null
+  semantic_payload_json?: BusinessFlowJson | null
+  task_ui_json?: TaskUiContext | null
+  process_container_json?: ProcessContainerConfig | null
+  container_node_key?: string | null
   position_x: number
   position_y: number
   width: number
@@ -332,6 +358,9 @@ type ApiBusinessFlowEdge = {
   label?: string | null
   condition_text?: string | null
   data_contract_json?: BusinessFlowJson | null
+  semantic_profile_key?: string | null
+  semantic_profile_version?: number | null
+  semantic_payload_json?: BusinessFlowJson | null
   origin_component_edge_key?: string | null
   is_overridden: boolean
   style_json?: BusinessFlowJson | null
@@ -345,6 +374,7 @@ type ApiBusinessFlowEditorState = {
   lane_instances: ApiBusinessFlowLaneInstance[]
   nodes: ApiBusinessFlowNode[]
   edges: ApiBusinessFlowEdge[]
+  quality_issues?: BusinessFlowJson[]
 }
 
 async function apiErrorMessage(res: Response) {
@@ -382,6 +412,12 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     businessRule: node.business_rule ?? null,
     inputSummary: node.input_summary ?? null,
     outputSummary: node.output_summary ?? null,
+    semanticProfileKey: node.semantic_profile_key ?? null,
+    semanticProfileVersion: node.semantic_profile_version ?? null,
+    semanticPayloadJson: node.semantic_payload_json ?? {},
+    taskUiJson: node.task_ui_json ?? null,
+    processContainerJson: node.process_container_json ?? null,
+    containerNodeKey: node.container_node_key ?? null,
     position: { x: Number(node.position_x), y: Number(node.position_y) },
     size: { width: Number(node.width), height: Number(node.height) },
     erRefs: (node.er_refs ?? []).map((ref) => ({
@@ -419,6 +455,9 @@ function normalizeSwimlaneComponentEdge(edge: ApiSwimlaneComponentEdge): Swimlan
     label: edge.label ?? null,
     conditionText: edge.condition_text ?? null,
     dataContractJson: edge.data_contract_json ?? null,
+    semanticProfileKey: edge.semantic_profile_key ?? null,
+    semanticProfileVersion: edge.semantic_profile_version ?? null,
+    semanticPayloadJson: edge.semantic_payload_json ?? {},
     styleJson: edge.style_json ?? null,
     propertiesJson: mergeBpmnIntoProperties(edge.properties_json, bpmnProfile),
   }
@@ -492,6 +531,12 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         business_rule: node.businessRule,
         input_summary: node.inputSummary,
         output_summary: node.outputSummary,
+        semantic_profile_key: node.semanticProfileKey,
+        semantic_profile_version: node.semanticProfileVersion,
+        semantic_payload_json: node.semanticPayloadJson ?? {},
+        task_ui_json: node.taskUiJson ?? {},
+        process_container_json: node.processContainerJson ?? {},
+        container_node_key: node.containerNodeKey ?? null,
         position_x: node.position.x,
         position_y: node.position.y,
         width: node.size.width,
@@ -531,6 +576,9 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         label: edge.label,
         condition_text: edge.conditionText,
         data_contract_json: edge.dataContractJson ?? {},
+        semantic_profile_key: edge.semanticProfileKey,
+        semantic_profile_version: edge.semanticProfileVersion,
+        semantic_payload_json: edge.semanticPayloadJson ?? {},
         style_json: edge.styleJson ?? {},
         properties_json: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
       }
@@ -598,6 +646,12 @@ function normalizeBusinessFlowEditorState(
         description: node.description ?? null,
         actor: node.actor ?? null,
         businessRule: node.business_rule ?? null,
+        semanticProfileKey: node.semantic_profile_key ?? null,
+        semanticProfileVersion: node.semantic_profile_version ?? null,
+        semanticPayloadJson: node.semantic_payload_json ?? {},
+        taskUiJson: node.task_ui_json ?? null,
+        processContainerJson: node.process_container_json ?? null,
+        containerNodeKey: node.container_node_key ?? null,
         erRefs: (node.er_refs ?? []).map((ref) => ({
           id: ref.id,
           erDiagramId: ref.er_diagram_id,
@@ -651,6 +705,9 @@ function normalizeBusinessFlowEditorState(
         label: edge.label ?? null,
         conditionText: edge.condition_text ?? null,
         dataContract: edge.data_contract_json as BusinessFlowEdgeRecord['dataContract'],
+        semanticProfileKey: edge.semantic_profile_key ?? null,
+        semanticProfileVersion: edge.semantic_profile_version ?? null,
+        semanticPayloadJson: edge.semantic_payload_json ?? {},
         isCrossLane,
         sourceType: edge.source_type,
         sourceNodeKey: edge.source_node_key ?? null,

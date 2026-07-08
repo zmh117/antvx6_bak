@@ -603,6 +603,7 @@ def agent_context(
         version=data["version"],
         text=data["text"],
         documents=data["documents"],
+        business_flow_context=data.get("businessFlowContext") or {},
     )
 
 

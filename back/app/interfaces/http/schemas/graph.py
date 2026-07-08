@@ -214,6 +214,7 @@ class AgentContextResponse(BaseModel):
     version: int
     text: str
     documents: list[dict[str, Any]] = Field(default_factory=list)
+    business_flow_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChangeLogEntry(BaseModel):

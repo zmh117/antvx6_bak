@@ -94,16 +94,10 @@ export const BPMN_NODE_OPTIONS: ReadonlyArray<{
     profile: { bpmnElementType: 'TASK', bpmnTaskType: 'NONE' },
   },
   {
-    key: 'activity-sub-process',
-    label: '子流程',
+    key: 'activity-process-container',
+    label: '流程容器',
     group: '活动',
     profile: { bpmnElementType: 'SUB_PROCESS', bpmnSubProcessKind: 'EMBEDDED' },
-  },
-  {
-    key: 'activity-call',
-    label: '调用活动',
-    group: '活动',
-    profile: { bpmnElementType: 'CALL_ACTIVITY' },
   },
   {
     key: 'activity-transaction',
@@ -283,7 +277,7 @@ export function bpmnNodeTitle(profile: BpmnNodeProfile) {
     return '排他网关'
   }
   if (profile.bpmnElementType === 'SUB_PROCESS') {
-    return profile.bpmnSubProcessKind === 'TRANSACTION' ? '事务' : '子流程'
+    return profile.bpmnSubProcessKind === 'TRANSACTION' ? '事务' : '流程容器'
   }
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return '调用活动'
   if (profile.bpmnElementType === 'DATA_OBJECT') return '数据对象'
@@ -301,9 +295,9 @@ export function bpmnNodeOptionKey(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'SUB_PROCESS') {
     return profile.bpmnSubProcessKind === 'TRANSACTION'
       ? 'activity-transaction'
-      : 'activity-sub-process'
+      : 'activity-process-container'
   }
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'activity-call'
+  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'activity-process-container'
   if (profile.bpmnElementType === 'GATEWAY') {
     return `gateway-${profile.bpmnGatewayType?.toLowerCase() ?? 'exclusive'}`
   }
@@ -323,7 +317,7 @@ export function bpmnNodeSize(profile: BpmnNodeProfile): CanvasSize {
     profile.bpmnElementType === 'DATA_OUTPUT'
   ) return { width: 96, height: 72 }
   if (profile.bpmnElementType === 'DATA_STORE') return { width: 108, height: 78 }
-  if (profile.bpmnElementType === 'SUB_PROCESS') return { width: 180, height: 92 }
+  if (profile.bpmnElementType === 'SUB_PROCESS') return { width: 260, height: 170 }
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return { width: 170, height: 74 }
   return { width: 148, height: 64 }
 }
