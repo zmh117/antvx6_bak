@@ -17,7 +17,6 @@ import {
   BPMN_NODE_OPTIONS,
   bpmnNodeTitle,
   isDataBpmnElement,
-  isProcessContainerConfig,
   legacyEdgeTypeForBpmn,
   legacyNodeTypeForBpmn,
   mergeBpmnIntoProperties,
@@ -90,7 +89,6 @@ export type FlowCellData = {
 }
 
 type Point = { x: number; y: number }
-type Bounds = { x: number; y: number; width: number; height: number }
 type TerminalData = ReturnType<Edge['getSource']>
 
 export const BUSINESS_FLOW_LANE_LAYOUT = {
@@ -100,16 +98,6 @@ export const BUSINESS_FLOW_LANE_LAYOUT = {
   paddingBottom: 32,
   minWidth: 360,
   minHeight: 360,
-}
-
-const PROCESS_CONTAINER_LAYOUT = {
-  headerHeight: 38,
-  paddingLeft: 24,
-  paddingRight: 32,
-  paddingTop: 44,
-  paddingBottom: 32,
-  minWidth: 260,
-  minHeight: 170,
 }
 
 const LANE_Z_INDEX_BASE = 10
@@ -168,22 +156,11 @@ function nodeProfileKey(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'TASK') return `task-${profile.bpmnTaskType ?? 'NONE'}`
   if (profile.bpmnElementType === 'GATEWAY') return `gateway-${profile.bpmnGatewayType ?? 'EXCLUSIVE'}`
   if (profile.bpmnElementType === 'SUB_PROCESS') {
-    return `sub-process-${profile.bpmnSubProcessKind ?? 'EMBEDDED'}`
+    return profile.bpmnSubProcessKind === 'TRANSACTION'
+      ? 'sub-process-TRANSACTION'
+      : 'task-NONE'
   }
   return profile.bpmnElementType
-}
-
-function isProcessContainerProfile(profile: BpmnNodeProfile) {
-  return profile.bpmnElementType === 'SUB_PROCESS' && profile.bpmnSubProcessKind === 'EMBEDDED'
-}
-
-function isProcessContainerCell(cell?: Cell | null) {
-  if (!(cell instanceof Node) || !isFlowNodeCell(cell)) return false
-  const data = readCellData(cell)
-  return Boolean(
-    isProcessContainerProfile(nodeProfileFromData(data)) &&
-      isProcessContainerConfig(data.processContainerJson),
-  )
 }
 
 function shapeNameForProfile(profile: BpmnNodeProfile) {
@@ -260,18 +237,6 @@ function nodeMarkup(profileOrType: BpmnNodeProfile | BusinessFlowNodeType) {
     return [
       { tagName: 'rect', selector: 'body' },
       { tagName: 'rect', selector: 'inner' },
-      { tagName: 'text', selector: 'label' },
-      { tagName: 'text', selector: 'badge' },
-    ]
-  }
-  if (
-    profile.bpmnElementType === 'SUB_PROCESS' &&
-    profile.bpmnSubProcessKind === 'EMBEDDED'
-  ) {
-    return [
-      { tagName: 'rect', selector: 'body' },
-      { tagName: 'rect', selector: 'header' },
-      { tagName: 'rect', selector: 'content' },
       { tagName: 'text', selector: 'label' },
       { tagName: 'text', selector: 'badge' },
     ]
@@ -372,57 +337,6 @@ function nodeAttrs(
       },
       label: labelAttrs(title),
       badge: badgeAttrs(typeText(profile), 8, 14, 'start'),
-    }
-  }
-  if (
-    profile.bpmnElementType === 'SUB_PROCESS' &&
-    profile.bpmnSubProcessKind === 'EMBEDDED'
-  ) {
-    return {
-      body: {
-        rx: 8,
-        ry: 8,
-        ...body,
-        strokeWidth: 1.8,
-      },
-      header: {
-        refWidth: '100%',
-        height: PROCESS_CONTAINER_LAYOUT.headerHeight,
-        rx: 8,
-        ry: 8,
-        fill: '#dbeafe',
-        stroke: body.stroke,
-        strokeWidth: 1.8,
-      },
-      content: {
-        x: 12,
-        y: PROCESS_CONTAINER_LAYOUT.headerHeight + 8,
-        width: 'calc(w - 24)',
-        height: `calc(h - ${PROCESS_CONTAINER_LAYOUT.headerHeight + 20})`,
-        rx: 6,
-        ry: 6,
-        fill: '#ffffff',
-        stroke: '#bfdbfe',
-        strokeDasharray: '6 4',
-        strokeWidth: 1.2,
-        pointerEvents: 'none',
-      },
-      label: {
-        text: title,
-        refX: 14,
-        refY: 19,
-        fill: '#1e3a8a',
-        fontSize: 12,
-        fontWeight: 700,
-        textAnchor: 'start',
-        textVerticalAnchor: 'middle',
-        textWrap: {
-          width: -62,
-          height: PROCESS_CONTAINER_LAYOUT.headerHeight - 8,
-          ellipsis: true,
-        },
-      },
-      badge: badgeAttrs(typeText(profile), '100%', 19, 'end'),
     }
   }
   return {
@@ -583,13 +497,6 @@ export function registerBusinessFlowShapes() {
 
 export function createBusinessFlowGraph(container: HTMLElement) {
   registerBusinessFlowShapes()
-  let activeProcessContainerTarget: Node | null = null
-  const updateProcessContainerTarget = (node: Node | null) => {
-    if (activeProcessContainerTarget?.id === node?.id) return
-    if (activeProcessContainerTarget) setProcessContainerDropTarget(activeProcessContainerTarget, false)
-    activeProcessContainerTarget = node
-    if (activeProcessContainerTarget) setProcessContainerDropTarget(activeProcessContainerTarget, true)
-  }
   const graph = new Graph({
     container,
     autoResize: true,
@@ -656,14 +563,12 @@ export function createBusinessFlowGraph(container: HTMLElement) {
     new Transform({
       resizing: {
         enabled(node) {
-          return readCellData(node).cellRole === 'LANE_INSTANCE' || isProcessContainerCell(node)
+          return readCellData(node).cellRole === 'LANE_INSTANCE'
         },
         minWidth(node) {
-          if (isProcessContainerCell(node)) return minProcessContainerSize(node).width
           return minLaneSize(node).width
         },
         minHeight(node) {
-          if (isProcessContainerCell(node)) return minProcessContainerSize(node).height
           return minLaneSize(node).height
         },
         orthogonal: true,
@@ -675,32 +580,13 @@ export function createBusinessFlowGraph(container: HTMLElement) {
   graph.on('node:moved', ({ node }) => {
     const role = readCellData(node).cellRole
     if (!(node instanceof Node) || (role !== 'FLOW_NODE' && role !== 'COMPONENT_NODE')) return
-    settleProcessContainerEmbedding(graph, node)
-    updateProcessContainerTarget(null)
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true, shrinkToFit: false })
-  })
-  graph.on('node:change:position', ({ node, options }) => {
-    const role = readCellData(node).cellRole
-    if (!(node instanceof Node) || (role !== 'FLOW_NODE' && role !== 'COMPONENT_NODE')) return
-    if (options?.translateBy && options.translateBy !== node.id) return
-    updateProcessContainerTarget(processContainerDropTargetForNode(graph, node))
-  })
-  graph.on('node:resized', ({ node }) => {
-    if (!(node instanceof Node) || !isProcessContainerCell(node)) return
-    graph.batchUpdate(() => {
-      fitProcessContainerToChildren(node, { shrinkToFit: false })
-      const lane = laneAncestor(node)
-      if (lane) fitLaneToChildren(lane, { preserveManualSize: true, shrinkToFit: false })
-    })
   })
   return graph
 }
 
 export function isDeletableBusinessFlowCell(cell: Cell) {
   const role = readCellData(cell).cellRole
-  if (cell instanceof Node && isProcessContainerCell(cell) && flowNodeChildren(cell).length > 0) {
-    return false
-  }
   return (
     role === 'FLOW_NODE' ||
     role === 'FLOW_EDGE' ||
@@ -809,78 +695,6 @@ function laneAncestor(node: Node): Node | null {
   return null
 }
 
-function processContainerParent(node: Node): Node | null {
-  const parent = node.getParent()
-  return isProcessContainerCell(parent) ? parent as Node : null
-}
-
-function processContainerContentBounds(container: Node): Bounds {
-  const bbox = container.getBBox()
-  const x = bbox.x + 12
-  const y = bbox.y + PROCESS_CONTAINER_LAYOUT.headerHeight + 8
-  const width = Math.max(0, bbox.width - 24)
-  const height = Math.max(0, bbox.height - PROCESS_CONTAINER_LAYOUT.headerHeight - 20)
-  return { x, y, width, height }
-}
-
-function processContainerContentContainsBounds(container: Node, bounds: Bounds) {
-  const content = processContainerContentBounds(container)
-  return (
-    bounds.x >= content.x &&
-    bounds.y >= content.y &&
-    bounds.x + bounds.width <= content.x + content.width &&
-    bounds.y + bounds.height <= content.y + content.height
-  )
-}
-
-function setProcessContainerDropTarget(container: Node, active: boolean) {
-  container.attr({
-    body: {
-      stroke: active ? '#0f766e' : '#2563eb',
-      strokeWidth: active ? 2.4 : 1.8,
-      fill: active ? '#ecfdf5' : '#eff6ff',
-    },
-    header: {
-      fill: active ? '#99f6e4' : '#dbeafe',
-      stroke: active ? '#0f766e' : '#2563eb',
-      strokeWidth: active ? 2.4 : 1.8,
-    },
-    content: {
-      stroke: active ? '#0f766e' : '#bfdbfe',
-      strokeWidth: active ? 1.8 : 1.2,
-      fill: active ? '#f0fdfa' : '#ffffff',
-    },
-  })
-}
-
-function processContainerDropTargetForNode(graph: Graph, node: Node) {
-  if (isProcessContainerCell(node)) return null
-  if (!isFlowNodeCell(node)) return null
-  const lane = laneAncestor(node)
-  const bbox = node.getBBox()
-  const candidates = graph
-    .getNodes()
-    .filter((candidate) => (
-      candidate.id !== node.id &&
-      isProcessContainerCell(candidate) &&
-      (!lane || laneAncestor(candidate)?.id === lane.id) &&
-      processContainerContentContainsBounds(candidate, bbox)
-    ))
-    .sort((left, right) => {
-      const leftSize = left.size()
-      const rightSize = right.size()
-      return leftSize.width * leftSize.height - rightSize.width * rightSize.height
-    })
-  return candidates[0] ?? null
-}
-
-function refreshConnectedEdges(graph: Graph, node: Node) {
-  graph.getConnectedEdges(node).forEach((edge) => {
-    const view = graph.findViewByCell(edge) as { update?: () => void } | null
-    view?.update?.()
-  })
-}
-
 function laneKeyForNodeCell(node: Node) {
   const data = readCellData(node)
   const lane = laneAncestor(node)
@@ -889,61 +703,10 @@ function laneKeyForNodeCell(node: Node) {
 
 function nodePositionForStorage(node: Node) {
   const parent = node.getParent()
-  if (parent instanceof Node && (isProcessContainerCell(parent) || readCellData(parent).cellRole === 'LANE_INSTANCE')) {
+  if (parent instanceof Node && readCellData(parent).cellRole === 'LANE_INSTANCE') {
     return node.position({ relative: true })
   }
   return node.position()
-}
-
-export function settleProcessContainerEmbedding(graph: Graph, node: Node) {
-  if (isProcessContainerCell(node)) return
-  const lane = laneAncestor(node)
-  const currentContainer = processContainerParent(node)
-  const nextContainer = processContainerDropTargetForNode(graph, node)
-  if (nextContainer && currentContainer?.id !== nextContainer.id) {
-    const absolute = node.position()
-    graph.batchUpdate(() => {
-      nextContainer.addChild(node)
-      const parentPosition = nextContainer.position()
-      node.position(absolute.x - parentPosition.x, absolute.y - parentPosition.y, { relative: true })
-      node.setData(
-        {
-          ...readCellData(node),
-          laneInstanceKey: lane?.id ?? readCellData(node).laneInstanceKey,
-          containerNodeKey: nextContainer.id,
-        },
-        { silent: true },
-      )
-      fitProcessContainerToChildren(nextContainer, { shrinkToFit: false })
-      if (lane) fitLaneToChildren(lane, { preserveManualSize: true, shrinkToFit: false })
-      refreshConnectedEdges(graph, node)
-    })
-    return
-  }
-  if (!nextContainer && currentContainer) {
-    const absolute = node.position()
-    graph.batchUpdate(() => {
-      if (lane) {
-        lane.addChild(node)
-        const lanePosition = lane.position()
-        node.position(absolute.x - lanePosition.x, absolute.y - lanePosition.y, { relative: true })
-      } else {
-        node.setParent(null, { silent: true })
-        node.position(absolute.x, absolute.y)
-      }
-      node.setData(
-        {
-          ...readCellData(node),
-          laneInstanceKey: lane?.id ?? readCellData(node).laneInstanceKey,
-          containerNodeKey: null,
-        },
-        { silent: true },
-      )
-      fitProcessContainerToChildren(currentContainer, { shrinkToFit: true })
-      if (lane) fitLaneToChildren(lane, { preserveManualSize: true, shrinkToFit: false })
-      refreshConnectedEdges(graph, node)
-    })
-  }
 }
 
 export function defaultBpmnEdgeProfileForEdge(edge: Edge) {
@@ -1010,8 +773,8 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       semanticProfileVersion: draft.semanticProfileVersion ?? null,
       semanticPayloadJson: draft.semanticPayloadJson ?? {},
       taskUiJson: draft.taskUiJson ?? null,
-      processContainerJson: draft.processContainerJson ?? null,
-      containerNodeKey: draft.containerNodeKey ?? null,
+      processContainerJson: null,
+      containerNodeKey: null,
       erRefs: draft.erRefs ?? [],
       styleJson: draft.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(draft.propertiesJson, bpmnProfile),
@@ -1062,8 +825,8 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       semanticProfileVersion: record.semanticProfileVersion ?? null,
       semanticPayloadJson: record.semanticPayloadJson ?? {},
       taskUiJson: record.taskUiJson ?? null,
-      processContainerJson: record.processContainerJson ?? null,
-      containerNodeKey: record.containerNodeKey ?? null,
+      processContainerJson: null,
+      containerNodeKey: null,
       erRefs: record.erRefs ?? [],
       styleJson: record.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(record.propertiesJson, bpmnProfile),
@@ -1072,34 +835,111 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
   })
 }
 
+type LegacyContainerCapableNode = {
+  nodeKey: string
+  bpmnElementType?: BpmnNodeProfile['bpmnElementType'] | null
+  bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
+  processContainerJson?: ProcessContainerConfig | null
+  containerNodeKey?: string | null
+  position: Point
+}
+
+function hasLegacyProcessContainerConfig(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const mode = (value as Record<string, unknown>).containerMode
+  return mode === 'embedded' || mode === 'reusableCall'
+}
+
+function isLegacyProcessContainerNode(node: LegacyContainerCapableNode) {
+  return (
+    node.bpmnElementType === 'SUB_PROCESS' &&
+    node.bpmnSubProcessKind === 'EMBEDDED' &&
+    hasLegacyProcessContainerConfig(node.processContainerJson)
+  )
+}
+
+function legacyContainerOffset(
+  node: LegacyContainerCapableNode,
+  nodeByKey: Map<string, LegacyContainerCapableNode>,
+  removedKeys: Set<string>,
+) {
+  let x = 0
+  let y = 0
+  let parentKey = node.containerNodeKey ?? null
+  const seen = new Set<string>()
+  while (parentKey && removedKeys.has(parentKey) && !seen.has(parentKey)) {
+    seen.add(parentKey)
+    const parent = nodeByKey.get(parentKey)
+    if (!parent) break
+    x += parent.position.x
+    y += parent.position.y
+    parentKey = parent.containerNodeKey ?? null
+  }
+  return { x, y }
+}
+
+function stripLegacyProcessContainerNodes<T extends LegacyContainerCapableNode>(nodes: T[]): T[] {
+  const nodeByKey = new Map(nodes.map((node) => [node.nodeKey, node]))
+  const removedKeys = new Set(
+    nodes.filter(isLegacyProcessContainerNode).map((node) => node.nodeKey),
+  )
+  return nodes.flatMap((node) => {
+    if (removedKeys.has(node.nodeKey)) return []
+    const offset = legacyContainerOffset(node, nodeByKey, removedKeys)
+    return [{
+      ...node,
+      processContainerJson: null,
+      containerNodeKey: null,
+      position: {
+        x: node.position.x + offset.x,
+        y: node.position.y + offset.y,
+      },
+    } as T]
+  })
+}
+
+function stripEdgesForNodes<T extends { sourceNodeKey?: string | null; targetNodeKey?: string | null }>(
+  edges: T[],
+  nodeKeys: Set<string>,
+) {
+  return edges.filter((edge) => {
+    if (edge.sourceNodeKey && !nodeKeys.has(edge.sourceNodeKey)) return false
+    if (edge.targetNodeKey && !nodeKeys.has(edge.targetNodeKey)) return false
+    return true
+  })
+}
+
+export function stripProcessContainerCapabilityFromCanvas(
+  canvas: LocalBusinessFlowCanvas,
+): LocalBusinessFlowCanvas {
+  const nodes = stripLegacyProcessContainerNodes(canvas.nodes)
+  const nodeKeys = new Set(nodes.map((node) => node.nodeKey))
+  return {
+    ...canvas,
+    nodes,
+    edges: stripEdgesForNodes(canvas.edges, nodeKeys),
+  }
+}
+
+function stripProcessContainerCapabilityFromComponentVersion(
+  version: SwimlaneComponentVersion,
+): SwimlaneComponentVersion {
+  const nodes = stripLegacyProcessContainerNodes(version.nodes)
+  const nodeKeys = new Set(nodes.map((node) => node.nodeKey))
+  return {
+    ...version,
+    nodes,
+    edges: stripEdgesForNodes(version.edges, nodeKeys),
+  }
+}
+
 export function renderComponentVersion(graph: Graph, version: SwimlaneComponentVersion) {
   graph.clearCells()
-  const nodeByKey = new Map(version.nodes.map((node) => [node.nodeKey, node]))
-  version.nodes
-    .slice()
-    .sort((left, right) => Number(Boolean(left.containerNodeKey)) - Number(Boolean(right.containerNodeKey)))
-    .forEach((node) => {
-      const container = node.containerNodeKey ? nodeByKey.get(node.containerNodeKey) : null
-      const x6Node = addComponentNode(graph, {
-        ...node,
-        position: container
-          ? {
-              x: container.position.x + node.position.x,
-              y: container.position.y + node.position.y,
-            }
-          : node.position,
-      })
-      const parent = node.containerNodeKey ? graph.getCellById(node.containerNodeKey) : null
-      if (parent instanceof Node && isProcessContainerCell(parent)) {
-        parent.addChild(x6Node)
-        x6Node.position(node.position.x, node.position.y, { relative: true })
-        x6Node.setData(
-          { ...readCellData(x6Node), containerNodeKey: node.containerNodeKey },
-          { silent: true },
-        )
-      }
-    })
-  version.edges.forEach((edge) => {
+  const cleanVersion = stripProcessContainerCapabilityFromComponentVersion(version)
+  cleanVersion.nodes.forEach((node) => {
+    addComponentNode(graph, node)
+  })
+  cleanVersion.edges.forEach((edge) => {
     const bpmnProfile = normalizeBpmnEdgeProfile({
       edgeType: edge.edgeType,
       bpmnFlowType: edge.bpmnFlowType,
@@ -1168,41 +1008,22 @@ function addFlowNodeCell(
   node: BusinessFlowNodeRecord,
   laneById: Map<string, LocalBusinessFlowCanvas['laneInstances'][number]>,
   laneKeyById: Map<string, string>,
-  nodeByKey: Map<string, BusinessFlowNodeRecord> = new Map(),
 ) {
   const laneKey = laneKeyById.get(node.laneInstanceId)
   const laneRecord = laneById.get(node.laneInstanceId)
-  const containerRecord = node.containerNodeKey ? nodeByKey.get(node.containerNodeKey) : null
   const absolutePosition =
-    laneRecord && containerRecord
+    laneRecord
       ? {
-          x: laneRecord.position.x + containerRecord.position.x + node.position.x,
-          y: laneRecord.position.y + containerRecord.position.y + node.position.y,
+          x: laneRecord.position.x + node.position.x,
+          y: laneRecord.position.y + node.position.y,
         }
-      : laneRecord
-        ? {
-            x: laneRecord.position.x + node.position.x,
-            y: laneRecord.position.y + node.position.y,
-          }
-        : node.position
+      : node.position
   const x6Node = addFlowNode(graph, {
     ...node,
     position: absolutePosition,
   })
   const lane = laneKey ? graph.getCellById(laneKey) : null
-  const container = node.containerNodeKey ? graph.getCellById(node.containerNodeKey) : null
-  if (container instanceof Node && isProcessContainerCell(container)) {
-    container.addChild(x6Node)
-    x6Node.position(node.position.x, node.position.y, { relative: true })
-    x6Node.setData(
-      {
-        ...readCellData(x6Node),
-        laneInstanceKey: laneKey,
-        containerNodeKey: node.containerNodeKey,
-      },
-      { silent: true },
-    )
-  } else if (lane instanceof Node) {
+  if (lane instanceof Node) {
     lane.addChild(x6Node)
     x6Node.position(node.position.x, node.position.y, { relative: true })
     x6Node.setData(
@@ -1257,17 +1078,14 @@ function addFlowEdgeCell(
 }
 
 export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlowCanvas) {
+  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
   graph.clearCells()
-  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
-  const nodeByKey = new Map(canvas.nodes.map((node) => [node.nodeKey, node]))
-  canvas.laneInstances.forEach((lane) => addLaneInstanceCell(graph, canvas, lane))
-  canvas.nodes
-    .slice()
-    .sort((left, right) => Number(Boolean(left.containerNodeKey)) - Number(Boolean(right.containerNodeKey)))
-    .forEach((node) => addFlowNodeCell(graph, node, laneById, laneKeyById, nodeByKey))
+  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  cleanCanvas.laneInstances.forEach((lane) => addLaneInstanceCell(graph, cleanCanvas, lane))
+  cleanCanvas.nodes.forEach((node) => addFlowNodeCell(graph, node, laneById, laneKeyById))
   normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
-  canvas.edges.forEach((edge) => addFlowEdgeCell(graph, canvas, edge))
+  cleanCanvas.edges.forEach((edge) => addFlowEdgeCell(graph, cleanCanvas, edge))
   graph.zoomToFit({ maxScale: 1, minScale: 0.7, padding: 40 })
 }
 
@@ -1280,27 +1098,27 @@ export function addMissingBusinessFlowCells(
   graph: Graph,
   canvas: LocalBusinessFlowCanvas,
 ): boolean {
-  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
-  const nodeByKey = new Map(canvas.nodes.map((node) => [node.nodeKey, node]))
+  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
+  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
   let added = false
-  canvas.laneInstances.forEach((lane) => {
+  cleanCanvas.laneInstances.forEach((lane) => {
     if (graph.getCellById(lane.instanceKey)) return
-    addLaneInstanceCell(graph, canvas, lane)
+    addLaneInstanceCell(graph, cleanCanvas, lane)
     added = true
   })
-  canvas.nodes.forEach((node) => {
+  cleanCanvas.nodes.forEach((node) => {
     if (graph.getCellById(node.nodeKey)) return
-    addFlowNodeCell(graph, node, laneById, laneKeyById, nodeByKey)
+    addFlowNodeCell(graph, node, laneById, laneKeyById)
     added = true
   })
   if (added) {
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
   }
-  canvas.edges.forEach((edge) => {
+  cleanCanvas.edges.forEach((edge) => {
     if (!edge.sourceNodeKey || !edge.targetNodeKey) return
     if (graph.getCellById(edge.edgeKey)) return
-    addFlowEdgeCell(graph, canvas, edge)
+    addFlowEdgeCell(graph, cleanCanvas, edge)
   })
   return added
 }
@@ -1358,7 +1176,6 @@ function upsertFlowNodeCell(
   node: BusinessFlowNodeRecord,
   laneById: Map<string, LocalBusinessFlowCanvas['laneInstances'][number]>,
   laneKeyById: Map<string, string>,
-  nodeByKey: Map<string, BusinessFlowNodeRecord> = new Map(),
 ) {
   const laneKey = laneKeyById.get(node.laneInstanceId)
   const laneRecord = laneById.get(node.laneInstanceId)
@@ -1386,14 +1203,10 @@ function upsertFlowNodeCell(
     existing.shape !== expectedShape
   ) {
     if (existing) graph.removeCell(existing)
-    addFlowNodeCell(graph, node, laneById, laneKeyById, nodeByKey)
+    addFlowNodeCell(graph, node, laneById, laneKeyById)
     return { applied: true } satisfies BusinessFlowCanvasPatchResult
   }
-  const container = node.containerNodeKey ? graph.getCellById(node.containerNodeKey) : null
-  if (container instanceof Node && isProcessContainerCell(container)) {
-    container.addChild(existing)
-    existing.position(node.position.x, node.position.y, { relative: true })
-  } else if (lane instanceof Node) {
+  if (lane instanceof Node) {
     lane.addChild(existing)
     existing.position(node.position.x, node.position.y, { relative: true })
   } else {
@@ -1412,7 +1225,7 @@ function upsertFlowNodeCell(
       businessFlowId: canvas.businessFlowId,
       laneInstanceId: node.laneInstanceId,
       laneInstanceKey: laneKey,
-      containerNodeKey: node.containerNodeKey ?? null,
+      containerNodeKey: null,
       nodeKey: node.nodeKey,
       originComponentNodeKey: node.originComponentNodeKey,
       nodeType,
@@ -1427,7 +1240,7 @@ function upsertFlowNodeCell(
       semanticProfileVersion: node.semanticProfileVersion ?? null,
       semanticPayloadJson: node.semanticPayloadJson ?? {},
       taskUiJson: node.taskUiJson ?? null,
-      processContainerJson: node.processContainerJson ?? null,
+      processContainerJson: null,
       erRefs: node.erRefs ?? [],
       styleJson: node.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
@@ -1516,11 +1329,6 @@ function removePatchedNode(graph: Graph, nodeKey: string, edgeDeletes: Set<strin
   if (hasUndeletedEdge) {
     return { applied: false, reason: `node-delete-has-edges:${nodeKey}` } satisfies BusinessFlowCanvasPatchResult
   }
-  if (isProcessContainerCell(cell)) {
-    if (flowNodeChildren(cell).length > 0) {
-      return { applied: false, reason: `node-delete-has-children:${nodeKey}` } satisfies BusinessFlowCanvasPatchResult
-    }
-  }
   graph.removeCell(cell)
   return { applied: true } satisfies BusinessFlowCanvasPatchResult
 }
@@ -1540,11 +1348,12 @@ export function applyBusinessFlowCanvasPatchToGraph(
   canvas: LocalBusinessFlowCanvas,
   patch: BusinessFlowCanvasPatch,
 ): BusinessFlowCanvasPatchResult {
-  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
-  const lanesByKey = new Map(canvas.laneInstances.map((lane) => [lane.instanceKey, lane]))
-  const nodesByKey = new Map(canvas.nodes.map((node) => [node.nodeKey, node]))
-  const edgesByKey = new Map(canvas.edges.map((edge) => [edge.edgeKey, edge]))
+  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
+  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  const lanesByKey = new Map(cleanCanvas.laneInstances.map((lane) => [lane.instanceKey, lane]))
+  const nodesByKey = new Map(cleanCanvas.nodes.map((node) => [node.nodeKey, node]))
+  const edgesByKey = new Map(cleanCanvas.edges.map((edge) => [edge.edgeKey, edge]))
   const nodeDeletes = new Set(patch.nodeDeletes ?? [])
   const edgeDeletes = new Set(patch.edgeDeletes ?? [])
   let result: BusinessFlowCanvasPatchResult = { applied: true }
@@ -1568,7 +1377,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-lane-record:${laneKey}` }
         return
       }
-      upsertLaneCell(graph, canvas, lane)
+      upsertLaneCell(graph, cleanCanvas, lane)
     }
     for (const nodeKey of patch.nodeUpserts ?? []) {
       const node = nodesByKey.get(nodeKey)
@@ -1576,7 +1385,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-node-record:${nodeKey}` }
         return
       }
-      result = upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById, nodesByKey)
+      result = upsertFlowNodeCell(graph, cleanCanvas, node, laneById, laneKeyById)
       if (!result.applied) return
     }
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
@@ -1588,7 +1397,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-er-ref-node:${nodeKey}` }
         return
       }
-      result = upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById, nodesByKey)
+      result = upsertFlowNodeCell(graph, cleanCanvas, node, laneById, laneKeyById)
       if (!result.applied) return
     }
     for (const edgeKey of edgeUpserts) {
@@ -1597,7 +1406,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-edge-record:${edgeKey}` }
         return
       }
-      result = upsertFlowEdgeCell(graph, canvas, edge)
+      result = upsertFlowEdgeCell(graph, cleanCanvas, edge)
       if (!result.applied) return
     }
   })
@@ -1608,12 +1417,12 @@ export function applyBusinessFlowCanvasToGraph(
   graph: Graph,
   canvas: LocalBusinessFlowCanvas,
 ) {
-  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
-  const nodeByKey = new Map(canvas.nodes.map((node) => [node.nodeKey, node]))
-  const incomingLaneKeys = new Set(canvas.laneInstances.map((lane) => lane.instanceKey))
-  const incomingNodeKeys = new Set(canvas.nodes.map((node) => node.nodeKey))
-  const incomingEdgeKeys = new Set(canvas.edges.map((edge) => edge.edgeKey))
+  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
+  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  const incomingLaneKeys = new Set(cleanCanvas.laneInstances.map((lane) => lane.instanceKey))
+  const incomingNodeKeys = new Set(cleanCanvas.nodes.map((node) => node.nodeKey))
+  const incomingEdgeKeys = new Set(cleanCanvas.edges.map((edge) => edge.edgeKey))
 
   graph.batchUpdate(() => {
     graph.getEdges().forEach((edge) => {
@@ -1626,16 +1435,16 @@ export function applyBusinessFlowCanvasToGraph(
       if (role === 'LANE_INSTANCE' && !incomingLaneKeys.has(node.id)) graph.removeCell(node)
     })
 
-    canvas.laneInstances.forEach((lane) => upsertLaneCell(graph, canvas, lane))
+    cleanCanvas.laneInstances.forEach((lane) => upsertLaneCell(graph, cleanCanvas, lane))
 
-    canvas.nodes.forEach((node) => {
-      upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById, nodeByKey)
+    cleanCanvas.nodes.forEach((node) => {
+      upsertFlowNodeCell(graph, cleanCanvas, node, laneById, laneKeyById)
     })
 
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
 
-    canvas.edges.forEach((edge) => {
-      upsertFlowEdgeCell(graph, canvas, edge)
+    cleanCanvas.edges.forEach((edge) => {
+      upsertFlowEdgeCell(graph, cleanCanvas, edge)
     })
   })
 }
@@ -1650,89 +1459,10 @@ export function normalizeBusinessFlowLanes(
 ) {
   let changed = false
   graph.getNodes().forEach((node) => {
-    if (!isProcessContainerCell(node)) return
-    changed = fitProcessContainerToChildren(node, options) || changed
-  })
-  graph.getNodes().forEach((node) => {
     if (readCellData(node).cellRole !== 'LANE_INSTANCE') return
     changed = fitLaneToChildren(node, options) || changed
   })
   return changed
-}
-
-function fitProcessContainerToChildren(
-  container: Node,
-  options: {
-    clampChildren?: boolean
-    shrinkToFit?: boolean
-  } = {},
-) {
-  const children = flowNodeChildren(container)
-  if (!children.length) return false
-  let changed = false
-  let maxRight = PROCESS_CONTAINER_LAYOUT.paddingLeft
-  let maxBottom = PROCESS_CONTAINER_LAYOUT.paddingTop
-  children.forEach((child) => {
-    const relativePosition = child.position({ relative: true })
-    const size = child.size()
-    const nextX = options.clampChildren ?? true
-      ? Math.max(PROCESS_CONTAINER_LAYOUT.paddingLeft, relativePosition.x)
-      : relativePosition.x
-    const nextY = options.clampChildren ?? true
-      ? Math.max(PROCESS_CONTAINER_LAYOUT.paddingTop, relativePosition.y)
-      : relativePosition.y
-    if (nextX !== relativePosition.x || nextY !== relativePosition.y) {
-      child.position(nextX, nextY, { relative: true })
-      changed = true
-    }
-    maxRight = Math.max(maxRight, nextX + size.width)
-    maxBottom = Math.max(maxBottom, nextY + size.height)
-  })
-  const requiredWidth = Math.max(
-    PROCESS_CONTAINER_LAYOUT.minWidth,
-    maxRight + PROCESS_CONTAINER_LAYOUT.paddingRight,
-  )
-  const requiredHeight = Math.max(
-    PROCESS_CONTAINER_LAYOUT.minHeight,
-    maxBottom + PROCESS_CONTAINER_LAYOUT.paddingBottom,
-  )
-  const currentSize = container.size()
-  const canShrink = options.shrinkToFit ?? true
-  const width = canShrink ? requiredWidth : Math.max(currentSize.width, requiredWidth)
-  const height = canShrink ? requiredHeight : Math.max(currentSize.height, requiredHeight)
-  if (currentSize.width !== width || currentSize.height !== height) {
-    container.resize(width, height)
-    changed = true
-  }
-  return changed
-}
-
-function minProcessContainerSize(container: Node) {
-  const children = flowNodeChildren(container)
-  if (!children.length) {
-    return {
-      width: PROCESS_CONTAINER_LAYOUT.minWidth,
-      height: PROCESS_CONTAINER_LAYOUT.minHeight,
-    }
-  }
-  let maxRight = PROCESS_CONTAINER_LAYOUT.paddingLeft
-  let maxBottom = PROCESS_CONTAINER_LAYOUT.paddingTop
-  children.forEach((child) => {
-    const position = child.position({ relative: true })
-    const size = child.size()
-    maxRight = Math.max(maxRight, position.x + size.width)
-    maxBottom = Math.max(maxBottom, position.y + size.height)
-  })
-  return {
-    width: Math.max(
-      PROCESS_CONTAINER_LAYOUT.minWidth,
-      maxRight + PROCESS_CONTAINER_LAYOUT.paddingRight,
-    ),
-    height: Math.max(
-      PROCESS_CONTAINER_LAYOUT.minHeight,
-      maxBottom + PROCESS_CONTAINER_LAYOUT.paddingBottom,
-    ),
-  }
 }
 
 export function fitLaneToChildren(
@@ -1811,7 +1541,6 @@ export function componentDraftFromGraph(graph: Graph) {
     .map((node) => {
       const data = readCellData(node)
       const bpmnProfile = nodeProfileFromData(data)
-      const containerParent = processContainerParent(node)
       const position = nodePositionForStorage(node)
       const size = node.size()
       return {
@@ -1828,8 +1557,8 @@ export function componentDraftFromGraph(graph: Graph) {
         semanticProfileVersion: data.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? {},
         taskUiJson: data.taskUiJson ?? null,
-        processContainerJson: data.processContainerJson ?? null,
-        containerNodeKey: containerParent?.id ?? null,
+        processContainerJson: null,
+        containerNodeKey: null,
         erRefs: data.erRefs ?? [],
         position,
         size,
@@ -1921,7 +1650,6 @@ export function flowDraftFromGraph(
       const bpmnProfile = nodeProfileFromData(data)
       const nodeKey = data.nodeKey ?? node.id
       const previousNode = previousNodes.get(nodeKey)
-      const containerParent = processContainerParent(node)
       const position = nodePositionForStorage(node)
       const size = node.size()
       const laneKey = data.laneInstanceKey ?? laneKeyForNodeCell(node)
@@ -1948,8 +1676,8 @@ export function flowDraftFromGraph(
         semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
         taskUiJson: data.taskUiJson ?? previousNode?.taskUiJson ?? null,
-        processContainerJson: data.processContainerJson ?? previousNode?.processContainerJson ?? null,
-        containerNodeKey: containerParent?.id ?? null,
+        processContainerJson: null,
+        containerNodeKey: null,
         isOverridden: true,
         styleJson: data.styleJson ?? previousNode?.styleJson ?? null,
         propertiesJson: mergeBpmnIntoProperties(
@@ -2081,7 +1809,6 @@ export function flowNodeRecordFromCell(
   const nodeKey = data.nodeKey ?? node.id
   const previousNode = canvas.nodes.find((item) => item.nodeKey === nodeKey)
   const laneIdByKey = new Map(canvas.laneInstances.map((lane) => [lane.instanceKey, lane.laneInstanceId]))
-  const containerParent = processContainerParent(node)
   const laneKey = data.laneInstanceKey ?? laneKeyForNodeCell(node)
   const position = nodePositionForStorage(node)
   const size = node.size()
@@ -2107,8 +1834,8 @@ export function flowNodeRecordFromCell(
     semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
     semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
     taskUiJson: data.taskUiJson ?? previousNode?.taskUiJson ?? null,
-    processContainerJson: data.processContainerJson ?? previousNode?.processContainerJson ?? null,
-    containerNodeKey: containerParent?.id ?? null,
+    processContainerJson: null,
+    containerNodeKey: null,
     isOverridden: true,
     styleJson: data.styleJson ?? previousNode?.styleJson ?? null,
     propertiesJson: mergeBpmnIntoProperties(data.propertiesJson ?? previousNode?.propertiesJson, bpmnProfile),

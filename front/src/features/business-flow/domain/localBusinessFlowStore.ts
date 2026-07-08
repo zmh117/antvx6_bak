@@ -21,7 +21,6 @@ import type {
 import {
   bpmnNodeSize,
   bpmnNodeTitle,
-  createDefaultProcessContainerConfig,
   legacyEdgeTypeForBpmn,
   legacyNodeTypeForBpmn,
   mergeBpmnIntoProperties,
@@ -831,10 +830,7 @@ export function newComponentNodeDraft(
     semanticProfileVersion: null,
     semanticPayloadJson: {},
     taskUiJson: null,
-    processContainerJson: bpmnProfile.bpmnElementType === 'SUB_PROCESS' &&
-      bpmnProfile.bpmnSubProcessKind === 'EMBEDDED'
-      ? createDefaultProcessContainerConfig()
-      : null,
+    processContainerJson: null,
     containerNodeKey: null,
     erRefs: [],
     position,

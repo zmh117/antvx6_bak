@@ -94,12 +94,6 @@ export const BPMN_NODE_OPTIONS: ReadonlyArray<{
     profile: { bpmnElementType: 'TASK', bpmnTaskType: 'NONE' },
   },
   {
-    key: 'activity-process-container',
-    label: '流程容器',
-    group: '活动',
-    profile: { bpmnElementType: 'SUB_PROCESS', bpmnSubProcessKind: 'EMBEDDED' },
-  },
-  {
     key: 'activity-transaction',
     label: '事务',
     group: '活动',
@@ -277,7 +271,7 @@ export function bpmnNodeTitle(profile: BpmnNodeProfile) {
     return '排他网关'
   }
   if (profile.bpmnElementType === 'SUB_PROCESS') {
-    return profile.bpmnSubProcessKind === 'TRANSACTION' ? '事务' : '流程容器'
+    return profile.bpmnSubProcessKind === 'TRANSACTION' ? '事务' : '子流程'
   }
   if (profile.bpmnElementType === 'CALL_ACTIVITY') return '调用活动'
   if (profile.bpmnElementType === 'DATA_OBJECT') return '数据对象'
@@ -295,9 +289,9 @@ export function bpmnNodeOptionKey(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'SUB_PROCESS') {
     return profile.bpmnSubProcessKind === 'TRANSACTION'
       ? 'activity-transaction'
-      : 'activity-process-container'
+      : 'activity-task'
   }
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'activity-process-container'
+  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'activity-task'
   if (profile.bpmnElementType === 'GATEWAY') {
     return `gateway-${profile.bpmnGatewayType?.toLowerCase() ?? 'exclusive'}`
   }

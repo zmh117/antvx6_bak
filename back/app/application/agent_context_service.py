@@ -18,6 +18,7 @@ from app.domain.business_flow.semantic_profile import (
 )
 from app.domain.business_flow.task_ui import (
     edge_scope,
+    is_legacy_process_container,
     is_process_container,
     process_container_quality_issues,
     process_container_payload,
@@ -155,6 +156,35 @@ def _flow_paths(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dic
     }
 
 
+def _strip_legacy_process_containers(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    removed_keys = {
+        str(node.get("node_key"))
+        for node in nodes
+        if node.get("node_key") and is_legacy_process_container(node)
+    }
+    if not removed_keys:
+        return nodes, edges
+    clean_nodes = [
+        {
+            **node,
+            "process_container_json": {},
+            "container_node_key": None,
+        }
+        for node in nodes
+        if str(node.get("node_key") or "") not in removed_keys
+    ]
+    clean_edges = [
+        edge
+        for edge in edges
+        if str(edge.get("source_node_key") or "") not in removed_keys
+        and str(edge.get("target_node_key") or "") not in removed_keys
+    ]
+    return clean_nodes, clean_edges
+
+
 def enrich_relation_documents(
     cur: psycopg.Cursor, graph_id: UUID, docs: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -249,6 +279,7 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
     flow_id = row["id"]
     nodes = repo.fetch_swimlane_flow_nodes(cur, flow_id)
     edges = repo.fetch_swimlane_flow_edges(cur, flow_id)
+    nodes, edges = _strip_legacy_process_containers(nodes, edges)
     step_lines = [
         "\n".join(
             filter(
@@ -358,7 +389,10 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
     for flow in repo.fetch_swimlane_business_flow_rows(cur, graph_id):
         nodes = repo.fetch_swimlane_flow_nodes(cur, flow["id"])
         edges = repo.fetch_swimlane_flow_edges(cur, flow["id"])
+        nodes, edges = _strip_legacy_process_containers(nodes, edges)
         refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
+        node_keys = {node.get("node_key") for node in nodes}
+        refs = [ref for ref in refs if ref.get("node_key") in node_keys]
         refs_by_node_key: dict[str, list[dict[str, Any]]] = {}
         for ref in refs:
             refs_by_node_key.setdefault(ref["node_key"], []).append(ref)
@@ -526,6 +560,9 @@ def fetch_business_flow_documents(
         refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
         nodes = repo.fetch_swimlane_flow_nodes(cur, flow["id"])
         edges = repo.fetch_swimlane_flow_edges(cur, flow["id"])
+        nodes, edges = _strip_legacy_process_containers(nodes, edges)
+        node_keys = {node.get("node_key") for node in nodes}
+        refs = [ref for ref in refs if ref.get("node_key") in node_keys]
         searchable = json.dumps(
             {
                 "code": flow["code"],

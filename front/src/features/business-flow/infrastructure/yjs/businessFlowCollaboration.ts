@@ -18,6 +18,7 @@ import {
   flowLaneRecordFromCell,
   flowNodeRecordFromCell,
   readCellData,
+  stripProcessContainerCapabilityFromCanvas,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 import {
   compactBusinessFlowCollabPatchPlan,
@@ -241,12 +242,13 @@ function writeCanvasToDoc(
   doc: Y.Doc,
   origin = LOCAL_ORIGIN,
 ) {
+  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
   const lanes = doc.getMap('lanes')
   const nodes = doc.getMap('nodes')
   const edges = doc.getMap('edges')
   const erRefs = doc.getMap('erRefs')
   const meta = doc.getMap('meta')
-  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
   doc.transact(() => {
     clearMap(lanes)
     clearMap(nodes)
@@ -254,12 +256,12 @@ function writeCanvasToDoc(
     clearMap(erRefs)
     meta.set('schemaVersion', 3)
     meta.set('documentType', 'BUSINESS_FLOW')
-    meta.set('businessFlowId', canvas.businessFlowId)
-    meta.set('collabRevision', canvas.collabRevision)
+    meta.set('businessFlowId', cleanCanvas.businessFlowId)
+    meta.set('collabRevision', cleanCanvas.collabRevision)
     meta.set('updatedAt', new Date().toISOString())
-    canvas.laneInstances.forEach((lane) => writeLaneToDoc(lanes, canvas, lane))
-    canvas.nodes.forEach((node) => writeNodeToDoc(nodes, erRefs, laneKeyById, node))
-    canvas.edges.forEach((edge) => writeEdgeToDoc(edges, edge))
+    cleanCanvas.laneInstances.forEach((lane) => writeLaneToDoc(lanes, cleanCanvas, lane))
+    cleanCanvas.nodes.forEach((node) => writeNodeToDoc(nodes, erRefs, laneKeyById, node))
+    cleanCanvas.edges.forEach((edge) => writeEdgeToDoc(edges, edge))
   }, origin)
 }
 
@@ -480,14 +482,14 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
   }).sort((a, b) => a.edgeKey.localeCompare(b.edgeKey))
 
   const revision = numberValue(doc.getMap('meta').get('collabRevision'), base.collabRevision)
-  return {
+  return stripProcessContainerCapabilityFromCanvas({
     ...base,
     collabRevision: revision,
     laneInstances: lanes,
     nodes,
     edges,
     updatedAt: timestamp,
-  }
+  })
 }
 
 function deleteCellsFromDoc(doc: Y.Doc, cells: Cell[], origin = LOCAL_ORIGIN) {
@@ -842,16 +844,19 @@ function patchToCanvasAndGraphPatch(
     if (fallbackReason) return { fallbackReason }
   }
 
+  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(nextCanvas)
+  const cleanNodeKeys = new Set(cleanCanvas.nodes.map((node) => node.nodeKey))
+  const cleanEdgeKeys = new Set(cleanCanvas.edges.map((edge) => edge.edgeKey))
   return {
-    canvas: nextCanvas,
+    canvas: cleanCanvas,
     patch: {
       laneUpserts: Array.from(laneUpserts),
       laneDeletes: Array.from(laneDeletes),
-      nodeUpserts: Array.from(nodeUpserts),
+      nodeUpserts: Array.from(nodeUpserts).filter((key) => cleanNodeKeys.has(key)),
       nodeDeletes: Array.from(nodeDeletes),
-      edgeUpserts: Array.from(edgeUpserts),
+      edgeUpserts: Array.from(edgeUpserts).filter((key) => cleanEdgeKeys.has(key)),
       edgeDeletes: Array.from(edgeDeletes),
-      erRefNodeKeys: Array.from(erRefNodeKeys),
+      erRefNodeKeys: Array.from(erRefNodeKeys).filter((key) => cleanNodeKeys.has(key)),
     },
   }
 }

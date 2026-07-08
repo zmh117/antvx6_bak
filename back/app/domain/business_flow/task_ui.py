@@ -30,17 +30,7 @@ def task_ui_payload(value: Any) -> dict[str, Any]:
 
 
 def process_container_payload(value: Any) -> dict[str, Any]:
-    data = json_object(value)
-    if not data:
-        return {}
-    mode = data.get("containerMode")
-    if mode not in CONTAINER_MODES:
-        mode = "embedded"
-    return {
-        "containerMode": mode,
-        "calledProcessRef": _text(data.get("calledProcessRef")),
-        "calledProcessVersion": _text(data.get("calledProcessVersion")),
-    }
+    return {}
 
 
 def _text(value: Any) -> str | None:
@@ -91,19 +81,14 @@ def process_container_quality_issues(
     node: Mapping[str, Any],
     child_keys: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    if not is_process_container(node):
-        return []
-    node_key = str(node.get("node_key") or "")
-    payload = process_container_payload(node.get("process_container_json"))
-    issues: list[dict[str, Any]] = []
-    if not child_keys:
-        issues.append(_issue("NODE", node_key, "EMPTY_PROCESS_CONTAINER", "流程容器缺少内部节点。"))
-    if payload.get("containerMode") == "reusableCall" and not payload.get("calledProcessRef"):
-        issues.append(_issue("NODE", node_key, "REUSABLE_CALL_MISSING_REF", "可复用调用模式缺少被调用流程引用。"))
-    return issues
+    return []
 
 
 def is_process_container(node: Mapping[str, Any]) -> bool:
+    return False
+
+
+def is_legacy_process_container(node: Mapping[str, Any]) -> bool:
     payload = json_object(node.get("process_container_json"))
     return (
         node.get("bpmn_element_type") == "SUB_PROCESS"
@@ -113,32 +98,11 @@ def is_process_container(node: Mapping[str, Any]) -> bool:
 
 
 def container_structure_error(nodes: list[Mapping[str, Any]]) -> str | None:
-    node_by_key = {str(node.get("node_key")): node for node in nodes if node.get("node_key")}
-    for node in nodes:
-        node_key = str(node.get("node_key") or "")
-        container_key = _text(node.get("container_node_key"))
-        if not container_key:
-            continue
-        if is_process_container(node):
-            return "process containers cannot be nested"
-        if container_key == node_key:
-            return f"node {node_key} cannot contain itself"
-        container = node_by_key.get(container_key)
-        if not container:
-            return f"container node not found: {container_key}"
-        if not is_process_container(container):
-            return f"container node is not a process container: {container_key}"
-        if _text(container.get("container_node_key")):
-            return "nested process containers are not supported"
     return None
 
 
 def edge_scope(source_container_key: str | None, target_container_key: str | None) -> str:
-    if not source_container_key and not target_container_key:
-        return "topLevel"
-    if source_container_key and source_container_key == target_container_key:
-        return "insideContainer"
-    return "crossContainerBoundary"
+    return "topLevel"
 
 
 def _int(value: Any) -> int | None:

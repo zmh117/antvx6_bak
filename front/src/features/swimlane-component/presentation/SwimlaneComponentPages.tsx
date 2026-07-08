@@ -122,7 +122,6 @@ import {
   readCellData,
   removeBusinessFlowCells,
   renderComponentVersion,
-  settleProcessContainerEmbedding,
   updateEdgeBpmnProfile,
   updateEdgeText,
   updateNodeBpmnProfile,
@@ -133,7 +132,6 @@ import {
   BpmnNodeProfileFields,
 } from '@/features/business-flow/presentation/components/BpmnFields'
 import {
-  ProcessContainerFields,
   TaskUiContextFields,
 } from '@/features/business-flow/presentation/components/TaskUiContextFields'
 import {
@@ -945,7 +943,6 @@ export function SwimlaneComponentEditorPage({
     const point = graphPointFromEvent(graph, event.nativeEvent)
     const draft = newComponentNodeDraft(profile, { x: point.x - 60, y: point.y - 24 })
     const node = addComponentNode(graph, draft)
-    settleProcessContainerEmbedding(graph, node)
     graph.cleanSelection()
     graph.select(node)
   }
@@ -1291,16 +1288,6 @@ function ComponentInspector({
           onChange={(taskUiJson) => {
             selected.cell.setData({ ...readCellData(selected.cell), taskUiJson })
             onChange({ ...selected, taskUiJson })
-          }}
-        />
-      ) : null}
-      {selected.bpmnProfile.bpmnElementType === 'SUB_PROCESS' &&
-      selected.bpmnProfile.bpmnSubProcessKind === 'EMBEDDED' ? (
-        <ProcessContainerFields
-          value={selected.processContainerJson}
-          onChange={(processContainerJson) => {
-            selected.cell.setData({ ...readCellData(selected.cell), processContainerJson })
-            onChange({ ...selected, processContainerJson })
           }}
         />
       ) : null}

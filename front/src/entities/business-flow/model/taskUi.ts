@@ -1,7 +1,4 @@
 import type {
-  BusinessFlowEdgeScope,
-  ProcessContainerConfig,
-  ProcessContainerMode,
   TaskUiActionType,
   TaskUiContext,
   TaskUiElementType,
@@ -99,16 +96,6 @@ export function normalizeTaskUiContext(value: unknown): TaskUiContext {
   }
 }
 
-export function normalizeProcessContainerConfig(value: unknown): ProcessContainerConfig {
-  const source = asObject(value)
-  const mode = source.containerMode === 'reusableCall' ? 'reusableCall' : 'embedded'
-  return {
-    containerMode: mode,
-    calledProcessRef: asString(source.calledProcessRef).trim() || null,
-    calledProcessVersion: asString(source.calledProcessVersion).trim() || null,
-  }
-}
-
 export function taskUiQualityIssues(value: unknown): string[] {
   const taskUi = normalizeTaskUiContext(value)
   const issues: string[] = []
@@ -124,30 +111,4 @@ export function taskUiQualityIssues(value: unknown): string[] {
     }
   })
   return issues
-}
-
-export function processContainerQualityIssues(value: unknown): string[] {
-  const config = normalizeProcessContainerConfig(value)
-  if (config.containerMode === 'reusableCall' && !config.calledProcessRef) {
-    return ['可复用调用模式缺少被调用流程引用。']
-  }
-  return []
-}
-
-export function edgeScopeForContainers(
-  sourceContainerKey?: string | null,
-  targetContainerKey?: string | null,
-): BusinessFlowEdgeScope {
-  if (!sourceContainerKey && !targetContainerKey) return 'topLevel'
-  if (sourceContainerKey && targetContainerKey && sourceContainerKey === targetContainerKey) return 'insideContainer'
-  return 'crossContainerBoundary'
-}
-
-export function isProcessContainerConfig(value: unknown) {
-  const source = asObject(value)
-  return source.containerMode === 'embedded' || source.containerMode === 'reusableCall'
-}
-
-export function createDefaultProcessContainerConfig(mode: ProcessContainerMode = 'embedded'): ProcessContainerConfig {
-  return { containerMode: mode, calledProcessRef: null, calledProcessVersion: null }
 }

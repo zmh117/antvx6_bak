@@ -15,10 +15,8 @@ import {
   TASK_UI_ACTIONS_BY_ELEMENT,
   TASK_UI_ACTION_TYPES,
   TASK_UI_ELEMENT_TYPES,
-  normalizeProcessContainerConfig,
   normalizeTaskUiContext,
   textArrayValue,
-  type ProcessContainerConfig,
   type TaskUiContext,
   type TaskUiOperationStep,
 } from '@/entities/business-flow'
@@ -93,39 +91,6 @@ export function TaskUiContextFields({
           )
         })}
       </div>
-    </div>
-  )
-}
-
-export function ProcessContainerFields({
-  value,
-  onChange,
-}: {
-  value: ProcessContainerConfig | null
-  onChange: (value: ProcessContainerConfig) => void
-}) {
-  const data = normalizeProcessContainerConfig(value)
-  return (
-    <div>
-      <div className="mb-2 text-xs font-semibold">流程容器</div>
-      <FieldGroup>
-        <Field>
-          <FieldLabel>模式</FieldLabel>
-          <Select value={data.containerMode} onValueChange={(containerMode) => onChange({ ...data, containerMode: containerMode as ProcessContainerConfig['containerMode'] })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="embedded">embedded</SelectItem>
-              <SelectItem value="reusableCall">reusableCall</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        {data.containerMode === 'reusableCall' ? (
-          <>
-            <Field><FieldLabel>被调用流程</FieldLabel><Input value={data.calledProcessRef ?? ''} onChange={(event) => onChange({ ...data, calledProcessRef: event.target.value })} /></Field>
-            <Field><FieldLabel>版本策略</FieldLabel><Input value={data.calledProcessVersion ?? ''} onChange={(event) => onChange({ ...data, calledProcessVersion: event.target.value })} /></Field>
-          </>
-        ) : null}
-      </FieldGroup>
     </div>
   )
 }

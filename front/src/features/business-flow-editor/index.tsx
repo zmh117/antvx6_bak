@@ -32,7 +32,6 @@ import { getAccessToken, getCurrentUser } from '@/entities/auth'
 import { useGraphsQuery } from '@/entities/er-graph/api'
 import type {
   LocalBusinessFlowCanvas,
-  ProcessContainerConfig,
   SwimlaneComponentListItem,
   TaskUiContext,
   TaskUiOperationStep,
@@ -42,7 +41,6 @@ import {
   TASK_UI_ACTIONS_BY_ELEMENT,
   TASK_UI_ACTION_TYPES,
   TASK_UI_ELEMENT_TYPES,
-  normalizeProcessContainerConfig,
   normalizeTaskUiContext,
   semanticPayload,
   taskUiQualityIssues,
@@ -63,6 +61,7 @@ import {
   rememberManualLaneSize,
   removeBusinessFlowCells,
   renderBusinessFlowCanvas,
+  stripProcessContainerCapabilityFromCanvas,
   updateEdgeBpmnProfile,
   updateEdgeText,
   updateNodeBpmnProfile,
@@ -208,11 +207,12 @@ export function BusinessFlowEditor({
 
   const cacheCanvasState = useCallback(
     (nextCanvas: LocalBusinessFlowCanvas, updatePanel = true) => {
-      canvasRef.current = nextCanvas
-      if (updatePanel) setCanvas(nextCanvas)
+      const cleanCanvas = stripProcessContainerCapabilityFromCanvas(nextCanvas)
+      canvasRef.current = cleanCanvas
+      if (updatePanel) setCanvas(cleanCanvas)
       queryClient.setQueryData(
         businessFlowKeys.editorState(businessFlowId),
-        nextCanvas,
+        cleanCanvas,
       )
     },
     [businessFlowId, queryClient],
@@ -1302,17 +1302,6 @@ function BusinessInspector({
           }}
         />
       ) : null}
-      {selected.bpmnProfile.bpmnElementType === 'SUB_PROCESS' &&
-      selected.bpmnProfile.bpmnSubProcessKind === 'EMBEDDED' ? (
-        <ProcessContainerEditor
-          value={selected.processContainerJson}
-          onChange={(processContainerJson) => {
-            selected.cell.setData({ ...readCellData(selected.cell), processContainerJson })
-            onChange({ ...selected, processContainerJson })
-            onPersist()
-          }}
-        />
-      ) : null}
       <NodeErBindingEditor
         erRefs={selected.erRefs}
         erGraphs={erGraphs}
@@ -1501,54 +1490,6 @@ function TaskUiContextEditor({
           </div>
         ) : null}
       </div>
-    </div>
-  )
-}
-
-function ProcessContainerEditor({
-  value,
-  onChange,
-}: {
-  value: ProcessContainerConfig | null
-  onChange: (value: ProcessContainerConfig) => void
-}) {
-  const data = normalizeProcessContainerConfig(value)
-  return (
-    <div>
-      <div className="mb-2 text-xs font-semibold">流程容器</div>
-      <FieldGroup>
-        <Field>
-          <FieldLabel>模式</FieldLabel>
-          <Select
-            value={data.containerMode}
-            onValueChange={(containerMode) => onChange({ ...data, containerMode: containerMode as ProcessContainerConfig['containerMode'] })}
-          >
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="embedded">embedded</SelectItem>
-              <SelectItem value="reusableCall">reusableCall</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        {data.containerMode === 'reusableCall' ? (
-          <>
-            <Field>
-              <FieldLabel>被调用流程</FieldLabel>
-              <Input
-                value={data.calledProcessRef ?? ''}
-                onChange={(event) => onChange({ ...data, calledProcessRef: event.target.value })}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>版本策略</FieldLabel>
-              <Input
-                value={data.calledProcessVersion ?? ''}
-                onChange={(event) => onChange({ ...data, calledProcessVersion: event.target.value })}
-              />
-            </Field>
-          </>
-        ) : null}
-      </FieldGroup>
     </div>
   )
 }
