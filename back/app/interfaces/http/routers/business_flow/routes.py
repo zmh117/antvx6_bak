@@ -24,7 +24,7 @@ from app.domain.business_flow.bpmn_semantic import (
     node_semantic_type,
     semantic_display_name,
 )
-from app.domain.business_flow.task_ui import task_ui_payload
+from app.domain.business_flow.task_ui import task_ui_payload, task_ui_quality_issues
 from app.interfaces.http.schemas.business_flow import (
     ApplyBusinessFlowChangesRequest,
     ApplyBusinessFlowChangesResponse,
@@ -554,12 +554,11 @@ def _fetch_business_flow_editor_state(
         (business_flow_id,),
     )
     edges = [_edge_response(row) for row in cur.fetchall()]
-    refs_by_node_key = {
-        node["node_key"]: node.get("er_refs") or []
+    quality_issues = [
+        issue
         for node in nodes
-        if node.get("node_key")
-    }
-    quality_issues = business_flow_quality_issues(nodes, edges, refs_by_node_key)
+        for issue in task_ui_quality_issues(node)
+    ]
     for node in nodes:
         quality_issues.extend(
             bpmn_semantic_quality_issues(
