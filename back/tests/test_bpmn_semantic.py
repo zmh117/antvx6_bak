@@ -20,20 +20,28 @@ from app.interfaces.http.routers.business_flow.routes import _remap_component_se
 
 
 class BpmnSemanticTest(unittest.TestCase):
-    def test_cleanup_migration_drops_only_retired_bpmn_columns(self) -> None:
+    def test_baseline_schema_keeps_current_bpmn_storage_fields(self) -> None:
         migration = (
             Path(__file__).resolve().parents[1]
             / "migrations"
-            / "019_bpmn_schema_cleanup.sql"
+            / "001_baseline.sql"
         ).read_text(encoding="utf-8")
-        for retired_column in {
-            "description", "actor", "business_rule", "input_summary",
-            "output_summary", "semantic_profile_key", "process_container_json",
-            "bpmn_call_activity_ref", "condition_text", "data_contract_json",
+        for retained_column in {
+            "title",
+            "label",
+            "properties_json",
+            "task_ui_json",
+            "bpmn_semantic_json",
         }:
-            self.assertIn(f"DROP COLUMN IF EXISTS {retired_column}".upper(), migration.upper())
-        for retained_column in {"title", "label", "properties_json", "task_ui_json", "bpmn_semantic_json"}:
-            self.assertNotIn(f"DROP COLUMN IF EXISTS {retained_column}".upper(), migration.upper())
+            self.assertIn(retained_column, migration)
+        for retired_column in {
+            "semantic_profile_key",
+            "process_container_json",
+            "bpmn_call_activity_ref",
+            "condition_text",
+            "data_contract_json",
+        }:
+            self.assertNotIn(retired_column, migration)
 
     def test_maps_current_non_task_node_and_edge_profiles(self) -> None:
         self.assertEqual(node_semantic_type({"bpmn_element_type": "EVENT", "bpmn_event_kind": "START"}), "startEvent")

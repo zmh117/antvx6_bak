@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.database import BASE_MIGRATIONS, BPMN_MIGRATIONS
+from app.database import BASELINE_MIGRATION
 from app.interfaces.http.routers.business_flow.routes import (
     _reject_retired_bpmn_fields,
 )
@@ -22,49 +22,26 @@ class SchemaCleanupTest(unittest.TestCase):
             )
         self.assertEqual(raised.exception.status_code, 400)
 
-    def test_migration_manifest_is_explicit_and_ordered(self) -> None:
-        self.assertEqual(BASE_MIGRATIONS, tuple(sorted(BASE_MIGRATIONS)))
-        self.assertEqual(BPMN_MIGRATIONS, tuple(sorted(BPMN_MIGRATIONS)))
-        self.assertEqual(BPMN_MIGRATIONS[-2:], (
-            "019_bpmn_schema_cleanup.sql",
-            "020_schema_comments.sql",
-        ))
-
-    def test_comment_migration_covers_every_final_table_dynamically(self) -> None:
+    def test_baseline_migration_is_single_source_of_truth(self) -> None:
         migrations_root = Path(__file__).resolve().parents[1] / "migrations"
-        sql = (migrations_root / "020_schema_comments.sql").read_text(encoding="utf-8")
-        self.assertIn("information_schema.tables", sql)
-        self.assertIn("information_schema.columns", sql)
-        self.assertIn("COMMENT ON TABLE", sql)
-        self.assertIn("COMMENT ON COLUMN", sql)
-        self.assertRegex(sql, re.compile(r"[\u4e00-\u9fff]"))
-        created_tables = set()
-        for migration in sorted(migrations_root.glob("0*.sql")):
-            if migration.name in {
-                "016_business_semantic_profile.sql",
-                "019_bpmn_schema_cleanup.sql",
-                "020_schema_comments.sql",
-            }:
-                continue
-            created_tables.update(
-                re.findall(
-                    r"CREATE TABLE(?: IF NOT EXISTS)?\s+([a-z_][a-z0-9_]*)",
-                    migration.read_text(encoding="utf-8"),
-                    flags=re.IGNORECASE,
-                )
-            )
-        created_tables.add("app_migration_state")
-        documented_tables = set(
-            re.findall(r"WHEN '([a-z_][a-z0-9_]*)' THEN", sql)
-        )
-        self.assertEqual(created_tables - documented_tables, set())
+        self.assertEqual(BASELINE_MIGRATION, "001_baseline.sql")
+        baseline = migrations_root / BASELINE_MIGRATION
+        self.assertTrue(baseline.is_file())
+        active = sorted(p.name for p in migrations_root.glob("0*.sql"))
+        self.assertEqual(active, [BASELINE_MIGRATION])
 
-    def test_comment_migration_does_not_target_removed_schema(self) -> None:
+    def test_baseline_covers_final_tables_and_comments(self) -> None:
         sql = (
             Path(__file__).resolve().parents[1]
             / "migrations"
-            / "020_schema_comments.sql"
+            / BASELINE_MIGRATION
         ).read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE public.business_flow_node", sql)
+        self.assertIn("task_ui_json", sql)
+        self.assertIn("bpmn_semantic_json", sql)
+        self.assertIn("COMMENT ON TABLE", sql)
+        self.assertIn("COMMENT ON COLUMN", sql)
+        self.assertRegex(sql, re.compile(r"[\u4e00-\u9fff]"))
         self.assertNotIn("business_semantic_profile", sql)
         for retired_column in {
             "semantic_profile_key",
@@ -73,7 +50,7 @@ class SchemaCleanupTest(unittest.TestCase):
             "condition_text",
             "data_contract_json",
         }:
-            self.assertNotIn(f".{retired_column}", sql)
+            self.assertNotIn(retired_column, sql)
 
     def test_runtime_code_does_not_reference_dropped_storage_fields(self) -> None:
         app_root = Path(__file__).resolve().parents[1] / "app"

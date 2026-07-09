@@ -19,9 +19,9 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8001
 ```
 
-默认图 ID：`00000000-0000-0000-0000-000000000001`（见 `migrations/001_schema.sql`）
+默认图 ID：`00000000-0000-0000-0000-000000000001`（见 `migrations/001_baseline.sql`）
 
-表/字段中文注释见 `migrations/001_schema.sql` 与 `migrations/002_comments.sql`（启动 API 时自动执行 002）。在 psql 中查看：
+空库启动时自动执行 `migrations/001_baseline.sql`（含表结构与中文注释）。历史增量迁移在 `migrations/archive/`，不会被启动器执行。在 psql 中查看：
 
 ```sql
 \d+ er_table
