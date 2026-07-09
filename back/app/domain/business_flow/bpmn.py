@@ -11,7 +11,6 @@ ALLOWED_NODE_TYPES = {
     "TASK",
     "GATEWAY",
     "SUB_PROCESS",
-    "CALL_ACTIVITY",
     "DATA_OBJECT",
     "DATA_INPUT",
     "DATA_OUTPUT",
@@ -22,7 +21,6 @@ ALLOWED_ELEMENT_TYPES = {
     "TASK",
     "GATEWAY",
     "SUB_PROCESS",
-    "CALL_ACTIVITY",
     "DATA_OBJECT",
     "DATA_INPUT",
     "DATA_OUTPUT",
@@ -102,9 +100,6 @@ def node_profile_error(node: Mapping[str, Any]) -> str | None:
         if node_type != "SUB_PROCESS" or subprocess_kind not in ALLOWED_SUBPROCESS_KINDS:
             return f"unsupported subprocess kind: {subprocess_kind or '<empty>'}"
         return None
-
-    if element_type == "CALL_ACTIVITY":
-        return None if node_type == "CALL_ACTIVITY" else "call activity node_type mismatch"
 
     if element_type in DATA_ELEMENT_TYPES:
         return None if node_type == element_type else f"data node_type must be {element_type}"

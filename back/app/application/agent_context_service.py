@@ -12,10 +12,6 @@ from uuid import UUID
 
 import psycopg
 
-from app.domain.business_flow.semantic_profile import (
-    business_flow_quality_issues,
-    semantic_payload,
-)
 from app.domain.business_flow.bpmn_semantic import (
     bpmn_semantic_payload,
     bpmn_semantic_quality_issues,
@@ -24,14 +20,7 @@ from app.domain.business_flow.bpmn_semantic import (
     node_semantic_type,
     semantic_display_name,
 )
-from app.domain.business_flow.task_ui import (
-    edge_scope,
-    is_legacy_process_container,
-    is_process_container,
-    process_container_quality_issues,
-    process_container_payload,
-    task_ui_payload,
-)
+from app.domain.business_flow.task_ui import task_ui_payload, task_ui_quality_issues
 from app.infrastructure.db.repositories import agent_context_repository as repo
 from app.services.agent_labels import match_operator_label
 
@@ -72,14 +61,6 @@ def _json_summary(value: Any) -> str:
     if not value:
         return ""
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-
-
-def _semantic_line(prefix: str, item: dict[str, Any]) -> str:
-    profile_key = item.get("semantic_profile_key")
-    payload = semantic_payload(item.get("semantic_payload_json"))
-    if not profile_key and not payload:
-        return ""
-    return f"  {prefix}：{profile_key or ''} {_json_summary(payload)}".rstrip()
 
 
 def _bpmn_semantic_line(prefix: str, item: dict[str, Any], target: str) -> str:
@@ -144,9 +125,11 @@ def _flow_paths(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dic
                         {
                             "edgeKey": edge.get("edge_key"),
                             "toStepKey": edge.get("target_node_key"),
-                            "condition": edge.get("condition_text")
-                            or edge.get("bpmn_condition_expression")
-                            or semantic_payload(edge.get("semantic_payload_json")).get("condition"),
+                            "condition": bpmn_semantic_payload(
+                                edge.get("bpmn_semantic_json"),
+                                edge_semantic_type(edge),
+                                edge.get("label"),
+                            ).get("conditionText"),
                         }
                         for edge in next_edges
                     ],
@@ -159,7 +142,11 @@ def _flow_paths(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dic
                         "fromStepKey": node_key,
                         "edgeKey": edge.get("edge_key"),
                         "toStepKey": edge.get("target_node_key"),
-                        "exceptionType": semantic_payload(edge.get("semantic_payload_json")).get("exceptionType"),
+                        "exceptionType": bpmn_semantic_payload(
+                            edge.get("bpmn_semantic_json"),
+                            edge_semantic_type(edge),
+                            edge.get("label"),
+                        ).get("testScenarioType"),
                     }
                 )
                 continue
@@ -176,35 +163,6 @@ def _flow_paths(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dic
         "branchPaths": branch_paths[:50],
         "exceptionPaths": exception_paths[:50],
     }
-
-
-def _strip_legacy_process_containers(
-    nodes: list[dict[str, Any]],
-    edges: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    removed_keys = {
-        str(node.get("node_key"))
-        for node in nodes
-        if node.get("node_key") and is_legacy_process_container(node)
-    }
-    if not removed_keys:
-        return nodes, edges
-    clean_nodes = [
-        {
-            **node,
-            "process_container_json": {},
-            "container_node_key": None,
-        }
-        for node in nodes
-        if str(node.get("node_key") or "") not in removed_keys
-    ]
-    clean_edges = [
-        edge
-        for edge in edges
-        if str(edge.get("source_node_key") or "") not in removed_keys
-        and str(edge.get("target_node_key") or "") not in removed_keys
-    ]
-    return clean_nodes, clean_edges
 
 
 def _step_context_item(
@@ -231,20 +189,9 @@ def _step_context_item(
             "subProcessKind": node.get("bpmn_subprocess_kind"),
         },
         "lane": node.get("lane_name"),
-        "actor": None,
-        "businessRule": None,
-        "inputSummary": None,
-        "outputSummary": None,
-        "semantic": {
-            "profileKey": node.get("semantic_profile_key"),
-            "profileVersion": node.get("semantic_profile_version"),
-            "payload": semantic_payload(node.get("semantic_payload_json")),
-        },
         "bpmnSemantic": bpmn_semantic,
         "erRefs": refs_by_node_key.get(str(node_key), []) if is_data_element(node) else [],
         "taskUi": task_ui,
-        "processContainer": process_container_payload(node.get("process_container_json")),
-        "containerNodeKey": node.get("container_node_key"),
     }
 
 
@@ -342,7 +289,6 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
     flow_id = row["id"]
     nodes = repo.fetch_swimlane_flow_nodes(cur, flow_id)
     edges = repo.fetch_swimlane_flow_edges(cur, flow_id)
-    nodes, edges = _strip_legacy_process_containers(nodes, edges)
     step_lines = [
         "\n".join(
             filter(
@@ -375,13 +321,6 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                         if edge.get("bpmn_sequence_flow_kind")
                         else ""
                     ),
-                    f"  条件：{edge.get('condition_text') or edge.get('bpmn_condition_expression') or ''}"
-                    if edge.get("condition_text") or edge.get("bpmn_condition_expression")
-                    else "",
-                    f"  消息：{edge.get('bpmn_message_name') or ''}" if edge.get("bpmn_message_name") else "",
-                    f"  数据契约：{_json_summary(edge.get('data_contract_json'))}"
-                    if edge.get("data_contract_json")
-                    else "",
                     _bpmn_semantic_line("BPMN 连线语义", edge, "EDGE"),
                 ],
             )
@@ -446,7 +385,6 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
     for flow in repo.fetch_swimlane_business_flow_rows(cur, graph_id):
         nodes = repo.fetch_swimlane_flow_nodes(cur, flow["id"])
         edges = repo.fetch_swimlane_flow_edges(cur, flow["id"])
-        nodes, edges = _strip_legacy_process_containers(nodes, edges)
         refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
         node_keys = {node.get("node_key") for node in nodes}
         data_node_keys = {node.get("node_key") for node in nodes if is_data_element(node)}
@@ -458,7 +396,11 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
         refs_by_node_key: dict[str, list[dict[str, Any]]] = {}
         for ref in refs:
             refs_by_node_key.setdefault(ref["node_key"], []).append(ref)
-        quality_issues = business_flow_quality_issues(nodes, edges, refs_by_node_key)
+        quality_issues = [
+            issue
+            for node in nodes
+            for issue in task_ui_quality_issues(node)
+        ]
         for node in nodes:
             quality_issues.extend(
                 bpmn_semantic_quality_issues(
@@ -475,35 +417,6 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                     "EDGE",
                 )
             )
-        child_keys_by_container: dict[str, list[str]] = {}
-        node_by_key = {node.get("node_key"): node for node in nodes if node.get("node_key")}
-        for node in nodes:
-            container_key = node.get("container_node_key")
-            if container_key and node.get("node_key"):
-                child_keys_by_container.setdefault(str(container_key), []).append(str(node["node_key"]))
-        containers = [
-            {
-                "containerKey": node.get("node_key"),
-                "title": node.get("title"),
-                "containerMode": process_container_payload(node.get("process_container_json")).get("containerMode") or "embedded",
-                "calledProcessRef": process_container_payload(node.get("process_container_json")).get("calledProcessRef"),
-                "calledProcessVersion": process_container_payload(node.get("process_container_json")).get("calledProcessVersion"),
-                "childStepKeys": child_keys_by_container.get(str(node.get("node_key")), []),
-                "qualityIssues": process_container_quality_issues(
-                    node,
-                    child_keys_by_container.get(str(node.get("node_key")), []),
-                ),
-            }
-            for node in nodes
-            if is_process_container(node)
-        ]
-        profile_keys = sorted(
-            {
-                str(item.get("semantic_profile_key"))
-                for item in [*nodes, *edges]
-                if item.get("semantic_profile_key")
-            }
-        )
         step_context = [_step_context_item(node, refs_by_node_key) for node in nodes]
         edge_context = [
             {
@@ -515,24 +428,11 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                 "bpmn": {
                     "flowType": edge.get("bpmn_flow_type"),
                     "sequenceFlowKind": edge.get("bpmn_sequence_flow_kind"),
-                    "messageName": edge.get("bpmn_message_name"),
-                    "conditionExpression": edge.get("bpmn_condition_expression"),
-                },
-                "conditionText": edge.get("condition_text"),
-                "dataContract": edge.get("data_contract_json") or {},
-                "semantic": {
-                    "profileKey": edge.get("semantic_profile_key"),
-                    "profileVersion": edge.get("semantic_profile_version"),
-                    "payload": semantic_payload(edge.get("semantic_payload_json")),
                 },
                 "bpmnSemantic": bpmn_semantic_payload(
                     edge.get("bpmn_semantic_json"),
                     edge_semantic_type(edge),
                     edge.get("label"),
-                ),
-                "edgeScope": edge_scope(
-                    edge.get("source_container_node_key"),
-                    edge.get("target_container_node_key"),
                 ),
             }
             for edge in edges
@@ -544,10 +444,8 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                 "code": flow["code"],
                 "name": flow["name"],
                 "description": flow.get("description"),
-                "profileKeys": profile_keys,
                 "steps": step_context,
                 "edges": edge_context,
-                "containers": containers,
                 "erRefs": refs,
                 "rules": [],
                 "qualityIssues": quality_issues,
@@ -608,7 +506,6 @@ def fetch_business_flow_documents(
         refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
         nodes = repo.fetch_swimlane_flow_nodes(cur, flow["id"])
         edges = repo.fetch_swimlane_flow_edges(cur, flow["id"])
-        nodes, edges = _strip_legacy_process_containers(nodes, edges)
         node_keys = {node.get("node_key") for node in nodes}
         task_node_keys = {node.get("node_key") for node in nodes if _is_task_node(node)}
         refs = [

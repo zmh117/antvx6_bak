@@ -5,7 +5,6 @@ import type {
   BpmnNodeProfile,
   BpmnSemanticJson,
   BusinessFlowNodeErRef,
-  ProcessContainerConfig,
   TaskUiContext,
 } from '@/entities/business-flow'
 import {
@@ -27,18 +26,8 @@ export type SelectedBusinessCell =
       kind: 'node'
       cell: Cell
       title: string
-      description: string
-      actor: string
-      businessRule: string
-      inputSummary: string
-      outputSummary: string
-      semanticProfileKey: string
-      semanticProfileVersion: number | null
-      semanticPayloadJson: Record<string, unknown>
       bpmnSemanticJson: BpmnSemanticJson | null
       taskUiJson: TaskUiContext | null
-      processContainerJson: ProcessContainerConfig | null
-      containerNodeKey: string | null
       bpmnProfile: BpmnNodeProfile
       erRefs: BusinessFlowNodeErRef[]
     }
@@ -46,9 +35,6 @@ export type SelectedBusinessCell =
       kind: 'edge'
       cell: Edge
       label: string
-      semanticProfileKey: string
-      semanticProfileVersion: number | null
-      semanticPayloadJson: Record<string, unknown>
       bpmnSemanticJson: BpmnSemanticJson
       bpmnProfile: BpmnEdgeProfile
     }
@@ -61,17 +47,12 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       edgeType: data.edgeType,
       bpmnFlowType: data.bpmnFlowType,
       bpmnSequenceFlowKind: data.bpmnSequenceFlowKind,
-      bpmnMessageName: data.bpmnMessageName,
-      bpmnConditionExpression: data.bpmnConditionExpression,
       propertiesJson: data.propertiesJson,
     })
     return {
       kind: 'edge',
       cell: cell as Edge,
       label: data.title ?? '',
-      semanticProfileKey: data.semanticProfileKey ?? '',
-      semanticProfileVersion: data.semanticProfileVersion ?? null,
-      semanticPayloadJson: data.semanticPayloadJson ?? {},
       bpmnSemanticJson: normalizeBpmnSemantic(
         data.bpmnSemanticJson,
         edgeSemanticType(bpmnProfile),
@@ -97,7 +78,6 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       bpmnTaskType: data.bpmnTaskType,
       bpmnGatewayType: data.bpmnGatewayType,
       bpmnSubProcessKind: data.bpmnSubProcessKind,
-      bpmnCallActivityRef: data.bpmnCallActivityRef,
       propertiesJson: data.propertiesJson,
     })
     const semanticType = nodeSemanticType(bpmnProfile)
@@ -105,14 +85,6 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       kind: 'node',
       cell,
       title: data.title ?? String(cell.attr('label/text') ?? ''),
-      description: data.description ?? '',
-      actor: data.actor ?? '',
-      businessRule: data.businessRule ?? '',
-      inputSummary: data.inputSummary ?? '',
-      outputSummary: data.outputSummary ?? '',
-      semanticProfileKey: data.semanticProfileKey ?? '',
-      semanticProfileVersion: data.semanticProfileVersion ?? null,
-      semanticPayloadJson: data.semanticPayloadJson ?? {},
       bpmnSemanticJson: semanticType
         ? normalizeBpmnSemantic(
             data.bpmnSemanticJson,
@@ -123,8 +95,6 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       taskUiJson: bpmnProfile.bpmnElementType === 'TASK'
         ? normalizeTaskUiContext(data.taskUiJson, { taskName: data.title ?? String(cell.attr('label/text') ?? '') })
         : data.taskUiJson ?? null,
-      processContainerJson: data.processContainerJson ?? null,
-      containerNodeKey: data.containerNodeKey ?? null,
       bpmnProfile,
       erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
     }

@@ -45,14 +45,7 @@ function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
     edgeType: edge.edgeType,
     bpmnFlowType: edge.bpmnFlowType,
     bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
-    bpmnMessageName: edge.bpmnMessageName,
-    bpmnConditionExpression: edge.bpmnConditionExpression,
     label: bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? ''),
-    conditionText: edge.conditionText,
-    dataContractJson: edge.dataContract ?? {},
-    semanticProfileKey: edge.semanticProfileKey ?? null,
-    semanticProfileVersion: edge.semanticProfileVersion ?? null,
-    semanticPayloadJson: edge.semanticPayloadJson ?? {},
     bpmnSemanticJson,
     styleJson: edge.styleJson ?? {},
     propertiesJson: edge.propertiesJson ?? {},
@@ -82,24 +75,13 @@ function nodePatch(
     bpmnTaskType: node.bpmnTaskType,
     bpmnGatewayType: node.bpmnGatewayType,
     bpmnSubProcessKind: node.bpmnSubProcessKind,
-    bpmnCallActivityRef: node.bpmnCallActivityRef,
     title,
     x: node.position.x,
     y: node.position.y,
     width: node.size.width,
     height: node.size.height,
-    description: null,
-    actor: null,
-    businessRule: null,
-    inputSummary: null,
-    outputSummary: null,
-    semanticProfileKey: node.semanticProfileKey ?? null,
-    semanticProfileVersion: node.semanticProfileVersion ?? null,
-    semanticPayloadJson: node.semanticPayloadJson ?? {},
     bpmnSemanticJson: bpmnSemanticJson ?? {},
     taskUiJson,
-    processContainerJson: node.processContainerJson ?? {},
-    containerNodeKey: node.containerNodeKey ?? null,
     styleJson: node.styleJson ?? {},
     propertiesJson: node.propertiesJson ?? {},
   }
@@ -117,18 +99,14 @@ function nodeBpmnChanged(prev: BusinessFlowNodeRecord, node: BusinessFlowNodeRec
     prev.bpmnEventDefinition !== node.bpmnEventDefinition ||
     prev.bpmnTaskType !== node.bpmnTaskType ||
     prev.bpmnGatewayType !== node.bpmnGatewayType ||
-    prev.bpmnSubProcessKind !== node.bpmnSubProcessKind ||
-    (prev.bpmnCallActivityRef ?? '') !== (node.bpmnCallActivityRef ?? '')
+    prev.bpmnSubProcessKind !== node.bpmnSubProcessKind
   )
 }
 
 function edgeBpmnChanged(prev: BusinessFlowEdgeRecord, edge: BusinessFlowEdgeRecord) {
   return (
     prev.bpmnFlowType !== edge.bpmnFlowType ||
-    prev.bpmnSequenceFlowKind !== edge.bpmnSequenceFlowKind ||
-    (prev.bpmnMessageName ?? '') !== (edge.bpmnMessageName ?? '') ||
-    (prev.bpmnConditionExpression ?? '') !==
-      (edge.bpmnConditionExpression ?? '')
+    prev.bpmnSequenceFlowKind !== edge.bpmnSequenceFlowKind
   )
 }
 
@@ -301,30 +279,10 @@ export function buildBusinessFlowOps(
       }
     }
     if (prev.title !== node.title) patch.title = node.title
-    if ((prev.description ?? '') !== (node.description ?? ''))
-      patch.description = node.description ?? null
-    if ((prev.actor ?? '') !== (node.actor ?? ''))
-      patch.actor = node.actor ?? null
-    if ((prev.businessRule ?? '') !== (node.businessRule ?? ''))
-      patch.businessRule = node.businessRule ?? null
-    if ((prev.inputSummary ?? '') !== (node.inputSummary ?? ''))
-      patch.inputSummary = node.inputSummary ?? null
-    if ((prev.outputSummary ?? '') !== (node.outputSummary ?? ''))
-      patch.outputSummary = node.outputSummary ?? null
-    if ((prev.semanticProfileKey ?? '') !== (node.semanticProfileKey ?? ''))
-      patch.semanticProfileKey = node.semanticProfileKey ?? null
-    if ((prev.semanticProfileVersion ?? null) !== (node.semanticProfileVersion ?? null))
-      patch.semanticProfileVersion = node.semanticProfileVersion ?? null
-    if (!sameJson(prev.semanticPayloadJson, node.semanticPayloadJson))
-      patch.semanticPayloadJson = node.semanticPayloadJson ?? {}
     if (!sameJson(prev.bpmnSemanticJson, node.bpmnSemanticJson))
       patch.bpmnSemanticJson = node.bpmnSemanticJson ?? {}
     if (!sameJson(prev.taskUiJson, node.taskUiJson))
       patch.taskUiJson = node.taskUiJson ?? {}
-    if (!sameJson(prev.processContainerJson, node.processContainerJson))
-      patch.processContainerJson = node.processContainerJson ?? {}
-    if ((prev.containerNodeKey ?? '') !== (node.containerNodeKey ?? ''))
-      patch.containerNodeKey = node.containerNodeKey ?? null
     if (nodeBpmnChanged(prev, node)) {
       Object.assign(patch, {
         nodeType: node.nodeType,
@@ -334,7 +292,6 @@ export function buildBusinessFlowOps(
         bpmnTaskType: node.bpmnTaskType,
         bpmnGatewayType: node.bpmnGatewayType,
         bpmnSubProcessKind: node.bpmnSubProcessKind,
-        bpmnCallActivityRef: node.bpmnCallActivityRef,
       })
     }
     if (!sameJson(prev.styleJson, node.styleJson))
@@ -393,11 +350,6 @@ export function buildBusinessFlowOps(
       prev.targetNodeKey !== edge.targetNodeKey ||
       prev.sourcePort !== edge.sourcePort ||
       prev.targetPort !== edge.targetPort ||
-      (prev.conditionText ?? '') !== (edge.conditionText ?? '') ||
-      !sameJson(prev.dataContract, edge.dataContract) ||
-      (prev.semanticProfileKey ?? '') !== (edge.semanticProfileKey ?? '') ||
-      (prev.semanticProfileVersion ?? null) !== (edge.semanticProfileVersion ?? null) ||
-      !sameJson(prev.semanticPayloadJson, edge.semanticPayloadJson) ||
       !sameJson(prev.bpmnSemanticJson, edge.bpmnSemanticJson) ||
       !sameJson(prev.styleJson, edge.styleJson) ||
       !sameJson(prev.propertiesJson, edge.propertiesJson)

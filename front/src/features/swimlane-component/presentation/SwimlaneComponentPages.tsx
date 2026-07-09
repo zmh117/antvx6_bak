@@ -82,7 +82,6 @@ import type {
   BpmnSemanticJson,
   BusinessFlowNodeErRef,
   BusinessFlowNodeType,
-  ProcessContainerConfig,
   SwimlaneComponent,
   TaskUiContext,
 } from '@/entities/business-flow'
@@ -98,7 +97,6 @@ import {
   nodeSemanticType,
   normalizeBpmnSemantic,
   normalizeTaskUiContext,
-  semanticPayload,
   taskUiTaskName,
 } from '@/entities/business-flow'
 import {
@@ -151,11 +149,9 @@ const NODE_TOOLS = BPMN_NODE_OPTIONS.map((option) => ({
         ? Diamond
         : option.group === '数据'
           ? Pencil
-          : option.profile.bpmnElementType === 'CALL_ACTIVITY'
-            ? ExternalLink
-            : option.profile.bpmnElementType === 'SUB_PROCESS'
-              ? Workflow
-              : Square,
+          : option.profile.bpmnElementType === 'SUB_PROCESS'
+            ? Workflow
+            : Square,
 }))
 
 type SelectedComponentCell =
@@ -163,19 +159,9 @@ type SelectedComponentCell =
       kind: 'node'
       cell: Cell
       title: string
-      description: string
-      actor: string
-      businessRule: string
-      inputSummary: string
-      outputSummary: string
       bpmnProfile: BpmnNodeProfile
-      semanticProfileKey: string
-      semanticProfileVersion: number | null
-      semanticPayloadJson: Record<string, unknown>
       bpmnSemanticJson: BpmnSemanticJson | null
       taskUiJson: TaskUiContext | null
-      processContainerJson: ProcessContainerConfig | null
-      containerNodeKey: string | null
       erRefs: BusinessFlowNodeErRef[]
     }
   | {
@@ -183,9 +169,6 @@ type SelectedComponentCell =
       cell: Edge
       label: string
       bpmnProfile: BpmnEdgeProfile
-      semanticProfileKey: string
-      semanticProfileVersion: number | null
-      semanticPayloadJson: Record<string, unknown>
       bpmnSemanticJson: BpmnSemanticJson
     }
   | null
@@ -1204,21 +1187,11 @@ function ComponentInspector({
             selected.cell.setData({
               ...readCellData(selected.cell),
               title,
-              description: null,
-              actor: null,
-              businessRule: null,
-              inputSummary: null,
-              outputSummary: null,
               taskUiJson: nextTaskUi,
             })
             onChange({
               ...selected,
               title,
-              description: '',
-              actor: '',
-              businessRule: '',
-              inputSummary: '',
-              outputSummary: '',
               taskUiJson: nextTaskUi,
             })
           }}
@@ -1239,21 +1212,11 @@ function ComponentInspector({
         selected.cell.setData({
           ...readCellData(selected.cell),
           title,
-          description: null,
-          actor: null,
-          businessRule: null,
-          inputSummary: null,
-          outputSummary: null,
           bpmnSemanticJson,
         })
         onChange({
           ...selected,
           title,
-          description: '',
-          actor: '',
-          businessRule: '',
-          inputSummary: '',
-          outputSummary: '',
           bpmnSemanticJson,
         })
       }}
@@ -1279,8 +1242,6 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       edgeType: data.edgeType,
       bpmnFlowType: data.bpmnFlowType,
       bpmnSequenceFlowKind: data.bpmnSequenceFlowKind,
-      bpmnMessageName: data.bpmnMessageName,
-      bpmnConditionExpression: data.bpmnConditionExpression,
       propertiesJson: data.propertiesJson,
     })
     return {
@@ -1288,9 +1249,6 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       cell: cell as Edge,
       label: data.title ?? '',
       bpmnProfile,
-      semanticProfileKey: data.semanticProfileKey ?? '',
-      semanticProfileVersion: data.semanticProfileVersion ?? null,
-      semanticPayloadJson: semanticPayload(data.semanticPayloadJson),
       bpmnSemanticJson: normalizeBpmnSemantic(
         data.bpmnSemanticJson,
         edgeSemanticType(bpmnProfile),
@@ -1307,7 +1265,6 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       bpmnTaskType: data.bpmnTaskType,
       bpmnGatewayType: data.bpmnGatewayType,
       bpmnSubProcessKind: data.bpmnSubProcessKind,
-      bpmnCallActivityRef: data.bpmnCallActivityRef,
       propertiesJson: data.propertiesJson,
     })
     const semanticType = nodeSemanticType(bpmnProfile)
@@ -1315,15 +1272,7 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       kind: 'node',
       cell,
       title: data.title ?? String(cell.attr('label/text') ?? ''),
-      description: data.description ?? '',
-      actor: data.actor ?? '',
-      businessRule: data.businessRule ?? '',
-      inputSummary: data.inputSummary ?? '',
-      outputSummary: data.outputSummary ?? '',
       bpmnProfile,
-      semanticProfileKey: data.semanticProfileKey ?? '',
-      semanticProfileVersion: data.semanticProfileVersion ?? null,
-      semanticPayloadJson: semanticPayload(data.semanticPayloadJson),
       bpmnSemanticJson: semanticType
         ? normalizeBpmnSemantic(
             data.bpmnSemanticJson,
@@ -1334,8 +1283,6 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       taskUiJson: bpmnProfile.bpmnElementType === 'TASK'
         ? normalizeTaskUiContext(data.taskUiJson, { taskName: data.title ?? String(cell.attr('label/text') ?? '') })
         : data.taskUiJson ?? null,
-      processContainerJson: data.processContainerJson ?? null,
-      containerNodeKey: data.containerNodeKey ?? null,
       erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
     }
   }

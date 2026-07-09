@@ -5,7 +5,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.application.agent_context_service import _step_context_item
-from app.domain.business_flow.semantic_profile import business_flow_quality_issues
 from app.domain.business_flow.task_ui import task_ui_payload, task_ui_quality_issues
 
 
@@ -91,38 +90,32 @@ class TaskUiPayloadTest(unittest.TestCase):
         )
 
         self.assertEqual(item["title"], "提交工单")
-        self.assertIsNone(item["actor"])
-        self.assertIsNone(item["businessRule"])
-        self.assertIsNone(item["inputSummary"])
-        self.assertIsNone(item["outputSummary"])
+        self.assertNotIn("actor", item)
+        self.assertNotIn("businessRule", item)
+        self.assertNotIn("inputSummary", item)
+        self.assertNotIn("outputSummary", item)
         self.assertEqual(item["erRefs"], [])
         self.assertEqual(item["taskUi"]["actor"], "计划员")
         self.assertEqual(item["taskUi"]["uiSteps"][0]["elementType"], "Button")
 
     def test_business_flow_quality_no_longer_requires_task_er_binding(self) -> None:
-        issues = business_flow_quality_issues(
-            [
-                {
-                    "node_key": "task-1",
-                    "bpmn_element_type": "TASK",
-                    "semantic_profile_key": "mes-manufacturing-node",
-                    "semantic_payload_json": {"operationType": "RELEASE"},
-                    "task_ui_json": {
-                        "taskName": "提交工单",
-                        "page": {"pageName": "工单创建页"},
-                        "uiSteps": [
-                            {
-                                "elementType": "Button",
-                                "actionType": "click",
-                                "elementName": "提交",
-                                "expectedResult": "提交成功",
-                            }
-                        ],
-                    },
-                }
-            ],
-            [],
-            {},
+        issues = task_ui_quality_issues(
+            {
+                "node_key": "task-1",
+                "bpmn_element_type": "TASK",
+                "task_ui_json": {
+                    "taskName": "提交工单",
+                    "page": {"pageName": "工单创建页"},
+                    "uiSteps": [
+                        {
+                            "elementType": "Button",
+                            "actionType": "click",
+                            "elementName": "提交",
+                            "expectedResult": "提交成功",
+                        }
+                    ],
+                },
+            }
         )
 
         self.assertNotIn("MISSING_ER_REF", {issue["code"] for issue in issues})

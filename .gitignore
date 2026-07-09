@@ -5,6 +5,7 @@ node_modules/
 dist/
 front/node_modules/
 front/dist/
+.pnpm-store/
 __pycache__/
 *.pyc
 .pytest_cache/

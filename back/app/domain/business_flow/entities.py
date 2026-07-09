@@ -71,16 +71,10 @@ class SwimlaneComponentNode:
     bpmn_task_type: str | None = None
     bpmn_gateway_type: str | None = None
     bpmn_subprocess_kind: str | None = None
-    bpmn_call_activity_ref: str | None = None
     position_x: float = 0
     position_y: float = 0
     width: float = 120
     height: float = 60
-    description: str | None = None
-    actor: str | None = None
-    business_rule: str | None = None
-    input_summary: str | None = None
-    output_summary: str | None = None
     er_refs: list[ErReference] = field(default_factory=list)
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
@@ -97,13 +91,9 @@ class SwimlaneComponentEdge:
     edge_type: BusinessEdgeType = "SEQUENCE"
     bpmn_flow_type: str | None = None
     bpmn_sequence_flow_kind: str | None = None
-    bpmn_message_name: str | None = None
-    bpmn_condition_expression: str | None = None
     source_port: str | None = None
     target_port: str | None = None
     label: str | None = None
-    condition_text: str | None = None
-    data_contract_json: JsonDict = field(default_factory=dict)
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
     bpmn_semantic_json: JsonDict = field(default_factory=dict)
@@ -155,18 +145,12 @@ class BusinessFlowNode:
     title: str
     lane_instance_id: UUID | None = None
     origin_component_node_key: str | None = None
-    description: str | None = None
-    actor: str | None = None
-    business_rule: str | None = None
     bpmn_element_type: str | None = None
     bpmn_event_kind: str | None = None
     bpmn_event_definition: str | None = None
     bpmn_task_type: str | None = None
     bpmn_gateway_type: str | None = None
     bpmn_subprocess_kind: str | None = None
-    bpmn_call_activity_ref: str | None = None
-    input_summary: str | None = None
-    output_summary: str | None = None
     position_x: float = 0
     position_y: float = 0
     width: float = 120
@@ -194,12 +178,8 @@ class BusinessFlowEdge:
     target_lane_instance_id: UUID | None = None
     target_port: str | None = None
     label: str | None = None
-    condition_text: str | None = None
-    data_contract_json: JsonDict = field(default_factory=dict)
     bpmn_flow_type: str | None = None
     bpmn_sequence_flow_kind: str | None = None
-    bpmn_message_name: str | None = None
-    bpmn_condition_expression: str | None = None
     origin_component_edge_key: str | None = None
     is_overridden: bool = False
     style_json: JsonDict = field(default_factory=dict)

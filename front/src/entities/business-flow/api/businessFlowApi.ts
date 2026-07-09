@@ -26,7 +26,6 @@ import type {
   BusinessFlowNodeType,
   CanvasPosition,
   LocalBusinessFlowCanvas,
-  ProcessContainerConfig,
   SwimlaneComponent,
   SwimlaneComponentEdge,
   SwimlaneComponentNode,
@@ -113,20 +112,9 @@ type ApiSwimlaneComponentNode = {
   bpmn_task_type?: BpmnNodeProfile['bpmnTaskType'] | null
   bpmn_gateway_type?: BpmnNodeProfile['bpmnGatewayType'] | null
   bpmn_subprocess_kind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
-  bpmn_call_activity_ref?: string | null
   title: string
-  description?: string | null
-  actor?: string | null
-  business_rule?: string | null
-  input_summary?: string | null
-  output_summary?: string | null
-  semantic_profile_key?: string | null
-  semantic_profile_version?: number | null
-  semantic_payload_json?: BusinessFlowJson | null
   bpmn_semantic_json?: BpmnSemanticJson | null
   task_ui_json?: TaskUiContext | null
-  process_container_json?: ProcessContainerConfig | null
-  container_node_key?: string | null
   position_x: number
   position_y: number
   width: number
@@ -154,14 +142,7 @@ type ApiSwimlaneComponentEdge = {
   edge_type: SwimlaneComponentEdge['edgeType']
   bpmn_flow_type?: BpmnEdgeProfile['bpmnFlowType'] | null
   bpmn_sequence_flow_kind?: BpmnEdgeProfile['bpmnSequenceFlowKind'] | null
-  bpmn_message_name?: string | null
-  bpmn_condition_expression?: string | null
   label?: string | null
-  condition_text?: string | null
-  data_contract_json?: BusinessFlowJson | null
-  semantic_profile_key?: string | null
-  semantic_profile_version?: number | null
-  semantic_payload_json?: BusinessFlowJson | null
   bpmn_semantic_json?: BpmnSemanticJson | null
   style_json?: BusinessFlowJson | null
   properties_json?: BusinessFlowJson | null
@@ -215,20 +196,9 @@ export type SaveSwimlaneComponentVersionBody = {
 	    bpmnTaskType?: BpmnNodeProfile['bpmnTaskType'] | null
 	    bpmnGatewayType?: BpmnNodeProfile['bpmnGatewayType'] | null
 	    bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
-	    bpmnCallActivityRef?: string | null
 	    title: string
-	    description?: string | null
-	    actor?: string | null
-	    businessRule?: string | null
-	    inputSummary?: string | null
-	    outputSummary?: string | null
-      semanticProfileKey?: string | null
-      semanticProfileVersion?: number | null
-      semanticPayloadJson?: BusinessFlowJson | null
       bpmnSemanticJson?: BpmnSemanticJson | null
       taskUiJson?: TaskUiContext | null
-      processContainerJson?: ProcessContainerConfig | null
-      containerNodeKey?: string | null
 	    position: CanvasPosition
     size: { width: number; height: number }
     erRefs?: Array<{
@@ -251,14 +221,7 @@ export type SaveSwimlaneComponentVersionBody = {
 	    edgeType: SwimlaneComponentEdge['edgeType']
 	    bpmnFlowType?: BpmnEdgeProfile['bpmnFlowType'] | null
 	    bpmnSequenceFlowKind?: BpmnEdgeProfile['bpmnSequenceFlowKind'] | null
-	    bpmnMessageName?: string | null
-	    bpmnConditionExpression?: string | null
 	    label?: string | null
-	    conditionText?: string | null
-	    dataContractJson?: BusinessFlowJson | null
-      semanticProfileKey?: string | null
-      semanticProfileVersion?: number | null
-      semanticPayloadJson?: BusinessFlowJson | null
       bpmnSemanticJson?: BpmnSemanticJson | null
 	    styleJson?: BusinessFlowJson | null
     propertiesJson?: BusinessFlowJson | null
@@ -320,20 +283,9 @@ type ApiBusinessFlowNode = {
   bpmn_task_type?: BpmnNodeProfile['bpmnTaskType'] | null
   bpmn_gateway_type?: BpmnNodeProfile['bpmnGatewayType'] | null
   bpmn_subprocess_kind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
-  bpmn_call_activity_ref?: string | null
   title: string
-  description?: string | null
-  actor?: string | null
-  business_rule?: string | null
-  input_summary?: string | null
-  output_summary?: string | null
-  semantic_profile_key?: string | null
-  semantic_profile_version?: number | null
-  semantic_payload_json?: BusinessFlowJson | null
   bpmn_semantic_json?: BpmnSemanticJson | null
   task_ui_json?: TaskUiContext | null
-  process_container_json?: ProcessContainerConfig | null
-  container_node_key?: string | null
   position_x: number
   position_y: number
   width: number
@@ -370,14 +322,7 @@ type ApiBusinessFlowEdge = {
   edge_type: BusinessFlowEdgeRecord['edgeType']
   bpmn_flow_type?: BpmnEdgeProfile['bpmnFlowType'] | null
   bpmn_sequence_flow_kind?: BpmnEdgeProfile['bpmnSequenceFlowKind'] | null
-  bpmn_message_name?: string | null
-  bpmn_condition_expression?: string | null
   label?: string | null
-  condition_text?: string | null
-  data_contract_json?: BusinessFlowJson | null
-  semantic_profile_key?: string | null
-  semantic_profile_version?: number | null
-  semantic_payload_json?: BusinessFlowJson | null
   bpmn_semantic_json?: BpmnSemanticJson | null
   origin_component_edge_key?: string | null
   is_overridden: boolean
@@ -415,7 +360,6 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     bpmnTaskType: node.bpmn_task_type,
     bpmnGatewayType: node.bpmn_gateway_type,
     bpmnSubProcessKind: node.bpmn_subprocess_kind,
-    bpmnCallActivityRef: node.bpmn_call_activity_ref,
     propertiesJson: node.properties_json,
   })
   const taskUiJson = bpmnProfile.bpmnElementType === 'TASK'
@@ -435,18 +379,8 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     nodeType: node.node_type,
     ...bpmnProfile,
     title,
-    description: node.description ?? null,
-    actor: node.actor ?? null,
-    businessRule: node.business_rule ?? null,
-    inputSummary: node.input_summary ?? null,
-    outputSummary: node.output_summary ?? null,
-    semanticProfileKey: node.semantic_profile_key ?? null,
-    semanticProfileVersion: node.semantic_profile_version ?? null,
-    semanticPayloadJson: node.semantic_payload_json ?? {},
     bpmnSemanticJson,
     taskUiJson,
-    processContainerJson: node.process_container_json ?? null,
-    containerNodeKey: node.container_node_key ?? null,
     position: { x: Number(node.position_x), y: Number(node.position_y) },
     size: { width: Number(node.width), height: Number(node.height) },
     erRefs: (isDataBpmnProfile(bpmnProfile) ? node.er_refs ?? [] : []).map((ref) => ({
@@ -467,8 +401,6 @@ function normalizeSwimlaneComponentEdge(edge: ApiSwimlaneComponentEdge): Swimlan
     edgeType: edge.edge_type,
     bpmnFlowType: edge.bpmn_flow_type,
     bpmnSequenceFlowKind: edge.bpmn_sequence_flow_kind,
-    bpmnMessageName: edge.bpmn_message_name,
-    bpmnConditionExpression: edge.bpmn_condition_expression,
     propertiesJson: edge.properties_json,
   })
   const bpmnSemanticJson = normalizeBpmnSemantic(
@@ -487,11 +419,6 @@ function normalizeSwimlaneComponentEdge(edge: ApiSwimlaneComponentEdge): Swimlan
     edgeType: edge.edge_type,
     ...bpmnProfile,
     label: bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? '') || null,
-    conditionText: edge.condition_text ?? null,
-    dataContractJson: edge.data_contract_json ?? null,
-    semanticProfileKey: edge.semantic_profile_key ?? null,
-    semanticProfileVersion: edge.semantic_profile_version ?? null,
-    semanticPayloadJson: edge.semantic_payload_json ?? {},
     bpmnSemanticJson,
     styleJson: edge.style_json ?? null,
     propertiesJson: mergeBpmnIntoProperties(edge.properties_json, bpmnProfile),
@@ -547,7 +474,6 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         bpmnTaskType: node.bpmnTaskType,
         bpmnGatewayType: node.bpmnGatewayType,
         bpmnSubProcessKind: node.bpmnSubProcessKind,
-        bpmnCallActivityRef: node.bpmnCallActivityRef,
         propertiesJson: node.propertiesJson,
       })
       const taskUiJson = bpmnProfile.bpmnElementType === 'TASK'
@@ -570,20 +496,9 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         bpmn_task_type: bpmnProfile.bpmnTaskType,
         bpmn_gateway_type: bpmnProfile.bpmnGatewayType,
         bpmn_subprocess_kind: bpmnProfile.bpmnSubProcessKind,
-        bpmn_call_activity_ref: bpmnProfile.bpmnCallActivityRef,
         title,
-        description: null,
-        actor: null,
-        business_rule: null,
-        input_summary: null,
-        output_summary: null,
-        semantic_profile_key: node.semanticProfileKey,
-        semantic_profile_version: node.semanticProfileVersion,
-        semantic_payload_json: node.semanticPayloadJson ?? {},
         bpmn_semantic_json: isTask ? {} : bpmnSemanticJson ?? {},
         task_ui_json: taskUiJson ?? {},
-        process_container_json: node.processContainerJson ?? {},
-        container_node_key: node.containerNodeKey ?? null,
         position_x: node.position.x,
         position_y: node.position.y,
         width: node.size.width,
@@ -605,8 +520,6 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         edgeType: edge.edgeType,
         bpmnFlowType: edge.bpmnFlowType,
         bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
-        bpmnMessageName: edge.bpmnMessageName,
-        bpmnConditionExpression: edge.bpmnConditionExpression,
         propertiesJson: edge.propertiesJson,
       })
       const bpmnSemanticJson = normalizeBpmnSemantic(
@@ -623,14 +536,7 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         edge_type: edge.edgeType,
         bpmn_flow_type: bpmnProfile.bpmnFlowType,
         bpmn_sequence_flow_kind: bpmnProfile.bpmnSequenceFlowKind,
-        bpmn_message_name: bpmnProfile.bpmnMessageName,
-        bpmn_condition_expression: bpmnProfile.bpmnConditionExpression,
         label: bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? '') || null,
-        condition_text: edge.conditionText,
-        data_contract_json: edge.dataContractJson ?? {},
-        semantic_profile_key: edge.semanticProfileKey,
-        semantic_profile_version: edge.semanticProfileVersion,
-        semantic_payload_json: edge.semanticPayloadJson ?? {},
         bpmn_semantic_json: bpmnSemanticJson,
         style_json: edge.styleJson ?? {},
         properties_json: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
@@ -683,7 +589,6 @@ function normalizeBusinessFlowEditorState(
         bpmnTaskType: node.bpmn_task_type,
         bpmnGatewayType: node.bpmn_gateway_type,
         bpmnSubProcessKind: node.bpmn_subprocess_kind,
-        bpmnCallActivityRef: node.bpmn_call_activity_ref,
         propertiesJson: node.properties_json,
       })
       const taskUiJson = bpmnProfile.bpmnElementType === 'TASK'
@@ -706,16 +611,8 @@ function normalizeBusinessFlowEditorState(
         nodeType: node.node_type,
         ...bpmnProfile,
         title,
-        description: node.description ?? null,
-        actor: node.actor ?? null,
-        businessRule: node.business_rule ?? null,
-        semanticProfileKey: node.semantic_profile_key ?? null,
-        semanticProfileVersion: node.semantic_profile_version ?? null,
-        semanticPayloadJson: node.semantic_payload_json ?? {},
         bpmnSemanticJson,
         taskUiJson,
-        processContainerJson: node.process_container_json ?? null,
-        containerNodeKey: node.container_node_key ?? null,
         erRefs: (isDataBpmnProfile(bpmnProfile) ? node.er_refs ?? [] : []).map((ref) => ({
           id: ref.id,
           erDiagramId: ref.er_diagram_id,
@@ -726,8 +623,6 @@ function normalizeBusinessFlowEditorState(
         })),
         position: { x: Number(node.position_x), y: Number(node.position_y) },
         size: { width: Number(node.width), height: Number(node.height) },
-        inputSummary: node.input_summary ?? null,
-        outputSummary: node.output_summary ?? null,
         isOverridden: Boolean(node.is_overridden),
         styleJson: node.style_json ?? null,
         propertiesJson: mergeBpmnIntoProperties(node.properties_json, bpmnProfile),
@@ -753,8 +648,6 @@ function normalizeBusinessFlowEditorState(
         edgeType: edge.edge_type,
         bpmnFlowType: edge.bpmn_flow_type,
         bpmnSequenceFlowKind: edge.bpmn_sequence_flow_kind,
-        bpmnMessageName: edge.bpmn_message_name,
-        bpmnConditionExpression: edge.bpmn_condition_expression,
         propertiesJson: edge.properties_json,
         isCrossLane,
       })
@@ -772,11 +665,6 @@ function normalizeBusinessFlowEditorState(
         edgeType: edge.edge_type,
         ...bpmnProfile,
         label: bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? '') || null,
-        conditionText: edge.condition_text ?? null,
-        dataContract: edge.data_contract_json as BusinessFlowEdgeRecord['dataContract'],
-        semanticProfileKey: edge.semantic_profile_key ?? null,
-        semanticProfileVersion: edge.semantic_profile_version ?? null,
-        semanticPayloadJson: edge.semantic_payload_json ?? {},
         bpmnSemanticJson,
         isCrossLane,
         sourceType: edge.source_type,

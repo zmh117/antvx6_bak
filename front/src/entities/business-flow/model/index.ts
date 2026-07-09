@@ -1,6 +1,5 @@
 export * from './bpmn'
 export * from './bpmnSemantic'
 export * from './erBinding'
-export * from './semanticProfile'
 export * from './taskUi'
 export * from './types'

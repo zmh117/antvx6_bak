@@ -24,18 +24,7 @@ from app.domain.business_flow.bpmn_semantic import (
     node_semantic_type,
     semantic_display_name,
 )
-from app.domain.business_flow.semantic_profile import (
-    business_flow_quality_issues,
-    semantic_payload,
-    semantic_payload_error,
-    semantic_profile_key,
-    semantic_profile_version,
-)
-from app.domain.business_flow.task_ui import (
-    container_structure_error,
-    process_container_payload,
-    task_ui_payload,
-)
+from app.domain.business_flow.task_ui import task_ui_payload
 from app.interfaces.http.schemas.business_flow import (
     ApplyBusinessFlowChangesRequest,
     ApplyBusinessFlowChangesResponse,
@@ -62,6 +51,30 @@ from app.services.auth import (
 )
 
 router = APIRouter(prefix="/business-flows", tags=["business-flow"])
+
+RETIRED_BPMN_FIELDS = {
+    "description", "actor", "businessRule", "business_rule",
+    "inputSummary", "input_summary", "outputSummary", "output_summary",
+    "semanticProfileKey", "semantic_profile_key",
+    "semanticProfileVersion", "semantic_profile_version",
+    "semanticPayloadJson", "semantic_payload_json",
+    "processContainerJson", "process_container_json",
+    "containerNodeKey", "container_node_key",
+    "bpmnCallActivityRef", "bpmn_call_activity_ref",
+    "conditionText", "condition_text",
+    "dataContractJson", "data_contract_json",
+    "bpmnMessageName", "bpmn_message_name",
+    "bpmnConditionExpression", "bpmn_condition_expression",
+}
+
+
+def _reject_retired_bpmn_fields(payload: dict[str, Any], target_key: str) -> None:
+    retired = sorted(RETIRED_BPMN_FIELDS.intersection(payload))
+    if retired:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"retired BPMN fields for {target_key}: {', '.join(retired)}",
+        )
 
 
 def _default_product_id() -> UUID:
@@ -392,10 +405,8 @@ def _node_response(row: dict, refs_by_node_id: dict[UUID, list[dict]] | None = N
         "width": float(row["width"]),
         "height": float(row["height"]),
         "style_json": _json_value(row, "style_json"),
-        "semantic_payload_json": _json_value(row, "semantic_payload_json"),
         "bpmn_semantic_json": bpmn_semantic,
         "task_ui_json": _json_value(row, "task_ui_json"),
-        "process_container_json": _json_value(row, "process_container_json"),
         "properties_json": strip_mes_json(_json_value(row, "properties_json")),
         "er_refs": er_refs,
     }
@@ -410,27 +421,10 @@ def _edge_response(row: dict) -> dict:
     return {
         **row,
         "label": semantic_display_name(bpmn_semantic, row.get("label")) or None,
-        "data_contract_json": _json_value(row, "data_contract_json"),
-        "semantic_payload_json": _json_value(row, "semantic_payload_json"),
         "bpmn_semantic_json": bpmn_semantic,
         "style_json": _json_value(row, "style_json"),
         "properties_json": strip_mes_json(_json_value(row, "properties_json")),
     }
-
-
-def _semantic_fields_from_patch(patch: dict[str, Any]) -> dict[str, Any]:
-    values: dict[str, Any] = {}
-    if "semanticProfileKey" in patch:
-        values["semantic_profile_key"] = semantic_profile_key(patch.get("semanticProfileKey"))
-    if "semanticProfileVersion" in patch:
-        values["semantic_profile_version"] = semantic_profile_version(
-            patch.get("semanticProfileVersion")
-        )
-    if "semanticPayloadJson" in patch:
-        values["semantic_payload_json"] = Jsonb(
-            semantic_payload(patch.get("semanticPayloadJson"))
-        )
-    return values
 
 
 def _bpmn_semantic_field_from_patch(
@@ -448,48 +442,17 @@ def _bpmn_semantic_field_from_patch(
     return {"bpmn_semantic_json": Jsonb(payload)}
 
 
-def _semantic_patch_fields(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "semanticProfileKey": row.get("semantic_profile_key"),
-        "semanticProfileVersion": row.get("semantic_profile_version"),
-        "semanticPayloadJson": semantic_payload(row.get("semantic_payload_json")),
-    }
-
-
 def _node_context_fields_from_patch(patch: dict[str, Any]) -> dict[str, Any]:
     values: dict[str, Any] = {}
     if "taskUiJson" in patch:
         values["task_ui_json"] = Jsonb(task_ui_payload(patch.get("taskUiJson")))
-    if "processContainerJson" in patch:
-        values["process_container_json"] = Jsonb(
-            process_container_payload(patch.get("processContainerJson"))
-        )
-    if "containerNodeKey" in patch:
-        value = patch.get("containerNodeKey")
-        values["container_node_key"] = str(value).strip() if value else None
     return values
 
 
 def _node_context_patch_fields(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "taskUiJson": task_ui_payload(row.get("task_ui_json")),
-        "processContainerJson": process_container_payload(row.get("process_container_json")),
-        "containerNodeKey": row.get("container_node_key"),
     }
-
-
-def _ensure_valid_semantic_payload(
-    profile_key: str | None,
-    payload: dict[str, Any] | None,
-    target_scope: str,
-    target_key: str,
-) -> None:
-    error = semantic_payload_error(profile_key, payload, target_scope)  # type: ignore[arg-type]
-    if error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"invalid semantic profile {target_key}: {error}",
-        )
 
 
 def _fetch_business_flow_editor_state(
@@ -554,12 +517,10 @@ def _fetch_business_flow_editor_state(
         SELECT id, lane_instance_id, node_key, origin_component_node_key, node_type,
                bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-               bpmn_call_activity_ref,
-               title, description, actor, business_rule, input_summary, output_summary,
+               title,
                position_x, position_y, width, height, is_overridden, style_json,
-               semantic_profile_key, semantic_profile_version, semantic_payload_json,
                bpmn_semantic_json,
-               task_ui_json, process_container_json, container_node_key,
+               task_ui_json,
                properties_json
         FROM business_flow_node
         WHERE business_flow_id = %s
@@ -577,11 +538,8 @@ def _fetch_business_flow_editor_state(
                e.source_port, e.target_type,
                e.target_node_id, tn.node_key AS target_node_key,
                e.target_lane_instance_id, tli.instance_key AS target_lane_instance_key,
-               e.target_port, e.edge_type, e.label, e.condition_text,
-               e.bpmn_flow_type, e.bpmn_sequence_flow_kind, e.bpmn_message_name,
-               e.bpmn_condition_expression, e.data_contract_json,
-               e.semantic_profile_key, e.semantic_profile_version,
-               e.semantic_payload_json,
+               e.target_port, e.edge_type, e.label,
+               e.bpmn_flow_type, e.bpmn_sequence_flow_kind,
                e.bpmn_semantic_json,
                e.origin_component_edge_key, e.is_overridden,
                e.style_json, e.properties_json
@@ -734,10 +692,9 @@ def _node_profile_by_key(cur, business_flow_id: UUID, node_key: str) -> dict[str
         """
         SELECT id, node_key, node_type, title, bpmn_element_type, bpmn_event_kind,
                bpmn_event_definition, bpmn_task_type, bpmn_gateway_type,
-               bpmn_subprocess_kind, bpmn_call_activity_ref,
-               semantic_profile_key, semantic_profile_version, semantic_payload_json,
+               bpmn_subprocess_kind,
                bpmn_semantic_json,
-               task_ui_json, process_container_json, container_node_key
+               task_ui_json
         FROM business_flow_node
         WHERE business_flow_id = %s AND node_key = %s
         """,
@@ -758,28 +715,6 @@ def _ensure_valid_node(node: dict[str, Any], node_key: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"invalid BPMN node {node_key}: {error}",
-        )
-
-
-def _ensure_container_parent(cur, business_flow_id: UUID, node_key: str, container_key: str | None) -> None:
-    if not container_key:
-        return
-    if container_key == node_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"node cannot contain itself: {node_key}",
-        )
-    container = _node_profile_by_key(cur, business_flow_id, container_key)
-    structure_error = container_structure_error(
-        [
-            {**container, "node_key": container_key},
-            {"node_key": node_key, "container_node_key": container_key},
-        ]
-    )
-    if structure_error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"invalid process container structure: {structure_error}",
         )
 
 
@@ -948,6 +883,8 @@ def _normalize_business_flow_lane_bounds(cur, business_flow_id: UUID) -> None:
 def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
     patch = op.patch or {}
     target_key = op.target_key
+    if op.target_type in {"NODE", "EDGE"}:
+        _reject_retired_bpmn_fields(patch, target_key)
     if op.op_type in {"MOVE_LANE_INSTANCE", "RESIZE_LANE_INSTANCE", "RENAME_LANE_INSTANCE"}:
         values: dict[str, object] = {}
         to = patch.get("to") if isinstance(patch.get("to"), dict) else patch
@@ -1000,11 +937,6 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             values["height"] = to["height"]
         mapping = {
             "title": "title",
-            "description": "description",
-            "actor": "actor",
-            "businessRule": "business_rule",
-            "inputSummary": "input_summary",
-            "outputSummary": "output_summary",
             "nodeType": "node_type",
             "bpmnElementType": "bpmn_element_type",
             "bpmnEventKind": "bpmn_event_kind",
@@ -1012,7 +944,6 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             "bpmnTaskType": "bpmn_task_type",
             "bpmnGatewayType": "bpmn_gateway_type",
             "bpmnSubProcessKind": "bpmn_subprocess_kind",
-            "bpmnCallActivityRef": "bpmn_call_activity_ref",
         }
         for client_key, field in mapping.items():
             if client_key in patch:
@@ -1025,7 +956,6 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             values["properties_json"] = Jsonb(
                 strip_mes_json(patch.get("propertiesJson") or {})
             )
-        values.update(_semantic_fields_from_patch(patch))
         values.update(_node_context_fields_from_patch(patch))
         if "bpmnSemanticJson" in patch:
             values["bpmn_semantic_json"] = Jsonb(patch.get("bpmnSemanticJson") or {})
@@ -1044,7 +974,6 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                         "bpmn_task_type",
                         "bpmn_gateway_type",
                         "bpmn_subprocess_kind",
-                        "bpmn_call_activity_ref",
                     }
                 }
             )
@@ -1062,40 +991,11 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                         bpmn_semantic,
                         patch.get("title") or candidate.get("title"),
                     )
-                    values.update({
-                        "description": None,
-                        "actor": None,
-                        "business_rule": None,
-                        "input_summary": None,
-                        "output_summary": None,
-                    })
             _ensure_node_edge_compatibility(
                 cur,
                 business_flow_id,
                 target_key,
                 candidate,
-            )
-            _ensure_container_parent(
-                cur,
-                business_flow_id,
-                target_key,
-                values.get("container_node_key") if "container_node_key" in values else candidate.get("container_node_key"),
-            )
-            semantic_key_value = (
-                values.get("semantic_profile_key")
-                if "semantic_profile_key" in values
-                else candidate.get("semantic_profile_key")
-            )
-            semantic_payload_value = (
-                semantic_payload(patch.get("semanticPayloadJson"))
-                if "semanticPayloadJson" in patch
-                else candidate.get("semantic_payload_json")
-            )
-            _ensure_valid_semantic_payload(
-                semantic_key_value,
-                semantic_payload(semantic_payload_value),
-                "NODE",
-                target_key,
             )
             assignments = [f"{field} = %s" for field in values]
             cur.execute(
@@ -1122,33 +1022,18 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             if semantic_type
             else patch.get("title") or "任务"
         )
-        _ensure_valid_semantic_payload(
-            semantic_profile_key(patch.get("semanticProfileKey")),
-            semantic_payload(patch.get("semanticPayloadJson")),
-            "NODE",
-            target_key,
-        )
-        _ensure_container_parent(
-            cur,
-            business_flow_id,
-            target_key,
-            patch.get("containerNodeKey") or None,
-        )
         cur.execute(
             """
             INSERT INTO business_flow_node (
                 business_flow_id, lane_instance_id, node_key, node_type, title,
-                description, actor, business_rule, input_summary, output_summary,
                 bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                 bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                bpmn_call_activity_ref,
                 position_x, position_y, width, height, is_overridden,
                 style_json, properties_json,
-                semantic_profile_key, semantic_profile_version, semantic_payload_json,
                 bpmn_semantic_json,
-                task_ui_json, process_container_json, container_node_key
+                task_ui_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s)
             ON CONFLICT (business_flow_id, node_key) DO NOTHING
             """,
             (
@@ -1157,31 +1042,20 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 target_key,
                 patch.get("nodeType", "TASK"),
                 title,
-                None if semantic_type else patch.get("description"),
-                None if semantic_type else patch.get("actor"),
-                None if semantic_type else patch.get("businessRule"),
-                None if semantic_type else patch.get("inputSummary"),
-                None if semantic_type else patch.get("outputSummary"),
                 patch.get("bpmnElementType"),
                 patch.get("bpmnEventKind"),
                 patch.get("bpmnEventDefinition"),
                 patch.get("bpmnTaskType"),
                 patch.get("bpmnGatewayType"),
                 patch.get("bpmnSubProcessKind"),
-                patch.get("bpmnCallActivityRef"),
                 patch.get("x", 0),
                 patch.get("y", 0),
                 patch.get("width", 120),
                 patch.get("height", 60),
                 Jsonb(patch.get("styleJson") or {}),
                 Jsonb(strip_mes_json(patch.get("propertiesJson") or {})),
-                semantic_profile_key(patch.get("semanticProfileKey")),
-                semantic_profile_version(patch.get("semanticProfileVersion")),
-                Jsonb(semantic_payload(patch.get("semanticPayloadJson"))),
                 Jsonb(bpmn_semantic),
                 Jsonb(task_ui_payload(patch.get("taskUiJson"))),
-                Jsonb(process_container_payload(patch.get("processContainerJson"))),
-                patch.get("containerNodeKey") or None,
             ),
         )
         return
@@ -1213,12 +1087,6 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             patch.get("label"),
         )
         label = semantic_display_name(bpmn_semantic, patch.get("label")) or None
-        _ensure_valid_semantic_payload(
-            semantic_profile_key(patch.get("semanticProfileKey")),
-            semantic_payload(patch.get("semanticPayloadJson")),
-            "EDGE",
-            target_key,
-        )
         source_lane_id = _node_lane_id(cur, business_flow_id, source_node_key)
         target_lane_id = _node_lane_id(cur, business_flow_id, target_node_key)
         lane_instance_id = source_lane_id if source_lane_id == target_lane_id else None
@@ -1227,14 +1095,12 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             INSERT INTO business_flow_edge (
                 business_flow_id, lane_instance_id, edge_key, source_type,
                 source_node_id, source_port, target_type, target_node_id, target_port,
-                edge_type, label, condition_text, data_contract_json, is_overridden,
-                bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-                bpmn_condition_expression,
+                edge_type, label, is_overridden,
+                bpmn_flow_type, bpmn_sequence_flow_kind,
                 style_json, properties_json,
-                semantic_profile_key, semantic_profile_version, semantic_payload_json,
                 bpmn_semantic_json
             )
-            VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s)
             ON CONFLICT (business_flow_id, edge_key) DO UPDATE
             SET lane_instance_id = EXCLUDED.lane_instance_id,
                 source_type = EXCLUDED.source_type,
@@ -1247,17 +1113,10 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 target_port = EXCLUDED.target_port,
                 label = EXCLUDED.label,
                 edge_type = EXCLUDED.edge_type,
-                condition_text = EXCLUDED.condition_text,
-                data_contract_json = EXCLUDED.data_contract_json,
                 bpmn_flow_type = EXCLUDED.bpmn_flow_type,
                 bpmn_sequence_flow_kind = EXCLUDED.bpmn_sequence_flow_kind,
-                bpmn_message_name = EXCLUDED.bpmn_message_name,
-                bpmn_condition_expression = EXCLUDED.bpmn_condition_expression,
                 style_json = EXCLUDED.style_json,
                 properties_json = EXCLUDED.properties_json,
-                semantic_profile_key = EXCLUDED.semantic_profile_key,
-                semantic_profile_version = EXCLUDED.semantic_profile_version,
-                semantic_payload_json = EXCLUDED.semantic_payload_json,
                 bpmn_semantic_json = EXCLUDED.bpmn_semantic_json,
                 is_overridden = TRUE,
                 updated_at = NOW()
@@ -1272,17 +1131,10 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                 patch.get("targetPort") or patch.get("target_port"),
                 patch.get("edgeType") or patch.get("edge_type") or ("DEPENDENCY" if lane_instance_id is None else "SEQUENCE"),
                 label,
-                patch.get("conditionText") or patch.get("condition_text"),
-                Jsonb(patch.get("dataContractJson") or patch.get("data_contract_json") or {}),
                 patch.get("bpmnFlowType") or patch.get("bpmn_flow_type"),
                 patch.get("bpmnSequenceFlowKind") or patch.get("bpmn_sequence_flow_kind"),
-                patch.get("bpmnMessageName") or patch.get("bpmn_message_name"),
-                patch.get("bpmnConditionExpression") or patch.get("bpmn_condition_expression"),
                 Jsonb(patch.get("styleJson") or {}),
                 Jsonb(strip_mes_json(patch.get("propertiesJson") or {})),
-                semantic_profile_key(patch.get("semanticProfileKey")),
-                semantic_profile_version(patch.get("semanticProfileVersion")),
-                Jsonb(semantic_payload(patch.get("semanticPayloadJson"))),
                 Jsonb(bpmn_semantic),
             ),
         )
@@ -1293,9 +1145,7 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             """
             SELECT e.source_node_id, e.target_node_id, e.edge_type,
                    e.bpmn_flow_type, e.bpmn_sequence_flow_kind,
-                   e.bpmn_message_name, e.bpmn_condition_expression,
-                   e.semantic_profile_key, e.semantic_profile_version,
-                   e.semantic_payload_json, e.bpmn_semantic_json, e.label,
+                   e.bpmn_semantic_json, e.label,
                    sn.node_key AS source_node_key, tn.node_key AS target_node_key
             FROM business_flow_edge e
             LEFT JOIN business_flow_node sn ON sn.id = e.source_node_id
@@ -1319,25 +1169,16 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
             values["label"] = patch["label"] or None
         if "edgeType" in patch:
             values["edge_type"] = patch["edgeType"]
-        if "conditionText" in patch:
-            values["condition_text"] = patch["conditionText"] or None
         if "bpmnFlowType" in patch:
             values["bpmn_flow_type"] = patch["bpmnFlowType"] or None
         if "bpmnSequenceFlowKind" in patch:
             values["bpmn_sequence_flow_kind"] = patch["bpmnSequenceFlowKind"] or None
-        if "bpmnMessageName" in patch:
-            values["bpmn_message_name"] = patch["bpmnMessageName"] or None
-        if "bpmnConditionExpression" in patch:
-            values["bpmn_condition_expression"] = patch["bpmnConditionExpression"] or None
-        if "dataContractJson" in patch:
-            values["data_contract_json"] = Jsonb(patch.get("dataContractJson") or {})
         if "styleJson" in patch:
             values["style_json"] = Jsonb(patch.get("styleJson") or {})
         if "propertiesJson" in patch:
             values["properties_json"] = Jsonb(
                 strip_mes_json(patch.get("propertiesJson") or {})
             )
-        values.update(_semantic_fields_from_patch(patch))
         if "bpmnSemanticJson" in patch:
             semantic_candidate = dict(current_edge)
             semantic_candidate.update({
@@ -1366,26 +1207,8 @@ def _apply_business_flow_op(cur, business_flow_id: UUID, op) -> None:
                         "edge_type",
                         "bpmn_flow_type",
                         "bpmn_sequence_flow_kind",
-                        "bpmn_message_name",
-                        "bpmn_condition_expression",
                     }
                 }
-            )
-            semantic_key_value = (
-                values.get("semantic_profile_key")
-                if "semantic_profile_key" in values
-                else current_edge.get("semantic_profile_key")
-            )
-            semantic_payload_value = (
-                semantic_payload(patch.get("semanticPayloadJson"))
-                if "semanticPayloadJson" in patch
-                else current_edge.get("semantic_payload_json")
-            )
-            _ensure_valid_semantic_payload(
-                semantic_key_value,
-                semantic_payload(semantic_payload_value),
-                "EDGE",
-                target_key,
             )
             if current_edge["source_node_key"] and current_edge["target_node_key"]:
                 source_node = _node_profile_by_key(
@@ -1615,15 +1438,10 @@ def _edge_patch(edge: dict[str, Any]) -> dict[str, Any]:
         "edgeType": edge.get("edge_type") or "SEQUENCE",
         "bpmnFlowType": edge.get("bpmn_flow_type"),
         "bpmnSequenceFlowKind": edge.get("bpmn_sequence_flow_kind"),
-        "bpmnMessageName": edge.get("bpmn_message_name"),
-        "bpmnConditionExpression": edge.get("bpmn_condition_expression"),
         "label": edge.get("label"),
-        "conditionText": edge.get("condition_text"),
-        "dataContractJson": edge.get("data_contract_json") or {},
         "styleJson": edge.get("style_json") or {},
         "propertiesJson": strip_mes_json(edge.get("properties_json") or {}),
         "bpmnSemanticJson": edge.get("bpmn_semantic_json") or {},
-        **_semantic_patch_fields(edge),
     }
 
 
@@ -1740,19 +1558,8 @@ def _build_business_flow_materialize_ops(
         if node.get("node_key")
     }
     for key, node in incoming_nodes.items():
+        _reject_retired_bpmn_fields(node, key)
         _ensure_valid_node(node, key)
-        _ensure_valid_semantic_payload(
-            semantic_profile_key(node.get("semantic_profile_key")),
-            semantic_payload(node.get("semantic_payload_json")),
-            "NODE",
-            key,
-        )
-    structure_error = container_structure_error(list(incoming_nodes.values()))
-    if structure_error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"invalid process container structure: {structure_error}",
-        )
     for key, node in current_nodes.items():
         if key not in incoming_nodes:
             ops.append(
@@ -1787,21 +1594,14 @@ def _build_business_flow_materialize_ops(
                         "bpmnTaskType": node.get("bpmn_task_type"),
                         "bpmnGatewayType": node.get("bpmn_gateway_type"),
                         "bpmnSubProcessKind": node.get("bpmn_subprocess_kind"),
-                        "bpmnCallActivityRef": node.get("bpmn_call_activity_ref"),
                         "title": node.get("title") or "任务",
                         "x": _number(node.get("position_x")),
                         "y": _number(node.get("position_y")),
                         "width": _number(node.get("width"), 120),
                         "height": _number(node.get("height"), 60),
-                        "description": node.get("description"),
-                        "actor": node.get("actor"),
-                        "businessRule": node.get("business_rule"),
-                        "inputSummary": node.get("input_summary"),
-                        "outputSummary": node.get("output_summary"),
                         "styleJson": node.get("style_json") or {},
                         "propertiesJson": strip_mes_json(node.get("properties_json") or {}),
                         "bpmnSemanticJson": node.get("bpmn_semantic_json") or {},
-                        **_semantic_patch_fields(node),
                         **_node_context_patch_fields(node),
                     },
                     "summary": f"新增节点：{node.get('title') or key}",
@@ -1834,16 +1634,6 @@ def _build_business_flow_materialize_ops(
             patch["laneInstanceKey"] = lane_key
         if not _same_text(current.get("title"), node.get("title")):
             patch["title"] = node.get("title") or "任务"
-        if not _same_text(current.get("description"), node.get("description")):
-            patch["description"] = node.get("description")
-        if not _same_text(current.get("actor"), node.get("actor")):
-            patch["actor"] = node.get("actor")
-        if not _same_text(current.get("business_rule"), node.get("business_rule")):
-            patch["businessRule"] = node.get("business_rule")
-        if not _same_text(current.get("input_summary"), node.get("input_summary")):
-            patch["inputSummary"] = node.get("input_summary")
-        if not _same_text(current.get("output_summary"), node.get("output_summary")):
-            patch["outputSummary"] = node.get("output_summary")
         for client_key, field in [
             ("nodeType", "node_type"),
             ("bpmnElementType", "bpmn_element_type"),
@@ -1852,7 +1642,6 @@ def _build_business_flow_materialize_ops(
             ("bpmnTaskType", "bpmn_task_type"),
             ("bpmnGatewayType", "bpmn_gateway_type"),
             ("bpmnSubProcessKind", "bpmn_subprocess_kind"),
-            ("bpmnCallActivityRef", "bpmn_call_activity_ref"),
         ]:
             if not _same_text(current.get(field), node.get(field)):
                 patch[client_key] = node.get(field)
@@ -1860,20 +1649,10 @@ def _build_business_flow_materialize_ops(
             patch["styleJson"] = node.get("style_json") or {}
         if _stable_json(current.get("properties_json")) != _stable_json(node.get("properties_json")):
             patch["propertiesJson"] = strip_mes_json(node.get("properties_json") or {})
-        if not _same_text(current.get("semantic_profile_key"), node.get("semantic_profile_key")):
-            patch["semanticProfileKey"] = node.get("semantic_profile_key")
-        if (current.get("semantic_profile_version") or None) != (node.get("semantic_profile_version") or None):
-            patch["semanticProfileVersion"] = node.get("semantic_profile_version")
-        if _stable_json(current.get("semantic_payload_json")) != _stable_json(node.get("semantic_payload_json")):
-            patch["semanticPayloadJson"] = semantic_payload(node.get("semantic_payload_json"))
         if _stable_json(current.get("bpmn_semantic_json")) != _stable_json(node.get("bpmn_semantic_json")):
             patch["bpmnSemanticJson"] = node.get("bpmn_semantic_json") or {}
         if _stable_json(current.get("task_ui_json")) != _stable_json(node.get("task_ui_json")):
             patch["taskUiJson"] = task_ui_payload(node.get("task_ui_json"))
-        if _stable_json(current.get("process_container_json")) != _stable_json(node.get("process_container_json")):
-            patch["processContainerJson"] = process_container_payload(node.get("process_container_json"))
-        if not _same_text(current.get("container_node_key"), node.get("container_node_key")):
-            patch["containerNodeKey"] = node.get("container_node_key")
         if patch:
             ops.append(
                 {
@@ -1915,6 +1694,7 @@ def _build_business_flow_materialize_ops(
                 }
             )
     for key, edge in incoming_edges.items():
+        _reject_retired_bpmn_fields(edge, key)
         if edge.get("source_type", "NODE") != "NODE" or edge.get("target_type", "NODE") != "NODE":
             continue
         source_node = incoming_nodes.get(edge.get("source_node_key") or "")
@@ -1922,12 +1702,6 @@ def _build_business_flow_materialize_ops(
         if not source_node or not target_node:
             continue
         _ensure_valid_edge(edge, key, source_node, target_node)
-        _ensure_valid_semantic_payload(
-            semantic_profile_key(edge.get("semantic_profile_key")),
-            semantic_payload(edge.get("semantic_payload_json")),
-            "EDGE",
-            key,
-        )
         current = current_edges.get(key)
         patch = _edge_patch(edge)
         if not current:
@@ -1952,19 +1726,12 @@ def _build_business_flow_materialize_ops(
                 "target_port",
                 "edge_type",
                 "label",
-                "condition_text",
                 "bpmn_flow_type",
                 "bpmn_sequence_flow_kind",
-                "bpmn_message_name",
-                "bpmn_condition_expression",
             ]
         )
-        changed = changed or _stable_json(current.get("data_contract_json")) != _stable_json(edge.get("data_contract_json"))
         changed = changed or _stable_json(current.get("style_json")) != _stable_json(edge.get("style_json"))
         changed = changed or _stable_json(current.get("properties_json")) != _stable_json(edge.get("properties_json"))
-        changed = changed or not _same_text(current.get("semantic_profile_key"), edge.get("semantic_profile_key"))
-        changed = changed or (current.get("semantic_profile_version") or None) != (edge.get("semantic_profile_version") or None)
-        changed = changed or _stable_json(current.get("semantic_payload_json")) != _stable_json(edge.get("semantic_payload_json"))
         changed = changed or _stable_json(current.get("bpmn_semantic_json")) != _stable_json(edge.get("bpmn_semantic_json"))
         if changed:
             ops.append(
@@ -2035,15 +1802,12 @@ def place_swimlane_component(
 
             cur.execute(
                 """
-                SELECT id, node_key, node_type, title, description, actor, business_rule,
-                       input_summary, output_summary, position_x, position_y, width, height,
+                SELECT id, node_key, node_type, title, position_x, position_y, width, height,
                        bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                        bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                       bpmn_call_activity_ref,
                        style_json, properties_json,
-                       semantic_profile_key, semantic_profile_version, semantic_payload_json,
                        bpmn_semantic_json,
-                       task_ui_json, process_container_json, container_node_key
+                       task_ui_json
                 FROM swimlane_component_node
                 WHERE component_version_id = %s
                 ORDER BY created_at ASC, node_key ASC
@@ -2071,12 +1835,10 @@ def place_swimlane_component(
             cur.execute(
                 """
                 SELECT edge_key, source_node_key, target_node_key, source_port, target_port,
-                       edge_type, label, condition_text, bpmn_flow_type,
-                       bpmn_sequence_flow_kind, bpmn_message_name,
-                       bpmn_condition_expression, data_contract_json,
+                       edge_type, label, bpmn_flow_type,
+                       bpmn_sequence_flow_kind,
                        style_json, properties_json,
-                       semantic_profile_key, semantic_profile_version, semantic_payload_json
-                       , bpmn_semantic_json
+                       bpmn_semantic_json
                 FROM swimlane_component_edge
                 WHERE component_version_id = %s
                 ORDER BY created_at ASC, edge_key ASC
@@ -2089,24 +1851,12 @@ def place_swimlane_component(
             }
             for node_key, component_node in component_nodes_by_key.items():
                 _ensure_valid_node(component_node, node_key)
-                _ensure_valid_semantic_payload(
-                    semantic_profile_key(component_node.get("semantic_profile_key")),
-                    semantic_payload(component_node.get("semantic_payload_json")),
-                    "NODE",
-                    node_key,
-                )
             for component_edge in component_edges:
                 _ensure_valid_edge(
                     dict(component_edge),
                     component_edge["edge_key"],
                     component_nodes_by_key[component_edge["source_node_key"]],
                     component_nodes_by_key[component_edge["target_node_key"]],
-                )
-                _ensure_valid_semantic_payload(
-                    semantic_profile_key(component_edge.get("semantic_profile_key")),
-                    semantic_payload(component_edge.get("semantic_payload_json")),
-                    "EDGE",
-                    component_edge["edge_key"],
                 )
 
             lane_key = f"lane_{uuid4().hex[:14]}"
@@ -2194,36 +1944,24 @@ def place_swimlane_component(
                     if semantic_type
                     else component_node.get("title")
                 )
-                container_node_key = (
-                    node_key_map.get(component_node.get("container_node_key"))
-                    if component_node.get("container_node_key")
-                    else None
+                node_position_x = LANE_PADDING_LEFT + (
+                    float(component_node["position_x"]) - min_x
                 )
-                node_position_x = (
-                    float(component_node["position_x"])
-                    if container_node_key
-                    else LANE_PADDING_LEFT + (float(component_node["position_x"]) - min_x)
-                )
-                node_position_y = (
-                    float(component_node["position_y"])
-                    if container_node_key
-                    else LANE_HEADER_HEIGHT + (float(component_node["position_y"]) - min_y)
+                node_position_y = LANE_HEADER_HEIGHT + (
+                    float(component_node["position_y"]) - min_y
                 )
                 cur.execute(
                     """
                     INSERT INTO business_flow_node (
                         business_flow_id, lane_instance_id, node_key,
-                        origin_component_node_key, node_type, title, description,
-                        actor, business_rule, input_summary, output_summary,
+                        origin_component_node_key, node_type, title,
                         bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                         bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                        bpmn_call_activity_ref,
                         position_x, position_y, width, height, style_json, properties_json,
-                        semantic_profile_key, semantic_profile_version, semantic_payload_json,
                         bpmn_semantic_json,
-                        task_ui_json, process_container_json, container_node_key
+                        task_ui_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -2233,31 +1971,20 @@ def place_swimlane_component(
                         component_node["node_key"],
                         component_node["node_type"],
                         title,
-                        None if semantic_type else component_node["description"],
-                        None if semantic_type else component_node["actor"],
-                        None if semantic_type else component_node["business_rule"],
-                        None if semantic_type else component_node["input_summary"],
-                        None if semantic_type else component_node["output_summary"],
                         component_node.get("bpmn_element_type"),
                         component_node.get("bpmn_event_kind"),
                         component_node.get("bpmn_event_definition"),
                         component_node.get("bpmn_task_type"),
                         component_node.get("bpmn_gateway_type"),
                         component_node.get("bpmn_subprocess_kind"),
-                        component_node.get("bpmn_call_activity_ref"),
                         node_position_x,
                         node_position_y,
                         float(component_node["width"]),
                         float(component_node["height"]),
                         Jsonb(component_node.get("style_json") or {}),
                         Jsonb(strip_mes_json(component_node.get("properties_json") or {})),
-                        component_node.get("semantic_profile_key"),
-                        component_node.get("semantic_profile_version"),
-                        Jsonb(semantic_payload(component_node.get("semantic_payload_json"))),
                         Jsonb(bpmn_semantic),
                         Jsonb(task_ui_payload(component_node.get("task_ui_json"))),
-                        Jsonb(process_container_payload(component_node.get("process_container_json"))),
-                        container_node_key,
                     ),
                 )
                 node_id = cur.fetchone()["id"]
@@ -2307,14 +2034,12 @@ def place_swimlane_component(
                     INSERT INTO business_flow_edge (
                         business_flow_id, lane_instance_id, edge_key, source_type,
                         source_node_id, source_port, target_type, target_node_id,
-                        target_port, edge_type, label, condition_text, data_contract_json,
-                        bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-                        bpmn_condition_expression,
+                        target_port, edge_type, label,
+                        bpmn_flow_type, bpmn_sequence_flow_kind,
                         origin_component_edge_key, style_json, properties_json,
-                        semantic_profile_key, semantic_profile_version, semantic_payload_json
-                        , bpmn_semantic_json
+                        bpmn_semantic_json
                     )
-                    VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, 'NODE', %s, %s, 'NODE', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         business_flow_id,
@@ -2326,18 +2051,11 @@ def place_swimlane_component(
                         component_edge["target_port"],
                         component_edge["edge_type"],
                         edge_label,
-                        component_edge["condition_text"],
-                        Jsonb(component_edge.get("data_contract_json") or {}),
                         component_edge.get("bpmn_flow_type"),
                         component_edge.get("bpmn_sequence_flow_kind"),
-                        component_edge.get("bpmn_message_name"),
-                        component_edge.get("bpmn_condition_expression"),
                         component_edge["edge_key"],
                         Jsonb(component_edge.get("style_json") or {}),
                         Jsonb(strip_mes_json(component_edge.get("properties_json") or {})),
-                        component_edge.get("semantic_profile_key"),
-                        component_edge.get("semantic_profile_version"),
-                        Jsonb(semantic_payload(component_edge.get("semantic_payload_json"))),
                         Jsonb(
                             edge_semantic
                         ),
@@ -2626,12 +2344,6 @@ def restore_business_flow(
             nodes_by_key = {
                 node["node_key"]: node for node in nodes if node.get("node_key")
             }
-            structure_error = container_structure_error(list(nodes_by_key.values()))
-            if structure_error:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"invalid process container structure: {structure_error}",
-                )
             edges = []
             for edge in semantic.get("edges") or []:
                 clean_edge = strip_mes_json(edge)
@@ -2695,28 +2407,20 @@ def restore_business_flow(
                     if semantic_type
                     else node.get("title")
                 )
-                _ensure_valid_semantic_payload(
-                    semantic_profile_key(node.get("semantic_profile_key")),
-                    semantic_payload(node.get("semantic_payload_json")),
-                    "NODE",
-                    node.get("node_key") or "",
-                )
                 lane_id = lane_id_by_old_id.get(str(node.get("lane_instance_id") or "")) or lane_id_by_key.get(node.get("lane_instance_key") or "")
                 cur.execute(
                     """
                     INSERT INTO business_flow_node (
                         business_flow_id, lane_instance_id, node_key, origin_component_node_key,
-                        node_type, title, description, actor, business_rule, input_summary,
+                        node_type, title,
                         bpmn_element_type, bpmn_event_kind, bpmn_event_definition,
                         bpmn_task_type, bpmn_gateway_type, bpmn_subprocess_kind,
-                        bpmn_call_activity_ref,
-                        output_summary, position_x, position_y, width, height, is_overridden,
+                        position_x, position_y, width, height, is_overridden,
                         style_json, properties_json,
-                        semantic_profile_key, semantic_profile_version, semantic_payload_json,
                         bpmn_semantic_json,
-                        task_ui_json, process_container_json, container_node_key
+                        task_ui_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -2726,18 +2430,12 @@ def restore_business_flow(
                         node.get("origin_component_node_key"),
                         node["node_type"],
                         title,
-                        None if semantic_type else node.get("description"),
-                        None if semantic_type else node.get("actor"),
-                        None if semantic_type else node.get("business_rule"),
-                        None if semantic_type else node.get("input_summary"),
                         node.get("bpmn_element_type"),
                         node.get("bpmn_event_kind"),
                         node.get("bpmn_event_definition"),
                         node.get("bpmn_task_type"),
                         node.get("bpmn_gateway_type"),
                         node.get("bpmn_subprocess_kind"),
-                        node.get("bpmn_call_activity_ref"),
-                        None if semantic_type else node.get("output_summary"),
                         node.get("position_x", 0),
                         node.get("position_y", 0),
                         node.get("width", 120),
@@ -2745,13 +2443,8 @@ def restore_business_flow(
                         bool(node.get("is_overridden")),
                         Jsonb(node.get("style_json") or {}),
                         Jsonb(strip_mes_json(node.get("properties_json") or {})),
-                        node.get("semantic_profile_key"),
-                        node.get("semantic_profile_version"),
-                        Jsonb(semantic_payload(node.get("semantic_payload_json"))),
                         Jsonb(bpmn_semantic),
                         Jsonb(task_ui_payload(node.get("task_ui_json"))),
-                        Jsonb(process_container_payload(node.get("process_container_json"))),
-                        node.get("container_node_key"),
                     ),
                 )
                 new_node_id = cur.fetchone()["id"]
@@ -2778,12 +2471,6 @@ def restore_business_flow(
                         ),
                     )
             for edge in edges:
-                _ensure_valid_semantic_payload(
-                    semantic_profile_key(edge.get("semantic_profile_key")),
-                    semantic_payload(edge.get("semantic_payload_json")),
-                    "EDGE",
-                    edge.get("edge_key") or "",
-                )
                 source_node_id = node_id_by_old_id.get(str(edge.get("source_node_id") or "")) or node_id_by_key.get(edge.get("source_node_key") or "")
                 target_node_id = node_id_by_old_id.get(str(edge.get("target_node_id") or "")) or node_id_by_key.get(edge.get("target_node_key") or "")
                 if edge["source_type"] == "NODE" and not source_node_id:
@@ -2805,14 +2492,12 @@ def restore_business_flow(
                         business_flow_id, lane_instance_id, edge_key, source_type,
                         source_node_id, source_lane_instance_id, source_port, target_type,
                         target_node_id, target_lane_instance_id, target_port, edge_type,
-                        bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-                        bpmn_condition_expression, label, condition_text,
-                        data_contract_json, origin_component_edge_key,
+                        bpmn_flow_type, bpmn_sequence_flow_kind, label,
+                        origin_component_edge_key,
                         is_overridden, style_json, properties_json,
-                        semantic_profile_key, semantic_profile_version, semantic_payload_json
-                        , bpmn_semantic_json
+                        bpmn_semantic_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         business_flow_id,
@@ -2829,18 +2514,11 @@ def restore_business_flow(
                         edge.get("edge_type", "SEQUENCE"),
                         edge.get("bpmn_flow_type"),
                         edge.get("bpmn_sequence_flow_kind"),
-                        edge.get("bpmn_message_name"),
-                        edge.get("bpmn_condition_expression"),
                         edge_label,
-                        edge.get("condition_text"),
-                        Jsonb(edge.get("data_contract_json") or {}),
                         edge.get("origin_component_edge_key"),
                         bool(edge.get("is_overridden")),
                         Jsonb(edge.get("style_json") or {}),
                         Jsonb(strip_mes_json(edge.get("properties_json") or {})),
-                        edge.get("semantic_profile_key"),
-                        edge.get("semantic_profile_version"),
-                        Jsonb(semantic_payload(edge.get("semantic_payload_json"))),
                         Jsonb(
                             edge_semantic
                         ),

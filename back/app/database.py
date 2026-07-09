@@ -8,6 +8,30 @@ from psycopg.rows import dict_row
 from app.config import get_settings
 from app.application.database_connection_service import database_connection_service
 
+BASE_MIGRATIONS = (
+    "002_comments.sql",
+    "003_business_flows.sql",
+    "004_collaboration_users.sql",
+    "005_database_connections.sql",
+    "006_collab_revision.sql",
+    "007_relation_match_operator.sql",
+    "008_business_flow_components.sql",
+    "009_business_flow_members.sql",
+    "010_product_members.sql",
+    "011_business_flow_collab_revision.sql",
+    "012_swimlane_component_node_er_ref.sql",
+    "013_collab_update_audit.sql",
+)
+
+BPMN_MIGRATIONS = (
+    "015_bpmn_generalization_cleanup.sql",
+    "016_business_semantic_profile.sql",
+    "017_bpmn_task_ui_process_container.sql",
+    "018_bpmn_non_task_semantics.sql",
+    "019_bpmn_schema_cleanup.sql",
+    "020_schema_comments.sql",
+)
+
 
 def get_connection() -> psycopg.Connection:
     return psycopg.connect(get_settings().database_url, row_factory=dict_row)
@@ -33,52 +57,10 @@ def run_migrations() -> None:
             if fresh:
                 schema_sql = (migrations_dir / "001_schema.sql").read_text(encoding="utf-8")
                 cur.execute(schema_sql)
-            collab_revision_sql = (migrations_dir / "006_collab_revision.sql").read_text(
-                encoding="utf-8"
-            )
-            cur.execute(collab_revision_sql)
-            relation_match_operator_sql = (
-                migrations_dir / "007_relation_match_operator.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(relation_match_operator_sql)
-            comments_sql = (migrations_dir / "002_comments.sql").read_text(encoding="utf-8")
-            cur.execute(comments_sql)
-            business_flows_sql = (migrations_dir / "003_business_flows.sql").read_text(
-                encoding="utf-8"
-            )
-            cur.execute(business_flows_sql)
-            collaboration_sql = (migrations_dir / "004_collaboration_users.sql").read_text(
-                encoding="utf-8"
-            )
-            cur.execute(collaboration_sql)
-            database_connections_sql = (
-                migrations_dir / "005_database_connections.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(database_connections_sql)
-            business_flow_components_sql = (
-                migrations_dir / "008_business_flow_components.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(business_flow_components_sql)
-            business_flow_members_sql = (
-                migrations_dir / "009_business_flow_members.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(business_flow_members_sql)
-            product_members_sql = (migrations_dir / "010_product_members.sql").read_text(
-                encoding="utf-8"
-            )
-            cur.execute(product_members_sql)
-            business_flow_collab_revision_sql = (
-                migrations_dir / "011_business_flow_collab_revision.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(business_flow_collab_revision_sql)
-            swimlane_component_er_refs_sql = (
-                migrations_dir / "012_swimlane_component_node_er_ref.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(swimlane_component_er_refs_sql)
-            collab_update_audit_sql = (
-                migrations_dir / "013_collab_update_audit.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(collab_update_audit_sql)
+            for migration_name in BASE_MIGRATIONS:
+                cur.execute(
+                    (migrations_dir / migration_name).read_text(encoding="utf-8")
+                )
             cur.execute("SELECT to_regclass('public.app_migration_state') AS reg")
             migration_state_exists = bool(cur.fetchone()["reg"])
             bpmn_cleanup_applied = False
@@ -97,21 +79,9 @@ def run_migrations() -> None:
                     migrations_dir / "014_bpmn_mes_semantics.sql"
                 ).read_text(encoding="utf-8")
                 cur.execute(bpmn_semantics_sql)
-            bpmn_cleanup_sql = (
-                migrations_dir / "015_bpmn_generalization_cleanup.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(bpmn_cleanup_sql)
-            semantic_profile_sql = (
-                migrations_dir / "016_business_semantic_profile.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(semantic_profile_sql)
-            task_ui_process_container_sql = (
-                migrations_dir / "017_bpmn_task_ui_process_container.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(task_ui_process_container_sql)
-            bpmn_non_task_semantics_sql = (
-                migrations_dir / "018_bpmn_non_task_semantics.sql"
-            ).read_text(encoding="utf-8")
-            cur.execute(bpmn_non_task_semantics_sql)
+            for migration_name in BPMN_MIGRATIONS:
+                cur.execute(
+                    (migrations_dir / migration_name).read_text(encoding="utf-8")
+                )
             database_connection_service.seed_env_target_connection(cur)
         conn.commit()

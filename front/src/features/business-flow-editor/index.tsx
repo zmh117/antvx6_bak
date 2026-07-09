@@ -47,7 +47,6 @@ import {
   rememberManualLaneSize,
   removeBusinessFlowCells,
   renderBusinessFlowCanvas,
-  stripProcessContainerCapabilityFromCanvas,
   updateEdgeText,
   updateNodeText,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
@@ -193,12 +192,11 @@ export function BusinessFlowEditor({
 
   const cacheCanvasState = useCallback(
     (nextCanvas: LocalBusinessFlowCanvas, updatePanel = true) => {
-      const cleanCanvas = stripProcessContainerCapabilityFromCanvas(nextCanvas)
-      canvasRef.current = cleanCanvas
-      if (updatePanel) setCanvas(cleanCanvas)
+      canvasRef.current = nextCanvas
+      if (updatePanel) setCanvas(nextCanvas)
       queryClient.setQueryData(
         businessFlowKeys.editorState(businessFlowId),
-        cleanCanvas,
+        nextCanvas,
       )
     },
     [businessFlowId, queryClient],
@@ -1176,21 +1174,11 @@ function BusinessInspector({
             selected.cell.setData({
               ...readCellData(selected.cell),
               title,
-              description: null,
-              actor: null,
-              businessRule: null,
-              inputSummary: null,
-              outputSummary: null,
               taskUiJson: nextTaskUi,
             })
             onChange({
               ...selected,
               title,
-              description: '',
-              actor: '',
-              businessRule: '',
-              inputSummary: '',
-              outputSummary: '',
               taskUiJson: nextTaskUi,
             })
             onPersist()
@@ -1212,21 +1200,11 @@ function BusinessInspector({
         selected.cell.setData({
           ...readCellData(selected.cell),
           title,
-          description: null,
-          actor: null,
-          businessRule: null,
-          inputSummary: null,
-          outputSummary: null,
           bpmnSemanticJson,
         })
         onChange({
           ...selected,
           title,
-          description: '',
-          actor: '',
-          businessRule: '',
-          inputSummary: '',
-          outputSummary: '',
           bpmnSemanticJson,
         })
         onPersist()

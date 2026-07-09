@@ -374,6 +374,13 @@ export function taskUiTaskName(value: unknown, fallback = '任务') {
   return normalizeTaskUiContext(value, { taskName: fallback }).taskName?.trim() || fallback
 }
 
+export function textArrayValue(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 export function taskUiQualityIssues(value: unknown): string[] {
   const taskUi = normalizeTaskUiContext(value)
   const issues: string[] = []

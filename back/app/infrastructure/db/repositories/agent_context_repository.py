@@ -153,15 +153,11 @@ def fetch_swimlane_business_flow_rows(
 def fetch_swimlane_flow_nodes(cur: psycopg.Cursor, business_flow_id: UUID) -> list[dict[str, Any]]:
     cur.execute(
         """
-        SELECT n.node_key, n.title, n.node_type, n.description, n.actor, n.business_rule,
+        SELECT n.node_key, n.title, n.node_type,
                n.bpmn_element_type, n.bpmn_event_kind, n.bpmn_event_definition,
                n.bpmn_task_type, n.bpmn_gateway_type, n.bpmn_subprocess_kind,
-               n.bpmn_call_activity_ref,
-               n.semantic_profile_key, n.semantic_profile_version,
-               n.semantic_payload_json,
                n.bpmn_semantic_json,
-               n.task_ui_json, n.process_container_json, n.container_node_key,
-               n.input_summary, n.output_summary,
+               n.task_ui_json,
                li.display_name AS lane_name
         FROM business_flow_node n
         LEFT JOIN business_flow_lane_instance li ON li.id = n.lane_instance_id
@@ -176,13 +172,9 @@ def fetch_swimlane_flow_nodes(cur: psycopg.Cursor, business_flow_id: UUID) -> li
 def fetch_swimlane_flow_edges(cur: psycopg.Cursor, business_flow_id: UUID) -> list[dict[str, Any]]:
     cur.execute(
         """
-        SELECT edge_key, edge_type, label, condition_text, data_contract_json,
-               bpmn_flow_type, bpmn_sequence_flow_kind, bpmn_message_name,
-               bpmn_condition_expression,
-               semantic_profile_key, semantic_profile_version, semantic_payload_json,
+        SELECT edge_key, edge_type, label,
+               bpmn_flow_type, bpmn_sequence_flow_kind,
                bpmn_semantic_json,
-               source_node.container_node_key AS source_container_node_key,
-               target_node.container_node_key AS target_container_node_key,
                source_node.node_key AS source_node_key,
                target_node.node_key AS target_node_key
         FROM business_flow_edge

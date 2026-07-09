@@ -35,7 +35,6 @@ import {
   flowLaneRecordFromCell,
   flowNodeRecordFromCell,
   readCellData,
-  stripProcessContainerCapabilityFromCanvas,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 import {
   compactBusinessFlowCollabPatchPlan,
@@ -216,13 +215,6 @@ function titleForNode(node: Pick<BusinessFlowNodeRecord, 'bpmnElementType' | 'ta
     : bpmnSemanticDisplayName(node.bpmnSemanticJson, node.title)
 }
 
-function retiredNodeText<T>(
-  _node: Pick<BusinessFlowNodeRecord, 'bpmnElementType'>,
-  _value: T | null | undefined,
-) {
-  return null
-}
-
 function writeLaneToDoc(
   lanes: Y.Map<unknown>,
   canvas: LocalBusinessFlowCanvas,
@@ -271,20 +263,9 @@ function writeNodeToDoc(
     bpmn_task_type: node.bpmnTaskType ?? null,
     bpmn_gateway_type: node.bpmnGatewayType ?? null,
     bpmn_subprocess_kind: node.bpmnSubProcessKind ?? null,
-    bpmn_call_activity_ref: node.bpmnCallActivityRef ?? null,
     title,
-    description: retiredNodeText(node, node.description),
-    actor: retiredNodeText(node, node.actor),
-    business_rule: retiredNodeText(node, node.businessRule),
-    input_summary: retiredNodeText(node, node.inputSummary),
-    output_summary: retiredNodeText(node, node.outputSummary),
-    semantic_profile_key: node.semanticProfileKey ?? null,
-    semantic_profile_version: node.semanticProfileVersion ?? null,
-    semantic_payload_json: node.semanticPayloadJson ?? {},
     bpmn_semantic_json: node.bpmnSemanticJson ?? {},
     task_ui_json: taskUiJson ?? {},
-    process_container_json: node.processContainerJson ?? {},
-    container_node_key: node.containerNodeKey ?? null,
     position_x: node.position.x,
     position_y: node.position.y,
     width: node.size.width,
@@ -339,14 +320,7 @@ function writeEdgeToDoc(
     edge_type: edge.edgeType,
     bpmn_flow_type: edge.bpmnFlowType ?? null,
     bpmn_sequence_flow_kind: edge.bpmnSequenceFlowKind ?? null,
-    bpmn_message_name: edge.bpmnMessageName ?? null,
-    bpmn_condition_expression: edge.bpmnConditionExpression ?? null,
     label: edge.label ?? null,
-    condition_text: edge.conditionText ?? null,
-    data_contract_json: edge.dataContract ?? {},
-    semantic_profile_key: edge.semanticProfileKey ?? null,
-    semantic_profile_version: edge.semanticProfileVersion ?? null,
-    semantic_payload_json: edge.semanticPayloadJson ?? {},
     bpmn_semantic_json: edge.bpmnSemanticJson ?? {},
     origin_component_edge_key: edge.originComponentEdgeKey ?? null,
     is_overridden: edge.isOverridden,
@@ -369,13 +343,12 @@ function writeCanvasToDoc(
   doc: Y.Doc,
   origin = LOCAL_ORIGIN,
 ) {
-  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
   const lanes = doc.getMap('lanes')
   const nodes = doc.getMap('nodes')
   const edges = doc.getMap('edges')
   const erRefs = doc.getMap('erRefs')
   const meta = doc.getMap('meta')
-  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
   doc.transact(() => {
     clearMap(lanes)
     clearMap(nodes)
@@ -383,12 +356,12 @@ function writeCanvasToDoc(
     clearMap(erRefs)
     meta.set('schemaVersion', 3)
     meta.set('documentType', 'BUSINESS_FLOW')
-    meta.set('businessFlowId', cleanCanvas.businessFlowId)
-    meta.set('collabRevision', cleanCanvas.collabRevision)
+    meta.set('businessFlowId', canvas.businessFlowId)
+    meta.set('collabRevision', canvas.collabRevision)
     meta.set('updatedAt', new Date().toISOString())
-    cleanCanvas.laneInstances.forEach((lane) => writeLaneToDoc(lanes, cleanCanvas, lane))
-    cleanCanvas.nodes.forEach((node) => writeNodeToDoc(nodes, erRefs, laneKeyById, node))
-    cleanCanvas.edges.forEach((edge) => writeEdgeToDoc(edges, edge))
+    canvas.laneInstances.forEach((lane) => writeLaneToDoc(lanes, canvas, lane))
+    canvas.nodes.forEach((node) => writeNodeToDoc(nodes, erRefs, laneKeyById, node))
+    canvas.edges.forEach((edge) => writeEdgeToDoc(edges, edge))
   }, origin)
 }
 
@@ -519,26 +492,9 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       bpmnSubProcessKind: raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind
         ? String(raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind) as BusinessFlowNodeRecord['bpmnSubProcessKind']
         : null,
-      bpmnCallActivityRef: raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef
-        ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
-        : null,
       title,
-      description: null,
-      actor: null,
-      businessRule: null,
-      semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
-        ? String(raw.semantic_profile_key || raw.semanticProfileKey)
-        : null,
-      semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
-        ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
-        : null,
-      semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || {}) as Record<string, unknown>,
       bpmnSemanticJson,
       taskUiJson,
-      processContainerJson: (raw.process_container_json || raw.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
-      containerNodeKey: raw.container_node_key || raw.containerNodeKey
-        ? String(raw.container_node_key || raw.containerNodeKey)
-        : null,
       erRefs: isDataBpmnElement(bpmnElementType) ? refsByNodeKey.get(nodeKey) ?? [] : [],
       position: {
         x: numberValue(raw.position_x ?? raw.x),
@@ -548,8 +504,6 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         width: numberValue(raw.width, 120),
         height: numberValue(raw.height, 60),
       },
-      inputSummary: null,
-      outputSummary: null,
       isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden),
       styleJson: (raw.style_json || raw.styleJson || {}) as Record<string, unknown>,
       propertiesJson: (raw.properties_json || raw.propertiesJson || {}) as Record<string, unknown>,
@@ -596,22 +550,7 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       bpmnSequenceFlowKind: raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind
         ? String(raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind) as BusinessFlowEdgeRecord['bpmnSequenceFlowKind']
         : null,
-      bpmnMessageName: raw.bpmn_message_name || raw.bpmnMessageName
-        ? String(raw.bpmn_message_name || raw.bpmnMessageName)
-        : null,
-      bpmnConditionExpression: raw.bpmn_condition_expression || raw.bpmnConditionExpression
-        ? String(raw.bpmn_condition_expression || raw.bpmnConditionExpression)
-        : null,
       label: bpmnSemanticDisplayName(bpmnSemanticJson, raw.label ? String(raw.label) : '') || null,
-      conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : null,
-      dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
-      semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
-        ? String(raw.semantic_profile_key || raw.semanticProfileKey)
-        : null,
-      semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
-        ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
-        : null,
-      semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || {}) as Record<string, unknown>,
       bpmnSemanticJson,
       isCrossLane,
       sourceType: stringValue(raw.source_type || raw.sourceType, 'NODE') as BusinessFlowEdgeRecord['sourceType'],
@@ -638,14 +577,14 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
   }).sort((a, b) => a.edgeKey.localeCompare(b.edgeKey))
 
   const revision = numberValue(doc.getMap('meta').get('collabRevision'), base.collabRevision)
-  return stripProcessContainerCapabilityFromCanvas({
+  return {
     ...base,
     collabRevision: revision,
     laneInstances: lanes,
     nodes,
     edges,
     updatedAt: timestamp,
-  })
+  }
 }
 
 function deleteCellsFromDoc(doc: Y.Doc, cells: Cell[], origin = LOCAL_ORIGIN) {
@@ -807,26 +746,9 @@ function nodeFromDocEntry(
     bpmnSubProcessKind: raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind
       ? String(raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind) as BusinessFlowNodeRecord['bpmnSubProcessKind']
       : previous?.bpmnSubProcessKind ?? null,
-    bpmnCallActivityRef: raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef
-      ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
-      : previous?.bpmnCallActivityRef ?? null,
     title,
-    description: null,
-    actor: null,
-    businessRule: null,
-    semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
-      ? String(raw.semantic_profile_key || raw.semanticProfileKey)
-      : previous?.semanticProfileKey ?? null,
-    semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
-      ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
-      : previous?.semanticProfileVersion ?? null,
-    semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || previous?.semanticPayloadJson || {}) as Record<string, unknown>,
     bpmnSemanticJson,
     taskUiJson,
-    processContainerJson: (raw.process_container_json || raw.processContainerJson || previous?.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
-    containerNodeKey: raw.container_node_key || raw.containerNodeKey
-      ? String(raw.container_node_key || raw.containerNodeKey)
-      : previous?.containerNodeKey ?? null,
     erRefs: isDataBpmnElement(bpmnElementType) ? refsByNodeKey.get(nodeKey) ?? [] : [],
     position: {
       x: numberValue(raw.position_x ?? raw.x, previous?.position.x ?? 0),
@@ -836,8 +758,6 @@ function nodeFromDocEntry(
       width: numberValue(raw.width, previous?.size.width ?? 120),
       height: numberValue(raw.height, previous?.size.height ?? 60),
     },
-    inputSummary: null,
-    outputSummary: null,
     isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden ?? previous?.isOverridden),
     styleJson: (raw.style_json || raw.styleJson || previous?.styleJson || {}) as Record<string, unknown>,
     propertiesJson: (raw.properties_json || raw.propertiesJson || previous?.propertiesJson || {}) as Record<string, unknown>,
@@ -892,25 +812,10 @@ function edgeFromDocEntry(
     bpmnSequenceFlowKind: raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind
       ? String(raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind) as BusinessFlowEdgeRecord['bpmnSequenceFlowKind']
       : previous?.bpmnSequenceFlowKind ?? null,
-    bpmnMessageName: raw.bpmn_message_name || raw.bpmnMessageName
-      ? String(raw.bpmn_message_name || raw.bpmnMessageName)
-      : previous?.bpmnMessageName ?? null,
-    bpmnConditionExpression: raw.bpmn_condition_expression || raw.bpmnConditionExpression
-      ? String(raw.bpmn_condition_expression || raw.bpmnConditionExpression)
-      : previous?.bpmnConditionExpression ?? null,
     label: bpmnSemanticDisplayName(
       bpmnSemanticJson,
       raw.label ? String(raw.label) : previous?.label ?? '',
     ) || null,
-    conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : previous?.conditionText ?? null,
-    dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || previous?.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
-    semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
-      ? String(raw.semantic_profile_key || raw.semanticProfileKey)
-      : previous?.semanticProfileKey ?? null,
-    semanticProfileVersion: raw.semantic_profile_version || raw.semanticProfileVersion
-      ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
-      : previous?.semanticProfileVersion ?? null,
-    semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || previous?.semanticPayloadJson || {}) as Record<string, unknown>,
     bpmnSemanticJson,
     isCrossLane,
     sourceType: stringValue(raw.source_type || raw.sourceType, previous?.sourceType ?? 'NODE') as BusinessFlowEdgeRecord['sourceType'],
@@ -1036,19 +941,18 @@ function patchToCanvasAndGraphPatch(
     if (fallbackReason) return { fallbackReason }
   }
 
-  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(nextCanvas)
-  const cleanNodeKeys = new Set(cleanCanvas.nodes.map((node) => node.nodeKey))
-  const cleanEdgeKeys = new Set(cleanCanvas.edges.map((edge) => edge.edgeKey))
+  const nodeKeys = new Set(nextCanvas.nodes.map((node) => node.nodeKey))
+  const edgeKeys = new Set(nextCanvas.edges.map((edge) => edge.edgeKey))
   return {
-    canvas: cleanCanvas,
+    canvas: nextCanvas,
     patch: {
       laneUpserts: Array.from(laneUpserts),
       laneDeletes: Array.from(laneDeletes),
-      nodeUpserts: Array.from(nodeUpserts).filter((key) => cleanNodeKeys.has(key)),
+      nodeUpserts: Array.from(nodeUpserts).filter((key) => nodeKeys.has(key)),
       nodeDeletes: Array.from(nodeDeletes),
-      edgeUpserts: Array.from(edgeUpserts).filter((key) => cleanEdgeKeys.has(key)),
+      edgeUpserts: Array.from(edgeUpserts).filter((key) => edgeKeys.has(key)),
       edgeDeletes: Array.from(edgeDeletes),
-      erRefNodeKeys: Array.from(erRefNodeKeys).filter((key) => cleanNodeKeys.has(key)),
+      erRefNodeKeys: Array.from(erRefNodeKeys).filter((key) => nodeKeys.has(key)),
     },
   }
 }

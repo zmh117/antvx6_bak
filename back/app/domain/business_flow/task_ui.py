@@ -1,4 +1,4 @@
-"""Task UI test context and process-container validation helpers."""
+"""Task UI test context and validation helpers."""
 
 from __future__ import annotations
 
@@ -32,7 +32,6 @@ ELEMENT_TYPES = set(ELEMENT_ACTIONS)
 ACTION_TYPES = {action for actions in ELEMENT_ACTIONS.values() for action in actions}
 TASK_TYPES = {"userTask", "serviceTask", "manualTask"}
 VALUE_SOURCES = {"fixed", "testData", "previousStep", "apiResponse"}
-CONTAINER_MODES = {"embedded", "reusableCall"}
 
 
 def json_object(value: Any) -> dict[str, Any]:
@@ -65,10 +64,6 @@ def task_ui_payload(value: Any, fallback_task_name: str | None = None) -> dict[s
         "assertions": _assertions(source.get("assertions")),
         "mockRequirements": _text_list(source.get("mockRequirements")),
     }
-
-
-def process_container_payload(value: Any) -> dict[str, Any]:
-    return {}
 
 
 def _step_payload(value: Any, index: int) -> dict[str, Any]:
@@ -193,34 +188,6 @@ def task_ui_quality_issues(node: Mapping[str, Any]) -> list[dict[str, Any]]:
         if element_type == "ContextMenu" and not _list(step.get("menuItems")):
             issues.append(_issue("NODE", node_key, "TASK_UI_CONTEXT_MENU_MISSING_ITEMS", f"第 {index + 1} 步右键菜单缺少菜单项。"))
     return issues
-
-
-def process_container_quality_issues(
-    node: Mapping[str, Any],
-    child_keys: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    return []
-
-
-def is_process_container(node: Mapping[str, Any]) -> bool:
-    return False
-
-
-def is_legacy_process_container(node: Mapping[str, Any]) -> bool:
-    payload = json_object(node.get("process_container_json"))
-    return (
-        node.get("bpmn_element_type") == "SUB_PROCESS"
-        and node.get("bpmn_subprocess_kind") == "EMBEDDED"
-        and payload.get("containerMode") in CONTAINER_MODES
-    )
-
-
-def container_structure_error(nodes: list[Mapping[str, Any]]) -> str | None:
-    return None
-
-
-def edge_scope(source_container_key: str | None, target_container_key: str | None) -> str:
-    return "topLevel"
 
 
 def _text(value: Any) -> str | None:

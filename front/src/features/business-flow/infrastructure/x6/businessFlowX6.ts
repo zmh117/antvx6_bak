@@ -10,7 +10,6 @@ import type {
   BusinessFlowNodeRecord,
   BusinessFlowNodeType,
   LocalBusinessFlowCanvas,
-  ProcessContainerConfig,
   SwimlaneComponentVersion,
   TaskUiContext,
 } from '@/entities/business-flow'
@@ -74,24 +73,11 @@ export type FlowCellData = {
   bpmnTaskType?: BpmnNodeProfile['bpmnTaskType'] | null
   bpmnGatewayType?: BpmnNodeProfile['bpmnGatewayType'] | null
   bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
-  bpmnCallActivityRef?: string | null
   bpmnFlowType?: BpmnEdgeProfile['bpmnFlowType'] | null
   bpmnSequenceFlowKind?: BpmnEdgeProfile['bpmnSequenceFlowKind'] | null
-  bpmnMessageName?: string | null
-  bpmnConditionExpression?: string | null
-  semanticProfileKey?: string | null
-  semanticProfileVersion?: number | null
-  semanticPayloadJson?: BusinessFlowJson | null
   bpmnSemanticJson?: BpmnSemanticJson | null
   taskUiJson?: TaskUiContext | null
-  processContainerJson?: ProcessContainerConfig | null
-  containerNodeKey?: string | null
   title?: string
-  description?: string | null
-  actor?: string | null
-  businessRule?: string | null
-  inputSummary?: string | null
-  outputSummary?: string | null
   erRefs?: BusinessFlowNodeErRef[]
   layoutJson?: BusinessFlowJson | null
   styleJson?: BusinessFlowJson | null
@@ -141,7 +127,6 @@ function nodeProfileFromData(data: Partial<FlowCellData>) {
     bpmnTaskType: data.bpmnTaskType,
     bpmnGatewayType: data.bpmnGatewayType,
     bpmnSubProcessKind: data.bpmnSubProcessKind,
-    bpmnCallActivityRef: data.bpmnCallActivityRef,
     propertiesJson: data.propertiesJson,
   })
 }
@@ -152,9 +137,6 @@ function edgeProfileFromData(data: Partial<FlowCellData>, fallback?: Partial<Bpm
     edgeType: data.edgeType ?? null,
     bpmnFlowType: data.bpmnFlowType ?? fallback?.bpmnFlowType,
     bpmnSequenceFlowKind: data.bpmnSequenceFlowKind ?? fallback?.bpmnSequenceFlowKind,
-    bpmnMessageName: data.bpmnMessageName ?? fallback?.bpmnMessageName,
-    bpmnConditionExpression:
-      data.bpmnConditionExpression ?? fallback?.bpmnConditionExpression,
     propertiesJson: data.propertiesJson,
   })
 }
@@ -190,7 +172,6 @@ function nodeBodyAttrs(profile: BpmnNodeProfile) {
   }
   if (profile.bpmnElementType === 'GATEWAY') return { ...common, stroke: '#f59e0b', fill: '#fffbeb' }
   if (profile.bpmnElementType === 'SUB_PROCESS') return { ...common, stroke: '#2563eb', fill: '#eff6ff' }
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return { ...common, stroke: '#1d4ed8', strokeWidth: 3, fill: '#eff6ff' }
   if (isDataBpmnElement(profile.bpmnElementType)) {
     return { ...common, stroke: '#64748b', fill: '#f8fafc' }
   }
@@ -406,7 +387,6 @@ function typeText(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'SUB_PROCESS') {
     return profile.bpmnSubProcessKind === 'TRANSACTION' ? 'TX' : '+'
   }
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'CALL'
   if (profile.bpmnElementType === 'DATA_OBJECT') return 'DATA'
   if (profile.bpmnElementType === 'DATA_INPUT') return 'IN'
   if (profile.bpmnElementType === 'DATA_OUTPUT') return 'OUT'
@@ -768,10 +748,6 @@ function titleForProfile(
     : bpmnSemanticDisplayName(bpmnSemantic, fallbackTitle || bpmnNodeTitle(profile))
 }
 
-function retiredNodeTextField<T>(_profile: BpmnNodeProfile, _value: T | null | undefined) {
-  return null
-}
-
 export function graphPointFromEvent(graph: Graph, event: DragEvent): Point {
   const client = graph.clientToLocal({ x: event.clientX, y: event.clientY })
   return { x: client.x, y: client.y }
@@ -786,7 +762,6 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
     bpmnTaskType: draft.bpmnTaskType,
     bpmnGatewayType: draft.bpmnGatewayType,
     bpmnSubProcessKind: draft.bpmnSubProcessKind,
-    bpmnCallActivityRef: draft.bpmnCallActivityRef,
     propertiesJson: draft.propertiesJson,
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
@@ -809,18 +784,8 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       nodeType,
       ...bpmnProfile,
       title,
-      description: retiredNodeTextField(bpmnProfile, draft.description),
-      actor: retiredNodeTextField(bpmnProfile, draft.actor),
-      businessRule: retiredNodeTextField(bpmnProfile, draft.businessRule),
-      inputSummary: retiredNodeTextField(bpmnProfile, draft.inputSummary),
-      outputSummary: retiredNodeTextField(bpmnProfile, draft.outputSummary),
-      semanticProfileKey: draft.semanticProfileKey ?? null,
-      semanticProfileVersion: draft.semanticProfileVersion ?? null,
-      semanticPayloadJson: draft.semanticPayloadJson ?? {},
       bpmnSemanticJson,
       taskUiJson,
-      processContainerJson: null,
-      containerNodeKey: null,
       erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? draft.erRefs ?? [] : [],
       styleJson: draft.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(draft.propertiesJson, bpmnProfile),
@@ -838,7 +803,6 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
     bpmnTaskType: record.bpmnTaskType,
     bpmnGatewayType: record.bpmnGatewayType,
     bpmnSubProcessKind: record.bpmnSubProcessKind,
-    bpmnCallActivityRef: record.bpmnCallActivityRef,
     propertiesJson: record.propertiesJson,
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
@@ -865,18 +829,8 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       nodeType,
       ...bpmnProfile,
       title,
-      description: retiredNodeTextField(bpmnProfile, record.description),
-      actor: retiredNodeTextField(bpmnProfile, record.actor),
-      businessRule: retiredNodeTextField(bpmnProfile, record.businessRule),
-      inputSummary: retiredNodeTextField(bpmnProfile, record.inputSummary),
-      outputSummary: retiredNodeTextField(bpmnProfile, record.outputSummary),
-      semanticProfileKey: record.semanticProfileKey ?? null,
-      semanticProfileVersion: record.semanticProfileVersion ?? null,
-      semanticPayloadJson: record.semanticPayloadJson ?? {},
       bpmnSemanticJson,
       taskUiJson,
-      processContainerJson: null,
-      containerNodeKey: null,
       erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? record.erRefs ?? [] : [],
       styleJson: record.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(record.propertiesJson, bpmnProfile),
@@ -885,117 +839,16 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
   })
 }
 
-type LegacyContainerCapableNode = {
-  nodeKey: string
-  bpmnElementType?: BpmnNodeProfile['bpmnElementType'] | null
-  bpmnSubProcessKind?: BpmnNodeProfile['bpmnSubProcessKind'] | null
-  processContainerJson?: ProcessContainerConfig | null
-  containerNodeKey?: string | null
-  position: Point
-}
-
-function hasLegacyProcessContainerConfig(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const mode = (value as Record<string, unknown>).containerMode
-  return mode === 'embedded' || mode === 'reusableCall'
-}
-
-function isLegacyProcessContainerNode(node: LegacyContainerCapableNode) {
-  return (
-    node.bpmnElementType === 'SUB_PROCESS' &&
-    node.bpmnSubProcessKind === 'EMBEDDED' &&
-    hasLegacyProcessContainerConfig(node.processContainerJson)
-  )
-}
-
-function legacyContainerOffset(
-  node: LegacyContainerCapableNode,
-  nodeByKey: Map<string, LegacyContainerCapableNode>,
-  removedKeys: Set<string>,
-) {
-  let x = 0
-  let y = 0
-  let parentKey = node.containerNodeKey ?? null
-  const seen = new Set<string>()
-  while (parentKey && removedKeys.has(parentKey) && !seen.has(parentKey)) {
-    seen.add(parentKey)
-    const parent = nodeByKey.get(parentKey)
-    if (!parent) break
-    x += parent.position.x
-    y += parent.position.y
-    parentKey = parent.containerNodeKey ?? null
-  }
-  return { x, y }
-}
-
-function stripLegacyProcessContainerNodes<T extends LegacyContainerCapableNode>(nodes: T[]): T[] {
-  const nodeByKey = new Map(nodes.map((node) => [node.nodeKey, node]))
-  const removedKeys = new Set(
-    nodes.filter(isLegacyProcessContainerNode).map((node) => node.nodeKey),
-  )
-  return nodes.flatMap((node) => {
-    if (removedKeys.has(node.nodeKey)) return []
-    const offset = legacyContainerOffset(node, nodeByKey, removedKeys)
-    return [{
-      ...node,
-      processContainerJson: null,
-      containerNodeKey: null,
-      position: {
-        x: node.position.x + offset.x,
-        y: node.position.y + offset.y,
-      },
-    } as T]
-  })
-}
-
-function stripEdgesForNodes<T extends { sourceNodeKey?: string | null; targetNodeKey?: string | null }>(
-  edges: T[],
-  nodeKeys: Set<string>,
-) {
-  return edges.filter((edge) => {
-    if (edge.sourceNodeKey && !nodeKeys.has(edge.sourceNodeKey)) return false
-    if (edge.targetNodeKey && !nodeKeys.has(edge.targetNodeKey)) return false
-    return true
-  })
-}
-
-export function stripProcessContainerCapabilityFromCanvas(
-  canvas: LocalBusinessFlowCanvas,
-): LocalBusinessFlowCanvas {
-  const nodes = stripLegacyProcessContainerNodes(canvas.nodes)
-  const nodeKeys = new Set(nodes.map((node) => node.nodeKey))
-  return {
-    ...canvas,
-    nodes,
-    edges: stripEdgesForNodes(canvas.edges, nodeKeys),
-  }
-}
-
-function stripProcessContainerCapabilityFromComponentVersion(
-  version: SwimlaneComponentVersion,
-): SwimlaneComponentVersion {
-  const nodes = stripLegacyProcessContainerNodes(version.nodes)
-  const nodeKeys = new Set(nodes.map((node) => node.nodeKey))
-  return {
-    ...version,
-    nodes,
-    edges: stripEdgesForNodes(version.edges, nodeKeys),
-  }
-}
-
 export function renderComponentVersion(graph: Graph, version: SwimlaneComponentVersion) {
   graph.clearCells()
-  const cleanVersion = stripProcessContainerCapabilityFromComponentVersion(version)
-  cleanVersion.nodes.forEach((node) => {
+  version.nodes.forEach((node) => {
     addComponentNode(graph, node)
   })
-  cleanVersion.edges.forEach((edge) => {
+  version.edges.forEach((edge) => {
     const bpmnProfile = normalizeBpmnEdgeProfile({
       edgeType: edge.edgeType,
       bpmnFlowType: edge.bpmnFlowType,
       bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
-      bpmnMessageName: edge.bpmnMessageName,
-      bpmnConditionExpression: edge.bpmnConditionExpression,
       propertiesJson: edge.propertiesJson,
     })
     const bpmnSemanticJson = normalizeBpmnSemantic(
@@ -1016,9 +869,6 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
         edgeKey: edge.edgeKey,
         edgeType: legacyEdgeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
-        semanticProfileKey: edge.semanticProfileKey ?? null,
-        semanticProfileVersion: edge.semanticProfileVersion ?? null,
-        semanticPayloadJson: edge.semanticPayloadJson ?? {},
         bpmnSemanticJson,
         propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
         title: label,
@@ -1087,7 +937,6 @@ function addFlowNodeCell(
       {
         ...readCellData(x6Node),
         laneInstanceKey: laneKey,
-        containerNodeKey: null,
       },
       { silent: true },
     )
@@ -1104,8 +953,6 @@ function addFlowEdgeCell(
     edgeType: edge.edgeType,
     bpmnFlowType: edge.bpmnFlowType,
     bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
-    bpmnMessageName: edge.bpmnMessageName,
-    bpmnConditionExpression: edge.bpmnConditionExpression,
     propertiesJson: edge.propertiesJson,
     isCrossLane: edge.isCrossLane,
   })
@@ -1130,9 +977,6 @@ function addFlowEdgeCell(
       edgeType: legacyEdgeTypeForBpmn(bpmnProfile, edge.isCrossLane),
       ...bpmnProfile,
       originComponentEdgeKey: edge.originComponentEdgeKey,
-      semanticProfileKey: edge.semanticProfileKey ?? null,
-      semanticProfileVersion: edge.semanticProfileVersion ?? null,
-      semanticPayloadJson: edge.semanticPayloadJson ?? {},
       bpmnSemanticJson,
       propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
       title: label,
@@ -1142,14 +986,13 @@ function addFlowEdgeCell(
 }
 
 export function renderBusinessFlowCanvas(graph: Graph, canvas: LocalBusinessFlowCanvas) {
-  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
   graph.clearCells()
-  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
-  cleanCanvas.laneInstances.forEach((lane) => addLaneInstanceCell(graph, cleanCanvas, lane))
-  cleanCanvas.nodes.forEach((node) => addFlowNodeCell(graph, node, laneById, laneKeyById))
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  canvas.laneInstances.forEach((lane) => addLaneInstanceCell(graph, canvas, lane))
+  canvas.nodes.forEach((node) => addFlowNodeCell(graph, node, laneById, laneKeyById))
   normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
-  cleanCanvas.edges.forEach((edge) => addFlowEdgeCell(graph, cleanCanvas, edge))
+  canvas.edges.forEach((edge) => addFlowEdgeCell(graph, canvas, edge))
   graph.zoomToFit({ maxScale: 1, minScale: 0.7, padding: 40 })
 }
 
@@ -1162,16 +1005,15 @@ export function addMissingBusinessFlowCells(
   graph: Graph,
   canvas: LocalBusinessFlowCanvas,
 ): boolean {
-  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
-  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
   let added = false
-  cleanCanvas.laneInstances.forEach((lane) => {
+  canvas.laneInstances.forEach((lane) => {
     if (graph.getCellById(lane.instanceKey)) return
-    addLaneInstanceCell(graph, cleanCanvas, lane)
+    addLaneInstanceCell(graph, canvas, lane)
     added = true
   })
-  cleanCanvas.nodes.forEach((node) => {
+  canvas.nodes.forEach((node) => {
     if (graph.getCellById(node.nodeKey)) return
     addFlowNodeCell(graph, node, laneById, laneKeyById)
     added = true
@@ -1179,10 +1021,10 @@ export function addMissingBusinessFlowCells(
   if (added) {
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
   }
-  cleanCanvas.edges.forEach((edge) => {
+  canvas.edges.forEach((edge) => {
     if (!edge.sourceNodeKey || !edge.targetNodeKey) return
     if (graph.getCellById(edge.edgeKey)) return
-    addFlowEdgeCell(graph, cleanCanvas, edge)
+    addFlowEdgeCell(graph, canvas, edge)
   })
   return added
 }
@@ -1255,7 +1097,6 @@ function upsertFlowNodeCell(
     bpmnTaskType: node.bpmnTaskType,
     bpmnGatewayType: node.bpmnGatewayType,
     bpmnSubProcessKind: node.bpmnSubProcessKind,
-    bpmnCallActivityRef: node.bpmnCallActivityRef,
     propertiesJson: node.propertiesJson,
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
@@ -1292,23 +1133,13 @@ function upsertFlowNodeCell(
       businessFlowId: canvas.businessFlowId,
       laneInstanceId: node.laneInstanceId,
       laneInstanceKey: laneKey,
-      containerNodeKey: null,
       nodeKey: node.nodeKey,
       originComponentNodeKey: node.originComponentNodeKey,
       nodeType,
       ...bpmnProfile,
       title,
-      description: retiredNodeTextField(bpmnProfile, node.description),
-      actor: retiredNodeTextField(bpmnProfile, node.actor),
-      businessRule: retiredNodeTextField(bpmnProfile, node.businessRule),
-      inputSummary: retiredNodeTextField(bpmnProfile, node.inputSummary),
-      outputSummary: retiredNodeTextField(bpmnProfile, node.outputSummary),
-      semanticProfileKey: node.semanticProfileKey ?? null,
-      semanticProfileVersion: node.semanticProfileVersion ?? null,
-      semanticPayloadJson: node.semanticPayloadJson ?? {},
       bpmnSemanticJson,
       taskUiJson,
-      processContainerJson: null,
       erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? node.erRefs ?? [] : [],
       styleJson: node.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
@@ -1336,8 +1167,6 @@ function upsertFlowEdgeCell(
     edgeType: edge.edgeType,
     bpmnFlowType: edge.bpmnFlowType,
     bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
-    bpmnMessageName: edge.bpmnMessageName,
-    bpmnConditionExpression: edge.bpmnConditionExpression,
     propertiesJson: edge.propertiesJson,
     isCrossLane: edge.isCrossLane,
   })
@@ -1368,9 +1197,6 @@ function upsertFlowEdgeCell(
       edgeType: legacyEdgeTypeForBpmn(bpmnProfile, edge.isCrossLane),
       ...bpmnProfile,
       originComponentEdgeKey: edge.originComponentEdgeKey,
-      semanticProfileKey: edge.semanticProfileKey ?? null,
-      semanticProfileVersion: edge.semanticProfileVersion ?? null,
-      semanticPayloadJson: edge.semanticPayloadJson ?? {},
       bpmnSemanticJson,
       propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
       title: label,
@@ -1426,12 +1252,11 @@ export function applyBusinessFlowCanvasPatchToGraph(
   canvas: LocalBusinessFlowCanvas,
   patch: BusinessFlowCanvasPatch,
 ): BusinessFlowCanvasPatchResult {
-  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
-  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
-  const lanesByKey = new Map(cleanCanvas.laneInstances.map((lane) => [lane.instanceKey, lane]))
-  const nodesByKey = new Map(cleanCanvas.nodes.map((node) => [node.nodeKey, node]))
-  const edgesByKey = new Map(cleanCanvas.edges.map((edge) => [edge.edgeKey, edge]))
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  const lanesByKey = new Map(canvas.laneInstances.map((lane) => [lane.instanceKey, lane]))
+  const nodesByKey = new Map(canvas.nodes.map((node) => [node.nodeKey, node]))
+  const edgesByKey = new Map(canvas.edges.map((edge) => [edge.edgeKey, edge]))
   const nodeDeletes = new Set(patch.nodeDeletes ?? [])
   const edgeDeletes = new Set(patch.edgeDeletes ?? [])
   let result: BusinessFlowCanvasPatchResult = { applied: true }
@@ -1455,7 +1280,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-lane-record:${laneKey}` }
         return
       }
-      upsertLaneCell(graph, cleanCanvas, lane)
+      upsertLaneCell(graph, canvas, lane)
     }
     for (const nodeKey of patch.nodeUpserts ?? []) {
       const node = nodesByKey.get(nodeKey)
@@ -1463,7 +1288,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-node-record:${nodeKey}` }
         return
       }
-      result = upsertFlowNodeCell(graph, cleanCanvas, node, laneById, laneKeyById)
+      result = upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById)
       if (!result.applied) return
     }
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
@@ -1475,7 +1300,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-er-ref-node:${nodeKey}` }
         return
       }
-      result = upsertFlowNodeCell(graph, cleanCanvas, node, laneById, laneKeyById)
+      result = upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById)
       if (!result.applied) return
     }
     for (const edgeKey of edgeUpserts) {
@@ -1484,7 +1309,7 @@ export function applyBusinessFlowCanvasPatchToGraph(
         result = { applied: false, reason: `missing-edge-record:${edgeKey}` }
         return
       }
-      result = upsertFlowEdgeCell(graph, cleanCanvas, edge)
+      result = upsertFlowEdgeCell(graph, canvas, edge)
       if (!result.applied) return
     }
   })
@@ -1495,12 +1320,11 @@ export function applyBusinessFlowCanvasToGraph(
   graph: Graph,
   canvas: LocalBusinessFlowCanvas,
 ) {
-  const cleanCanvas = stripProcessContainerCapabilityFromCanvas(canvas)
-  const laneKeyById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
-  const laneById = new Map(cleanCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
-  const incomingLaneKeys = new Set(cleanCanvas.laneInstances.map((lane) => lane.instanceKey))
-  const incomingNodeKeys = new Set(cleanCanvas.nodes.map((node) => node.nodeKey))
-  const incomingEdgeKeys = new Set(cleanCanvas.edges.map((edge) => edge.edgeKey))
+  const laneKeyById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
+  const laneById = new Map(canvas.laneInstances.map((lane) => [lane.laneInstanceId, lane]))
+  const incomingLaneKeys = new Set(canvas.laneInstances.map((lane) => lane.instanceKey))
+  const incomingNodeKeys = new Set(canvas.nodes.map((node) => node.nodeKey))
+  const incomingEdgeKeys = new Set(canvas.edges.map((edge) => edge.edgeKey))
 
   graph.batchUpdate(() => {
     graph.getEdges().forEach((edge) => {
@@ -1513,16 +1337,16 @@ export function applyBusinessFlowCanvasToGraph(
       if (role === 'LANE_INSTANCE' && !incomingLaneKeys.has(node.id)) graph.removeCell(node)
     })
 
-    cleanCanvas.laneInstances.forEach((lane) => upsertLaneCell(graph, cleanCanvas, lane))
+    canvas.laneInstances.forEach((lane) => upsertLaneCell(graph, canvas, lane))
 
-    cleanCanvas.nodes.forEach((node) => {
-      upsertFlowNodeCell(graph, cleanCanvas, node, laneById, laneKeyById)
+    canvas.nodes.forEach((node) => {
+      upsertFlowNodeCell(graph, canvas, node, laneById, laneKeyById)
     })
 
     normalizeBusinessFlowLanes(graph, { preserveManualSize: true })
 
-    cleanCanvas.edges.forEach((edge) => {
-      upsertFlowEdgeCell(graph, cleanCanvas, edge)
+    canvas.edges.forEach((edge) => {
+      upsertFlowEdgeCell(graph, canvas, edge)
     })
   })
 }
@@ -1630,18 +1454,8 @@ export function componentDraftFromGraph(graph: Graph) {
         nodeType: legacyNodeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
         title,
-        description: retiredNodeTextField(bpmnProfile, data.description),
-        actor: retiredNodeTextField(bpmnProfile, data.actor),
-        businessRule: retiredNodeTextField(bpmnProfile, data.businessRule),
-        inputSummary: retiredNodeTextField(bpmnProfile, data.inputSummary),
-        outputSummary: retiredNodeTextField(bpmnProfile, data.outputSummary),
-        semanticProfileKey: data.semanticProfileKey ?? null,
-        semanticProfileVersion: data.semanticProfileVersion ?? null,
-        semanticPayloadJson: data.semanticPayloadJson ?? {},
         bpmnSemanticJson,
         taskUiJson,
-        processContainerJson: null,
-        containerNodeKey: null,
         erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
         position,
         size,
@@ -1684,10 +1498,6 @@ export function componentDraftFromGraph(graph: Graph) {
           edgeType: legacyEdgeTypeForBpmn(bpmnProfile),
           ...bpmnProfile,
           label,
-          conditionText: data.bpmnConditionExpression ?? null,
-          semanticProfileKey: data.semanticProfileKey ?? null,
-          semanticProfileVersion: data.semanticProfileVersion ?? null,
-          semanticPayloadJson: data.semanticPayloadJson ?? {},
           bpmnSemanticJson,
           styleJson: data.styleJson ?? null,
           propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile),
@@ -1765,21 +1575,11 @@ export function flowDraftFromGraph(
         nodeType: legacyNodeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
         title,
-        description: retiredNodeTextField(bpmnProfile, data.description),
-        actor: retiredNodeTextField(bpmnProfile, data.actor),
-        businessRule: retiredNodeTextField(bpmnProfile, data.businessRule),
         erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
         position,
         size,
-        inputSummary: retiredNodeTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
-        outputSummary: retiredNodeTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
-        semanticProfileKey: data.semanticProfileKey ?? previousNode?.semanticProfileKey ?? null,
-        semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
-        semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
         bpmnSemanticJson,
         taskUiJson,
-        processContainerJson: null,
-        containerNodeKey: null,
         isOverridden: true,
         styleJson: data.styleJson ?? previousNode?.styleJson ?? null,
         propertiesJson: mergeBpmnIntoProperties(
@@ -1810,8 +1610,6 @@ export function flowDraftFromGraph(
       const bpmnProfile = edgeProfileFromData(data, {
         bpmnFlowType: previousEdge?.bpmnFlowType ?? 'SEQUENCE',
         bpmnSequenceFlowKind: previousEdge?.bpmnSequenceFlowKind ?? 'NORMAL',
-        bpmnMessageName: previousEdge?.bpmnMessageName ?? null,
-        bpmnConditionExpression: previousEdge?.bpmnConditionExpression ?? null,
       })
       const enforcedProfile = defaultBpmnEdgeProfileForEdge(edge)
       const finalProfile =
@@ -1837,11 +1635,6 @@ export function flowDraftFromGraph(
           edgeType: legacyEdgeTypeForBpmn(finalProfile, isCrossLane),
           ...finalProfile,
           label,
-          conditionText: data.bpmnConditionExpression ?? previousEdge?.conditionText ?? null,
-          dataContract: previousEdge?.dataContract,
-          semanticProfileKey: data.semanticProfileKey ?? previousEdge?.semanticProfileKey ?? null,
-          semanticProfileVersion: data.semanticProfileVersion ?? previousEdge?.semanticProfileVersion ?? null,
-          semanticPayloadJson: data.semanticPayloadJson ?? previousEdge?.semanticPayloadJson ?? {},
           bpmnSemanticJson,
           isCrossLane,
           sourceType: 'NODE' as const,
@@ -1942,23 +1735,13 @@ export function flowNodeRecordFromCell(
     nodeType: legacyNodeTypeForBpmn(bpmnProfile),
     ...bpmnProfile,
     title,
-    description: retiredNodeTextField(bpmnProfile, data.description),
-    actor: retiredNodeTextField(bpmnProfile, data.actor),
-    businessRule: retiredNodeTextField(bpmnProfile, data.businessRule),
     erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType)
       ? data.erRefs ?? previousNode?.erRefs ?? []
       : [],
     position,
     size,
-    inputSummary: retiredNodeTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
-    outputSummary: retiredNodeTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
-    semanticProfileKey: data.semanticProfileKey ?? previousNode?.semanticProfileKey ?? null,
-    semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
-    semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
     bpmnSemanticJson,
     taskUiJson,
-    processContainerJson: null,
-    containerNodeKey: null,
     isOverridden: true,
     styleJson: data.styleJson ?? previousNode?.styleJson ?? null,
     propertiesJson: mergeBpmnIntoProperties(data.propertiesJson ?? previousNode?.propertiesJson, bpmnProfile),
@@ -1990,8 +1773,6 @@ export function flowEdgeRecordFromCell(
   const bpmnProfile = edgeProfileFromData(data, {
     bpmnFlowType: previousEdge?.bpmnFlowType ?? 'SEQUENCE',
     bpmnSequenceFlowKind: previousEdge?.bpmnSequenceFlowKind ?? 'NORMAL',
-    bpmnMessageName: previousEdge?.bpmnMessageName ?? null,
-    bpmnConditionExpression: previousEdge?.bpmnConditionExpression ?? null,
   })
   const enforcedProfile = defaultBpmnEdgeProfileForEdge(edge)
   const finalProfile =
@@ -2016,11 +1797,6 @@ export function flowEdgeRecordFromCell(
     edgeType: legacyEdgeTypeForBpmn(finalProfile, isCrossLane),
     ...finalProfile,
     label,
-    conditionText: data.bpmnConditionExpression ?? previousEdge?.conditionText ?? null,
-    dataContract: previousEdge?.dataContract,
-    semanticProfileKey: data.semanticProfileKey ?? previousEdge?.semanticProfileKey ?? null,
-    semanticProfileVersion: data.semanticProfileVersion ?? previousEdge?.semanticProfileVersion ?? null,
-    semanticPayloadJson: data.semanticPayloadJson ?? previousEdge?.semanticPayloadJson ?? {},
     bpmnSemanticJson,
     isCrossLane,
     sourceType: 'NODE',

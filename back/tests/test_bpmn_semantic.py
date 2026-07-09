@@ -20,19 +20,20 @@ from app.interfaces.http.routers.business_flow.routes import _remap_component_se
 
 
 class BpmnSemanticTest(unittest.TestCase):
-    def test_migration_is_additive_and_keeps_legacy_columns(self) -> None:
+    def test_cleanup_migration_drops_only_retired_bpmn_columns(self) -> None:
         migration = (
             Path(__file__).resolve().parents[1]
             / "migrations"
-            / "018_bpmn_non_task_semantics.sql"
+            / "019_bpmn_schema_cleanup.sql"
         ).read_text(encoding="utf-8")
-        self.assertEqual(migration.count("ADD COLUMN IF NOT EXISTS bpmn_semantic_json"), 4)
-        self.assertNotIn("DROP COLUMN", migration.upper())
-        for legacy_column in {
-            "title", "description", "actor", "business_rule",
-            "input_summary", "output_summary",
+        for retired_column in {
+            "description", "actor", "business_rule", "input_summary",
+            "output_summary", "semantic_profile_key", "process_container_json",
+            "bpmn_call_activity_ref", "condition_text", "data_contract_json",
         }:
-            self.assertNotIn(f"DROP COLUMN {legacy_column}".upper(), migration.upper())
+            self.assertIn(f"DROP COLUMN IF EXISTS {retired_column}".upper(), migration.upper())
+        for retained_column in {"title", "label", "properties_json", "task_ui_json", "bpmn_semantic_json"}:
+            self.assertNotIn(f"DROP COLUMN IF EXISTS {retained_column}".upper(), migration.upper())
 
     def test_maps_current_non_task_node_and_edge_profiles(self) -> None:
         self.assertEqual(node_semantic_type({"bpmn_element_type": "EVENT", "bpmn_event_kind": "START"}), "startEvent")
@@ -81,7 +82,7 @@ class BpmnSemanticTest(unittest.TestCase):
         )
         self.assertEqual(item["title"], "订单开始")
         self.assertEqual(item["bpmnSemantic"]["triggerType"], "message")
-        self.assertIsNone(item["actor"])
+        self.assertNotIn("actor", item)
         self.assertEqual(item["erRefs"], [])
 
     def test_quality_reports_incomplete_saga(self) -> None:
@@ -224,7 +225,7 @@ class BpmnSemanticTest(unittest.TestCase):
         context = build_business_flow_context(object(), uuid4())
         flow = context["businessFlows"][0]
         self.assertEqual(flow["steps"][0]["title"], "订单开始")
-        self.assertIsNone(flow["steps"][0]["actor"])
+        self.assertNotIn("actor", flow["steps"][0])
         self.assertEqual(flow["steps"][1]["bpmnSemantic"]["defaultFlowId"], "flow-ok")
         self.assertEqual(flow["edges"][0]["bpmnSemantic"]["conditionText"], "库存大于零")
         self.assertEqual(flow["erRefs"], [{"node_key": "order-data", "er_table_key": "orders"}])

@@ -24,14 +24,11 @@ type NullableBpmnNodeProfile = {
   bpmnTaskType?: BpmnTaskType | null
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
-  bpmnCallActivityRef?: string | null
 }
 
 type NullableBpmnEdgeProfile = {
   bpmnFlowType?: BpmnFlowType | null
   bpmnSequenceFlowKind?: BpmnSequenceFlowKind | null
-  bpmnMessageName?: string | null
-  bpmnConditionExpression?: string | null
 }
 
 const EVENT_DEFINITIONS = new Set<BpmnEventDefinition>(['NONE'])
@@ -49,7 +46,6 @@ const ELEMENT_TYPES = new Set<BpmnElementType>([
   'TASK',
   'GATEWAY',
   'SUB_PROCESS',
-  'CALL_ACTIVITY',
   'DATA_OBJECT',
   'DATA_INPUT',
   'DATA_OUTPUT',
@@ -183,7 +179,6 @@ export function normalizeBpmnNodeProfile(
     if (nodeType === 'START' || nodeType === 'END' || nodeType === 'EVENT') bpmnElementType = 'EVENT'
     if (nodeType === 'DECISION' || nodeType === 'GATEWAY') bpmnElementType = 'GATEWAY'
     if (nodeType === 'SUB_PROCESS') bpmnElementType = 'SUB_PROCESS'
-    if (nodeType === 'CALL_ACTIVITY') bpmnElementType = 'CALL_ACTIVITY'
     if (nodeType === 'DATA_OBJECT') bpmnElementType = 'DATA_OBJECT'
     if (nodeType === 'DATA_INPUT') bpmnElementType = 'DATA_INPUT'
     if (nodeType === 'DATA_OUTPUT') bpmnElementType = 'DATA_OUTPUT'
@@ -234,11 +229,6 @@ export function normalizeBpmnNodeProfile(
             'EMBEDDED',
           )
         : null,
-    bpmnCallActivityRef:
-      bpmnElementType === 'CALL_ACTIVITY'
-        ? stringValue(source.bpmnCallActivityRef ?? bpmn.callActivityRef ?? bpmn.bpmnCallActivityRef) ||
-          null
-        : null,
   }
 }
 
@@ -250,7 +240,6 @@ export function legacyNodeTypeForBpmn(profile: BpmnNodeProfile): BusinessFlowNod
   }
   if (profile.bpmnElementType === 'GATEWAY') return 'GATEWAY'
   if (profile.bpmnElementType === 'SUB_PROCESS') return 'SUB_PROCESS'
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'CALL_ACTIVITY'
   if (profile.bpmnElementType === 'DATA_OBJECT') return 'DATA_OBJECT'
   if (profile.bpmnElementType === 'DATA_INPUT') return 'DATA_INPUT'
   if (profile.bpmnElementType === 'DATA_OUTPUT') return 'DATA_OUTPUT'
@@ -273,7 +262,6 @@ export function bpmnNodeTitle(profile: BpmnNodeProfile) {
   if (profile.bpmnElementType === 'SUB_PROCESS') {
     return profile.bpmnSubProcessKind === 'TRANSACTION' ? '事务' : '子流程'
   }
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return '调用活动'
   if (profile.bpmnElementType === 'DATA_OBJECT') return '数据对象'
   if (profile.bpmnElementType === 'DATA_INPUT') return '数据输入'
   if (profile.bpmnElementType === 'DATA_OUTPUT') return '数据输出'
@@ -291,7 +279,6 @@ export function bpmnNodeOptionKey(profile: BpmnNodeProfile) {
       ? 'activity-transaction'
       : 'activity-task'
   }
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return 'activity-task'
   if (profile.bpmnElementType === 'GATEWAY') {
     return `gateway-${profile.bpmnGatewayType?.toLowerCase() ?? 'exclusive'}`
   }
@@ -312,7 +299,6 @@ export function bpmnNodeSize(profile: BpmnNodeProfile): CanvasSize {
   ) return { width: 96, height: 72 }
   if (profile.bpmnElementType === 'DATA_STORE') return { width: 108, height: 78 }
   if (profile.bpmnElementType === 'SUB_PROCESS') return { width: 260, height: 170 }
-  if (profile.bpmnElementType === 'CALL_ACTIVITY') return { width: 170, height: 74 }
   return { width: 148, height: 64 }
 }
 
@@ -339,18 +325,6 @@ export function normalizeBpmnEdgeProfile(
             SEQUENCE_FLOW_KINDS,
             source.edgeType === 'EXCEPTION' ? 'EXCEPTION' : 'NORMAL',
           )
-        : null,
-    bpmnMessageName:
-      bpmnFlowType === 'MESSAGE'
-        ? stringValue(source.bpmnMessageName ?? bpmn.messageName ?? bpmn.bpmnMessageName) || null
-        : null,
-    bpmnConditionExpression:
-      bpmnFlowType === 'SEQUENCE'
-        ? stringValue(
-            source.bpmnConditionExpression ??
-              bpmn.conditionExpression ??
-              bpmn.bpmnConditionExpression,
-          ) || null
         : null,
   }
 }

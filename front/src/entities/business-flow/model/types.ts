@@ -11,7 +11,6 @@ export type BusinessFlowNodeType =
   | 'EVENT'
   | 'GATEWAY'
   | 'SUB_PROCESS'
-  | 'CALL_ACTIVITY'
   | 'DATA_OBJECT'
   | 'DATA_INPUT'
   | 'DATA_OUTPUT'
@@ -192,42 +191,11 @@ export type TaskUiContext = {
   mockRequirements?: string[]
 }
 
-export type ProcessContainerMode = 'embedded' | 'reusableCall'
-
-export type ProcessContainerConfig = {
-  containerMode: ProcessContainerMode
-  calledProcessRef?: string | null
-  calledProcessVersion?: string | null
-}
-
-export type BusinessFlowEdgeScope =
-  | 'topLevel'
-  | 'insideContainer'
-  | 'crossContainerBoundary'
-
-export type BusinessSemanticProfileTarget = 'FLOW' | 'NODE' | 'EDGE'
-
-export type BusinessSemanticProfileKey =
-  | 'generic-business-operation'
-  | 'mes-manufacturing-node'
-  | 'mes-manufacturing-edge'
-
-export type BusinessSemanticProfile = {
-  profileKey: BusinessSemanticProfileKey | string
-  domain: 'generic' | 'mes' | string
-  targetScope: BusinessSemanticProfileTarget
-  version: number
-  name: string
-  description?: string | null
-  taxonomyJson?: BusinessFlowJson | null
-}
-
 export type BpmnElementType =
   | 'EVENT'
   | 'TASK'
   | 'GATEWAY'
   | 'SUB_PROCESS'
-  | 'CALL_ACTIVITY'
   | 'DATA_OBJECT'
   | 'DATA_INPUT'
   | 'DATA_OUTPUT'
@@ -252,14 +220,11 @@ export type BpmnNodeProfile = {
   bpmnTaskType?: BpmnTaskType | null
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
-  bpmnCallActivityRef?: string | null
 }
 
 export type BpmnEdgeProfile = {
   bpmnFlowType: BpmnFlowType
   bpmnSequenceFlowKind?: BpmnSequenceFlowKind | null
-  bpmnMessageName?: string | null
-  bpmnConditionExpression?: string | null
 }
 
 export type BpmnSemanticType =
@@ -391,20 +356,9 @@ export type SwimlaneComponentNode = {
   bpmnTaskType?: BpmnTaskType | null
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
-  bpmnCallActivityRef?: string | null
   title: string
-  description?: string | null
-  actor?: string | null
-  businessRule?: string | null
-  inputSummary?: string | null
-  outputSummary?: string | null
-  semanticProfileKey?: string | null
-  semanticProfileVersion?: number | null
-  semanticPayloadJson?: BusinessFlowJson | null
   bpmnSemanticJson?: BpmnSemanticJson | null
   taskUiJson?: TaskUiContext | null
-  processContainerJson?: ProcessContainerConfig | null
-  containerNodeKey?: string | null
   position: CanvasPosition
   size: CanvasSize
   erRefs?: BusinessFlowNodeErRef[]
@@ -423,14 +377,7 @@ export type SwimlaneComponentEdge = {
   edgeType: BusinessFlowEdgeType
   bpmnFlowType?: BpmnFlowType | null
   bpmnSequenceFlowKind?: BpmnSequenceFlowKind | null
-  bpmnMessageName?: string | null
-  bpmnConditionExpression?: string | null
   label?: string | null
-  conditionText?: string | null
-  dataContractJson?: BusinessFlowJson | null
-  semanticProfileKey?: string | null
-  semanticProfileVersion?: number | null
-  semanticPayloadJson?: BusinessFlowJson | null
   bpmnSemanticJson?: BpmnSemanticJson | null
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
@@ -525,18 +472,9 @@ export type BusinessFlowNodeData = {
   bpmnTaskType?: BpmnTaskType | null
   bpmnGatewayType?: BpmnGatewayType | null
   bpmnSubProcessKind?: BpmnSubProcessKind | null
-  bpmnCallActivityRef?: string | null
   title: string
-  description?: string | null
-  actor?: string | null
-  businessRule?: string | null
-  semanticProfileKey?: string | null
-  semanticProfileVersion?: number | null
-  semanticPayloadJson?: BusinessFlowJson | null
   bpmnSemanticJson?: BpmnSemanticJson | null
   taskUiJson?: TaskUiContext | null
-  processContainerJson?: ProcessContainerConfig | null
-  containerNodeKey?: string | null
   erRefs?: BusinessFlowNodeErRef[]
 }
 
@@ -544,12 +482,8 @@ export type BusinessFlowNodeRecord = BusinessFlowNodeData & {
   businessFlowId: string
   position: CanvasPosition
   size: CanvasSize
-  inputSummary?: string | null
-  outputSummary?: string | null
   isOverridden: boolean
   taskUiJson?: TaskUiContext | null
-  processContainerJson?: ProcessContainerConfig | null
-  containerNodeKey?: string | null
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
   createdAt: string
@@ -563,17 +497,7 @@ export type BusinessFlowEdgeData = {
   edgeType: BusinessFlowEdgeType
   bpmnFlowType?: BpmnFlowType | null
   bpmnSequenceFlowKind?: BpmnSequenceFlowKind | null
-  bpmnMessageName?: string | null
-  bpmnConditionExpression?: string | null
   label?: string | null
-  conditionText?: string | null
-  dataContract?: {
-    input?: string[]
-    output?: string[]
-  }
-  semanticProfileKey?: string | null
-  semanticProfileVersion?: number | null
-  semanticPayloadJson?: BusinessFlowJson | null
   bpmnSemanticJson?: BpmnSemanticJson | null
   isCrossLane: boolean
 }
