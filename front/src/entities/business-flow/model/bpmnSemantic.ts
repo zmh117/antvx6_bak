@@ -153,7 +153,7 @@ export function normalizeBpmnSemantic(
         : []
     } else if (Array.isArray(fallback)) {
       normalized[key] = Array.isArray(raw)
-        ? raw.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
+        ? raw.filter((item): item is string => typeof item === 'string').map((item) => item.trim())
         : []
     }
     else if (typeof fallback === 'boolean') normalized[key] = typeof raw === 'boolean' ? raw : fallback

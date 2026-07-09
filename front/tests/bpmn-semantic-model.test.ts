@@ -84,3 +84,12 @@ test('rejects invalid enums and invalid gateway references', () => {
   assert.ok(issues.some((issue) => issue.includes('重复')))
   assert.ok(issues.some((issue) => issue.includes('默认路径')))
 })
+
+test('keeps a new blank list row editable until backend persistence cleanup', () => {
+  const semantic = normalizeBpmnSemantic(
+    { inputDataRefs: ['已有数据', ''] },
+    'startEvent',
+    '开始',
+  ) as unknown as Record<string, unknown>
+  assert.deepEqual(semantic.inputDataRefs, ['已有数据', ''])
+})

@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import type {
   BusinessFlowErRefType,
   BusinessFlowNodeErRef,
 } from '@/entities/business-flow'
+import { appendNodeErFieldBindings } from '@/entities/business-flow'
 import { useGraphQuery } from '@/entities/er-graph/api'
 
 export type ErGraphOption = { id: string; name: string }
@@ -17,6 +19,13 @@ const ER_REF_TYPES: BusinessFlowErRefType[] = [
   'DELETE',
   'CHECK',
 ]
+const ER_REF_TYPE_LABELS: Record<BusinessFlowErRefType, string> = {
+  READ: '读取',
+  CREATE: '新增',
+  UPDATE: '更新',
+  DELETE: '删除',
+  CHECK: '校验',
+}
 
 type ErGraphLoadData = NonNullable<ReturnType<typeof useGraphQuery>['data']>
 type ErColumnOption = { key: string; label: string }
@@ -99,7 +108,8 @@ export function NodeErBindingEditor({
 }) {
   const [draftDiagramId, setDraftDiagramId] = useState('')
   const [draftTableKey, setDraftTableKey] = useState('')
-  const [draftColumnKey, setDraftColumnKey] = useState('')
+  const [draftColumnKeys, setDraftColumnKeys] = useState<string[]>([])
+  const [draftManualColumnKey, setDraftManualColumnKey] = useState('')
   const [draftRefType, setDraftRefType] = useState<BusinessFlowErRefType>('READ')
   const selectedDiagramId = draftDiagramId || erGraphs[0]?.id || ''
   const erGraphQuery = useGraphQuery(selectedDiagramId, {
@@ -113,9 +123,6 @@ export function NodeErBindingEditor({
     (table) => table.key === draftTableKey,
   )
   const selectedTableColumns = selectedTable?.columns ?? []
-  const selectedColumn = selectedTableColumns.find(
-    (column) => column.key === draftColumnKey,
-  )
 
   const diagramName = (id: string) =>
     erGraphs.find((graph) => graph.id === id)?.name ?? id
@@ -123,18 +130,16 @@ export function NodeErBindingEditor({
   const addBinding = () => {
     const erDiagramId = selectedDiagramId
     if (!erDiagramId || !draftTableKey.trim()) return
-    onChange([
-      ...erRefs,
-      {
+    onChange(appendNodeErFieldBindings(erRefs, {
         erDiagramId,
         erTableKey: draftTableKey.trim(),
-        erColumnKey: draftColumnKey.trim() || null,
+        erColumnKeys: draftColumnKeys,
+        manualColumnKey: draftManualColumnKey,
         refType: draftRefType,
-        description: null,
-      },
-    ])
+      }))
     setDraftTableKey('')
-    setDraftColumnKey('')
+    setDraftColumnKeys([])
+    setDraftManualColumnKey('')
     setDraftRefType('READ')
   }
 
@@ -189,7 +194,7 @@ export function NodeErBindingEditor({
               >
                 {ER_REF_TYPES.map((type) => (
                   <option key={type} value={type}>
-                    {type}
+                    {ER_REF_TYPE_LABELS[type]}
                   </option>
                 ))}
               </select>
@@ -204,7 +209,8 @@ export function NodeErBindingEditor({
           onChange={(event) => {
             setDraftDiagramId(event.target.value)
             setDraftTableKey('')
-            setDraftColumnKey('')
+            setDraftColumnKeys([])
+            setDraftManualColumnKey('')
           }}
         >
           {erGraphs.length === 0 ? (
@@ -233,7 +239,8 @@ export function NodeErBindingEditor({
           disabled={!selectedDiagramId || erGraphQuery.isLoading || erTableOptions.length === 0}
           onChange={(event) => {
             setDraftTableKey(event.target.value)
-            setDraftColumnKey('')
+            setDraftColumnKeys([])
+            setDraftManualColumnKey('')
           }}
         >
           <option value="">
@@ -254,34 +261,72 @@ export function NodeErBindingEditor({
           value={draftTableKey}
           onChange={(event) => {
             setDraftTableKey(event.target.value)
-            setDraftColumnKey('')
+            setDraftColumnKeys([])
+            setDraftManualColumnKey('')
           }}
         />
-        <select
-          className="h-7 w-full rounded border border-border bg-background px-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-          value={selectedColumn ? draftColumnKey : ''}
-          disabled={!draftTableKey.trim() || selectedTableColumns.length === 0}
-          onChange={(event) => setDraftColumnKey(event.target.value)}
-        >
-          <option value="">
-            {selectedTableColumns.length === 0
-              ? '暂无可选字段'
-              : '不绑定字段 / 选择字段'}
-          </option>
-          {selectedTableColumns.map((column) => (
-            <option key={column.key} value={column.key}>
-              {column.label}
-            </option>
-          ))}
-        </select>
+        <div className="rounded border border-border bg-background p-2">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-xs font-medium">选择字段（可多选）</span>
+            {selectedTableColumns.length ? (
+              <div className="flex gap-1">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => setDraftColumnKeys(selectedTableColumns.map((column) => column.key))}
+                >
+                  全选
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => setDraftColumnKeys([])}
+                >
+                  清空
+                </Button>
+              </div>
+            ) : null}
+          </div>
+          {selectedTableColumns.length ? (
+            <div className="max-h-40 space-y-1 overflow-y-auto">
+              {selectedTableColumns.map((column) => {
+                const checked = draftColumnKeys.includes(column.key)
+                return (
+                  <label
+                    key={column.key}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-accent"
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(next) =>
+                        setDraftColumnKeys((current) =>
+                          next === true
+                            ? [...current, column.key]
+                            : current.filter((key) => key !== column.key),
+                        )
+                      }
+                    />
+                    <span className="min-w-0 truncate">{column.label}</span>
+                  </label>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="text-[11px] text-muted-foreground">
+              {draftTableKey.trim() ? '该表暂无可选字段，可手动填写字段键。' : '请先选择表。'}
+            </div>
+          )}
+        </div>
         <Input
           placeholder={
             selectedTableColumns.length > 0
-              ? '字段 key（可手动修正，可选）'
+              ? '补充字段键（可选）'
               : '字段 key（可选）'
           }
-          value={draftColumnKey}
-          onChange={(event) => setDraftColumnKey(event.target.value)}
+          value={draftManualColumnKey}
+          onChange={(event) => setDraftManualColumnKey(event.target.value)}
         />
         <div className="flex gap-2">
           <select
@@ -293,7 +338,7 @@ export function NodeErBindingEditor({
           >
             {ER_REF_TYPES.map((type) => (
               <option key={type} value={type}>
-                {type}
+                {ER_REF_TYPE_LABELS[type]}
               </option>
             ))}
           </select>
@@ -304,7 +349,7 @@ export function NodeErBindingEditor({
             disabled={erGraphs.length === 0 || !draftTableKey.trim()}
             onClick={addBinding}
           >
-            添加
+            添加{draftColumnKeys.length ? ` ${draftColumnKeys.length} 个字段` : ''}
           </Button>
         </div>
       </div>
