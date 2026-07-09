@@ -92,7 +92,9 @@ import {
   mergeBpmnIntoProperties,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
+  normalizeTaskUiContext,
   semanticPayload,
+  taskUiTaskName,
   textArrayValue,
   updateSemanticPayload,
 } from '@/entities/business-flow'
@@ -1198,6 +1200,42 @@ function ComponentInspector({
       </div>
     )
   }
+  if (selected.bpmnProfile.bpmnElementType === 'TASK') {
+    return (
+      <div className="space-y-4">
+        <div className="text-xs font-semibold">任务</div>
+        <TaskUiContextFields
+          value={selected.taskUiJson}
+          fallbackTaskName={selected.title}
+          onChange={(taskUiJson) => {
+            const nextTaskUi = normalizeTaskUiContext(taskUiJson, { taskName: selected.title })
+            const title = taskUiTaskName(nextTaskUi, selected.title || '任务')
+            updateNodeText(selected.cell, title)
+            selected.cell.setData({
+              ...readCellData(selected.cell),
+              title,
+              description: null,
+              actor: null,
+              businessRule: null,
+              inputSummary: null,
+              outputSummary: null,
+              taskUiJson: nextTaskUi,
+            })
+            onChange({
+              ...selected,
+              title,
+              description: '',
+              actor: '',
+              businessRule: '',
+              inputSummary: '',
+              outputSummary: '',
+              taskUiJson: nextTaskUi,
+            })
+          }}
+        />
+      </div>
+    )
+  }
   return (
     <div className="space-y-4">
       <FieldGroup>
@@ -1282,15 +1320,6 @@ function ComponentInspector({
           }}
         />
       </div>
-      {selected.bpmnProfile.bpmnElementType === 'TASK' ? (
-        <TaskUiContextFields
-          value={selected.taskUiJson}
-          onChange={(taskUiJson) => {
-            selected.cell.setData({ ...readCellData(selected.cell), taskUiJson })
-            onChange({ ...selected, taskUiJson })
-          }}
-        />
-      ) : null}
       <NodeErBindingEditor
         erRefs={selected.erRefs}
         erGraphs={erGraphs}
@@ -1498,7 +1527,9 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       semanticProfileKey: data.semanticProfileKey ?? '',
       semanticProfileVersion: data.semanticProfileVersion ?? null,
       semanticPayloadJson: semanticPayload(data.semanticPayloadJson),
-      taskUiJson: data.taskUiJson ?? null,
+      taskUiJson: bpmnProfile.bpmnElementType === 'TASK'
+        ? normalizeTaskUiContext(data.taskUiJson, { taskName: data.title ?? String(cell.attr('label/text') ?? '') })
+        : data.taskUiJson ?? null,
       processContainerJson: data.processContainerJson ?? null,
       containerNodeKey: data.containerNodeKey ?? null,
       erRefs: data.erRefs ?? [],

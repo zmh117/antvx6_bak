@@ -10,6 +10,10 @@ import type {
   LocalBusinessFlowCanvas,
 } from '@/entities/business-flow'
 import {
+  normalizeTaskUiContext,
+  taskUiTaskName,
+} from '@/entities/business-flow'
+import {
   applyBusinessFlowCanvasPatchToGraph,
   type BusinessFlowCanvasPatch,
   flowEdgeRecordFromCell,
@@ -123,6 +127,26 @@ function erRefKey(nodeKey: string, ref: BusinessFlowNodeErRef | Record<string, u
   return String(ref.id || `${nodeKey}:${refSignature(ref)}`)
 }
 
+function taskUiForNode(node: Pick<BusinessFlowNodeRecord, 'bpmnElementType' | 'taskUiJson' | 'title'>) {
+  return node.bpmnElementType === 'TASK'
+    ? normalizeTaskUiContext(node.taskUiJson, { taskName: node.title })
+    : node.taskUiJson ?? null
+}
+
+function titleForNode(node: Pick<BusinessFlowNodeRecord, 'bpmnElementType' | 'taskUiJson' | 'title'>) {
+  const taskUiJson = taskUiForNode(node)
+  return node.bpmnElementType === 'TASK'
+    ? taskUiTaskName(taskUiJson, node.title || '任务')
+    : node.title
+}
+
+function legacyTaskText<T>(
+  node: Pick<BusinessFlowNodeRecord, 'bpmnElementType'>,
+  value: T | null | undefined,
+) {
+  return node.bpmnElementType === 'TASK' ? null : value ?? null
+}
+
 function writeLaneToDoc(
   lanes: Y.Map<unknown>,
   canvas: LocalBusinessFlowCanvas,
@@ -155,6 +179,8 @@ function writeNodeToDoc(
   node: BusinessFlowNodeRecord,
 ) {
   const laneInstanceKey = laneKeyById.get(node.laneInstanceId) ?? null
+  const taskUiJson = taskUiForNode(node)
+  const title = titleForNode(node)
   setMapObject(nodes, node.nodeKey, {
     id: node.nodeId,
     lane_instance_id: node.laneInstanceId,
@@ -169,16 +195,16 @@ function writeNodeToDoc(
     bpmn_gateway_type: node.bpmnGatewayType ?? null,
     bpmn_subprocess_kind: node.bpmnSubProcessKind ?? null,
     bpmn_call_activity_ref: node.bpmnCallActivityRef ?? null,
-    title: node.title,
-    description: node.description ?? null,
-    actor: node.actor ?? null,
-    business_rule: node.businessRule ?? null,
-    input_summary: node.inputSummary ?? null,
-    output_summary: node.outputSummary ?? null,
+    title,
+    description: legacyTaskText(node, node.description),
+    actor: legacyTaskText(node, node.actor),
+    business_rule: legacyTaskText(node, node.businessRule),
+    input_summary: legacyTaskText(node, node.inputSummary),
+    output_summary: legacyTaskText(node, node.outputSummary),
     semantic_profile_key: node.semanticProfileKey ?? null,
     semantic_profile_version: node.semanticProfileVersion ?? null,
     semantic_payload_json: node.semanticPayloadJson ?? {},
-    task_ui_json: node.taskUiJson ?? {},
+    task_ui_json: taskUiJson ?? {},
     process_container_json: node.processContainerJson ?? {},
     container_node_key: node.containerNodeKey ?? null,
     position_x: node.position.x,
@@ -345,6 +371,14 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       stringValue(raw.lane_instance_id || raw.laneInstanceId) ||
       (laneInstanceKey ? laneIdByKey.get(laneInstanceKey) : undefined) ||
       ''
+    const bpmnElementType = raw.bpmn_element_type || raw.bpmnElementType
+      ? String(raw.bpmn_element_type || raw.bpmnElementType) as BusinessFlowNodeRecord['bpmnElementType']
+      : null
+    const rawTitle = stringValue(raw.title, '任务')
+    const taskUiJson = bpmnElementType === 'TASK'
+      ? normalizeTaskUiContext(raw.task_ui_json || raw.taskUiJson || null, { taskName: rawTitle })
+      : (raw.task_ui_json || raw.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson']
+    const title = bpmnElementType === 'TASK' ? taskUiTaskName(taskUiJson, rawTitle) : rawTitle
     return {
       kind: 'BUSINESS_FLOW_NODE' as const,
       businessFlowId: base.businessFlowId,
@@ -355,9 +389,7 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         ? String(raw.origin_component_node_key || raw.originComponentNodeKey)
         : null,
       nodeType: stringValue(raw.node_type || raw.nodeType, 'TASK') as BusinessFlowNodeType,
-      bpmnElementType: raw.bpmn_element_type || raw.bpmnElementType
-        ? String(raw.bpmn_element_type || raw.bpmnElementType) as BusinessFlowNodeRecord['bpmnElementType']
-        : null,
+      bpmnElementType,
       bpmnEventKind: raw.bpmn_event_kind || raw.bpmnEventKind
         ? String(raw.bpmn_event_kind || raw.bpmnEventKind) as BusinessFlowNodeRecord['bpmnEventKind']
         : null,
@@ -376,12 +408,14 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       bpmnCallActivityRef: raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef
         ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
         : null,
-      title: stringValue(raw.title, '任务'),
-      description: raw.description ? String(raw.description) : null,
-      actor: raw.actor ? String(raw.actor) : null,
-      businessRule: raw.business_rule || raw.businessRule
-        ? String(raw.business_rule || raw.businessRule)
-        : null,
+      title,
+      description: bpmnElementType === 'TASK' ? null : raw.description ? String(raw.description) : null,
+      actor: bpmnElementType === 'TASK' ? null : raw.actor ? String(raw.actor) : null,
+      businessRule: bpmnElementType === 'TASK'
+        ? null
+        : raw.business_rule || raw.businessRule
+          ? String(raw.business_rule || raw.businessRule)
+          : null,
       semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
         ? String(raw.semantic_profile_key || raw.semanticProfileKey)
         : null,
@@ -389,7 +423,7 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
         : null,
       semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || {}) as Record<string, unknown>,
-      taskUiJson: (raw.task_ui_json || raw.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson'],
+      taskUiJson,
       processContainerJson: (raw.process_container_json || raw.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
       containerNodeKey: raw.container_node_key || raw.containerNodeKey
         ? String(raw.container_node_key || raw.containerNodeKey)
@@ -403,8 +437,12 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         width: numberValue(raw.width, 120),
         height: numberValue(raw.height, 60),
       },
-      inputSummary: raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : null,
-      outputSummary: raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : null,
+      inputSummary: bpmnElementType === 'TASK'
+        ? null
+        : raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : null,
+      outputSummary: bpmnElementType === 'TASK'
+        ? null
+        : raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : null,
       isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden),
       styleJson: (raw.style_json || raw.styleJson || {}) as Record<string, unknown>,
       propertiesJson: (raw.properties_json || raw.propertiesJson || {}) as Record<string, unknown>,
@@ -600,6 +638,14 @@ function nodeFromDocEntry(
     (laneInstanceKey ? laneIdByKey.get(laneInstanceKey) : undefined) ||
     previous?.laneInstanceId ||
     ''
+  const bpmnElementType = raw.bpmn_element_type || raw.bpmnElementType
+    ? String(raw.bpmn_element_type || raw.bpmnElementType) as BusinessFlowNodeRecord['bpmnElementType']
+    : previous?.bpmnElementType ?? null
+  const rawTitle = stringValue(raw.title, previous?.title ?? '任务')
+  const taskUiJson = bpmnElementType === 'TASK'
+    ? normalizeTaskUiContext(raw.task_ui_json || raw.taskUiJson || previous?.taskUiJson || null, { taskName: rawTitle })
+    : (raw.task_ui_json || raw.taskUiJson || previous?.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson']
+  const title = bpmnElementType === 'TASK' ? taskUiTaskName(taskUiJson, rawTitle) : rawTitle
   return {
     kind: 'BUSINESS_FLOW_NODE',
     businessFlowId: base.businessFlowId,
@@ -610,9 +656,7 @@ function nodeFromDocEntry(
       ? String(raw.origin_component_node_key || raw.originComponentNodeKey)
       : previous?.originComponentNodeKey ?? null,
     nodeType: stringValue(raw.node_type || raw.nodeType, previous?.nodeType ?? 'TASK') as BusinessFlowNodeType,
-    bpmnElementType: raw.bpmn_element_type || raw.bpmnElementType
-      ? String(raw.bpmn_element_type || raw.bpmnElementType) as BusinessFlowNodeRecord['bpmnElementType']
-      : previous?.bpmnElementType ?? null,
+    bpmnElementType,
     bpmnEventKind: raw.bpmn_event_kind || raw.bpmnEventKind
       ? String(raw.bpmn_event_kind || raw.bpmnEventKind) as BusinessFlowNodeRecord['bpmnEventKind']
       : previous?.bpmnEventKind ?? null,
@@ -631,12 +675,14 @@ function nodeFromDocEntry(
     bpmnCallActivityRef: raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef
       ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
       : previous?.bpmnCallActivityRef ?? null,
-    title: stringValue(raw.title, previous?.title ?? '任务'),
-    description: raw.description ? String(raw.description) : previous?.description ?? null,
-    actor: raw.actor ? String(raw.actor) : previous?.actor ?? null,
-    businessRule: raw.business_rule || raw.businessRule
-      ? String(raw.business_rule || raw.businessRule)
-      : previous?.businessRule ?? null,
+    title,
+    description: bpmnElementType === 'TASK' ? null : raw.description ? String(raw.description) : previous?.description ?? null,
+    actor: bpmnElementType === 'TASK' ? null : raw.actor ? String(raw.actor) : previous?.actor ?? null,
+    businessRule: bpmnElementType === 'TASK'
+      ? null
+      : raw.business_rule || raw.businessRule
+        ? String(raw.business_rule || raw.businessRule)
+        : previous?.businessRule ?? null,
     semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
       ? String(raw.semantic_profile_key || raw.semanticProfileKey)
       : previous?.semanticProfileKey ?? null,
@@ -644,7 +690,7 @@ function nodeFromDocEntry(
       ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
       : previous?.semanticProfileVersion ?? null,
     semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || previous?.semanticPayloadJson || {}) as Record<string, unknown>,
-    taskUiJson: (raw.task_ui_json || raw.taskUiJson || previous?.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson'],
+    taskUiJson,
     processContainerJson: (raw.process_container_json || raw.processContainerJson || previous?.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
     containerNodeKey: raw.container_node_key || raw.containerNodeKey
       ? String(raw.container_node_key || raw.containerNodeKey)
@@ -658,8 +704,12 @@ function nodeFromDocEntry(
       width: numberValue(raw.width, previous?.size.width ?? 120),
       height: numberValue(raw.height, previous?.size.height ?? 60),
     },
-    inputSummary: raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : previous?.inputSummary ?? null,
-    outputSummary: raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : previous?.outputSummary ?? null,
+    inputSummary: bpmnElementType === 'TASK'
+      ? null
+      : raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : previous?.inputSummary ?? null,
+    outputSummary: bpmnElementType === 'TASK'
+      ? null
+      : raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : previous?.outputSummary ?? null,
     isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden ?? previous?.isOverridden),
     styleJson: (raw.style_json || raw.styleJson || previous?.styleJson || {}) as Record<string, unknown>,
     propertiesJson: (raw.properties_json || raw.propertiesJson || previous?.propertiesJson || {}) as Record<string, unknown>,

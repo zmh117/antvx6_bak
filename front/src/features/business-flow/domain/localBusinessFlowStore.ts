@@ -26,6 +26,7 @@ import {
   mergeBpmnIntoProperties,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
+  taskUiEmpty,
 } from '@/entities/business-flow'
 
 const STORAGE_KEY = 'antvx6:business-flow-demo:v1'
@@ -149,7 +150,7 @@ function makeComponentNode(
     semanticProfileKey: extra?.semanticProfileKey ?? null,
     semanticProfileVersion: extra?.semanticProfileVersion ?? null,
     semanticPayloadJson: extra?.semanticPayloadJson ?? {},
-    taskUiJson: extra?.taskUiJson ?? null,
+    taskUiJson: extra?.taskUiJson ?? (bpmnProfile.bpmnElementType === 'TASK' ? taskUiEmpty(extra?.title ?? title) : null),
     processContainerJson: extra?.processContainerJson ?? null,
     containerNodeKey: extra?.containerNodeKey ?? null,
     erRefs: extra?.erRefs ?? [],
@@ -816,11 +817,12 @@ export function newComponentNodeDraft(
       : nodeTypeOrProfile,
   )
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
+  const title = bpmnNodeTitle(bpmnProfile)
   return {
     nodeKey: createLocalId('cmp_node'),
     nodeType,
     ...bpmnProfile,
-    title: bpmnNodeTitle(bpmnProfile),
+    title,
     description: null,
     actor: null,
     businessRule: null,
@@ -829,7 +831,7 @@ export function newComponentNodeDraft(
     semanticProfileKey: null,
     semanticProfileVersion: null,
     semanticPayloadJson: {},
-    taskUiJson: null,
+    taskUiJson: bpmnProfile.bpmnElementType === 'TASK' ? taskUiEmpty(title) : null,
     processContainerJson: null,
     containerNodeKey: null,
     erRefs: [],

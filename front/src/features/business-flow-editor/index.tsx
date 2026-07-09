@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Edge, Graph, Node, type Cell } from '@antv/x6'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, GripVertical, Layers3, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, GripVertical, Layers3, Trash2, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,17 +33,12 @@ import { useGraphsQuery } from '@/entities/er-graph/api'
 import type {
   LocalBusinessFlowCanvas,
   SwimlaneComponentListItem,
-  TaskUiContext,
-  TaskUiOperationStep,
 } from '@/entities/business-flow'
 import {
   BUSINESS_SEMANTIC_PROFILES,
-  TASK_UI_ACTIONS_BY_ELEMENT,
-  TASK_UI_ACTION_TYPES,
-  TASK_UI_ELEMENT_TYPES,
   normalizeTaskUiContext,
   semanticPayload,
-  taskUiQualityIssues,
+  taskUiTaskName,
   textArrayValue,
   updateSemanticPayload,
   mergeBpmnIntoProperties,
@@ -79,6 +74,9 @@ import {
   BpmnEdgeProfileFields,
   BpmnNodeProfileFields,
 } from '@/features/business-flow/presentation/components/BpmnFields'
+import {
+  TaskUiContextFields,
+} from '@/features/business-flow/presentation/components/TaskUiContextFields'
 import {
   buildBusinessFlowOps,
   isLayoutOnlyBusinessFlowOps,
@@ -1188,6 +1186,43 @@ function BusinessInspector({
       </div>
     )
   }
+  if (selected.bpmnProfile.bpmnElementType === 'TASK') {
+    return (
+      <div className="space-y-4">
+        <div className="text-xs font-semibold">任务</div>
+        <TaskUiContextFields
+          value={selected.taskUiJson}
+          fallbackTaskName={selected.title}
+          onChange={(taskUiJson) => {
+            const nextTaskUi = normalizeTaskUiContext(taskUiJson, { taskName: selected.title })
+            const title = taskUiTaskName(nextTaskUi, selected.title || '任务')
+            updateNodeText(selected.cell, title)
+            selected.cell.setData({
+              ...readCellData(selected.cell),
+              title,
+              description: null,
+              actor: null,
+              businessRule: null,
+              inputSummary: null,
+              outputSummary: null,
+              taskUiJson: nextTaskUi,
+            })
+            onChange({
+              ...selected,
+              title,
+              description: '',
+              actor: '',
+              businessRule: '',
+              inputSummary: '',
+              outputSummary: '',
+              taskUiJson: nextTaskUi,
+            })
+            onPersist()
+          }}
+        />
+      </div>
+    )
+  }
   return (
     <div className="space-y-4">
       <div className="text-xs font-semibold">流程节点</div>
@@ -1292,16 +1327,6 @@ function BusinessInspector({
           }}
         />
       </div>
-      {selected.bpmnProfile.bpmnElementType === 'TASK' ? (
-        <TaskUiContextEditor
-          value={selected.taskUiJson}
-          onChange={(taskUiJson) => {
-            selected.cell.setData({ ...readCellData(selected.cell), taskUiJson })
-            onChange({ ...selected, taskUiJson })
-            onPersist()
-          }}
-        />
-      ) : null}
       <NodeErBindingEditor
         erRefs={selected.erRefs}
         erGraphs={erGraphs}
@@ -1313,193 +1338,6 @@ function BusinessInspector({
       />
     </div>
   )
-}
-
-function TaskUiContextEditor({
-  value,
-  onChange,
-}: {
-  value: TaskUiContext | null
-  onChange: (value: TaskUiContext) => void
-}) {
-  const data = normalizeTaskUiContext(value)
-  const update = (next: Partial<TaskUiContext>) => onChange({ ...data, ...next })
-  const updateStep = (index: number, patch: Partial<TaskUiOperationStep>) => {
-    const steps = data.uiSteps.map((step, itemIndex) => (
-      itemIndex === index ? { ...step, ...patch } : step
-    ))
-    update({ uiSteps: steps.map((step, itemIndex) => ({ ...step, stepNo: itemIndex + 1 })) })
-  }
-  const issues = taskUiQualityIssues(data)
-  return (
-    <div>
-      <div className="mb-2 text-xs font-semibold">Task Web 用例上下文</div>
-      <FieldGroup>
-        <Field>
-          <FieldLabel>页面名称</FieldLabel>
-          <Input
-            value={data.page?.pageName ?? ''}
-            onChange={(event) => update({ page: { ...data.page, pageName: event.target.value } })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>路由模式</FieldLabel>
-          <Input
-            value={data.page?.routePattern ?? ''}
-            onChange={(event) => update({ page: { ...data.page, routePattern: event.target.value } })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>模块</FieldLabel>
-          <Input
-            value={data.page?.moduleName ?? ''}
-            onChange={(event) => update({ page: { ...data.page, moduleName: event.target.value } })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>预期结果</FieldLabel>
-          <Textarea
-            rows={2}
-            value={(data.expectedResults ?? []).join('\n')}
-            onChange={(event) => update({ expectedResults: textArrayValue(event.target.value) })}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>断言</FieldLabel>
-          <Textarea
-            rows={2}
-            value={(data.assertions ?? []).join('\n')}
-            onChange={(event) => update({ assertions: textArrayValue(event.target.value) })}
-          />
-        </Field>
-      </FieldGroup>
-      <div className="mt-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold">UI Steps</div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const nextNo = data.uiSteps.length + 1
-              update({
-                uiSteps: [
-                  ...data.uiSteps,
-                  {
-                    id: createUiStepId(),
-                    stepNo: nextNo,
-                    elementType: 'Input',
-                    elementName: '',
-                    actionType: 'input',
-                    value: '',
-                    businessMeaning: '',
-                    expectedResult: '',
-                    negativeTestHints: [],
-                  },
-                ],
-              })
-            }}
-          >
-            <Plus className="mr-1 size-3" />
-            添加
-          </Button>
-        </div>
-        {data.uiSteps.map((step, index) => {
-          const elementType = String(step.elementType || 'Input') as keyof typeof TASK_UI_ACTIONS_BY_ELEMENT
-          const actions = TASK_UI_ACTIONS_BY_ELEMENT[elementType] ?? TASK_UI_ACTION_TYPES
-          return (
-            <div key={step.id} className="space-y-2 rounded-md border p-2">
-              <div className="flex items-center justify-between gap-2">
-                <Input
-                  className="h-8 w-16"
-                  type="number"
-                  value={step.stepNo}
-                  onChange={(event) => updateStep(index, { stepNo: Number(event.target.value) || index + 1 })}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => update({ uiSteps: data.uiSteps.filter((_, itemIndex) => itemIndex !== index) })}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Select
-                  value={String(step.elementType || 'Input')}
-                  onValueChange={(elementTypeValue) => {
-                    const nextActions = TASK_UI_ACTIONS_BY_ELEMENT[elementTypeValue as keyof typeof TASK_UI_ACTIONS_BY_ELEMENT] ?? TASK_UI_ACTION_TYPES
-                    updateStep(index, {
-                      elementType: elementTypeValue,
-                      actionType: nextActions.includes(step.actionType as never)
-                        ? step.actionType
-                        : nextActions[0],
-                    })
-                  }}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {TASK_UI_ELEMENT_TYPES.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={String(step.actionType || actions[0])}
-                  onValueChange={(actionType) => updateStep(index, { actionType })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {actions.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Input
-                placeholder="控件名称"
-                value={step.elementName}
-                onChange={(event) => updateStep(index, { elementName: event.target.value })}
-              />
-              <Input
-                placeholder="输入值或选择值"
-                value={typeof step.value === 'string' || typeof step.value === 'number' ? String(step.value) : ''}
-                onChange={(event) => updateStep(index, { value: event.target.value })}
-              />
-              <Textarea
-                rows={2}
-                placeholder="业务含义"
-                value={step.businessMeaning ?? ''}
-                onChange={(event) => updateStep(index, { businessMeaning: event.target.value })}
-              />
-              <Textarea
-                rows={2}
-                placeholder="预期结果"
-                value={step.expectedResult ?? ''}
-                onChange={(event) => updateStep(index, { expectedResult: event.target.value })}
-              />
-              <Textarea
-                rows={2}
-                placeholder="负向用例提示，每行一个"
-                value={(step.negativeTestHints ?? []).join('\n')}
-                onChange={(event) => updateStep(index, { negativeTestHints: textArrayValue(event.target.value) })}
-              />
-            </div>
-          )
-        })}
-        {issues.length ? (
-          <div className="space-y-1 rounded-md bg-amber-50 p-2 text-xs text-amber-700">
-            {issues.map((issue) => <div key={issue}>{issue}</div>)}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-function createUiStepId() {
-  const uuid =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
-  return `ui_step_${uuid.replaceAll('-', '').slice(0, 12)}`
 }
 
 function SemanticProfileEditor({

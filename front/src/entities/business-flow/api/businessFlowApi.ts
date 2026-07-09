@@ -5,6 +5,10 @@ import {
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
 } from '@/entities/business-flow/model/bpmn'
+import {
+  normalizeTaskUiContext,
+  taskUiTaskName,
+} from '@/entities/business-flow/model/taskUi'
 import type {
   BpmnEdgeProfile,
   BpmnNodeProfile,
@@ -400,13 +404,19 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     bpmnCallActivityRef: node.bpmn_call_activity_ref,
     propertiesJson: node.properties_json,
   })
+  const taskUiJson = bpmnProfile.bpmnElementType === 'TASK'
+    ? normalizeTaskUiContext(node.task_ui_json, { taskName: node.title })
+    : node.task_ui_json ?? null
+  const title = bpmnProfile.bpmnElementType === 'TASK'
+    ? taskUiTaskName(taskUiJson, node.title)
+    : node.title
   return {
     id: node.id,
     componentVersionId: node.component_version_id,
     nodeKey: node.node_key,
     nodeType: node.node_type,
     ...bpmnProfile,
-    title: node.title,
+    title,
     description: node.description ?? null,
     actor: node.actor ?? null,
     businessRule: node.business_rule ?? null,
@@ -415,7 +425,7 @@ function normalizeSwimlaneComponentNode(node: ApiSwimlaneComponentNode): Swimlan
     semanticProfileKey: node.semantic_profile_key ?? null,
     semanticProfileVersion: node.semantic_profile_version ?? null,
     semanticPayloadJson: node.semantic_payload_json ?? {},
-    taskUiJson: node.task_ui_json ?? null,
+    taskUiJson,
     processContainerJson: node.process_container_json ?? null,
     containerNodeKey: node.container_node_key ?? null,
     position: { x: Number(node.position_x), y: Number(node.position_y) },
@@ -515,6 +525,12 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         bpmnCallActivityRef: node.bpmnCallActivityRef,
         propertiesJson: node.propertiesJson,
       })
+      const taskUiJson = bpmnProfile.bpmnElementType === 'TASK'
+        ? normalizeTaskUiContext(node.taskUiJson, { taskName: node.title })
+        : node.taskUiJson ?? null
+      const title = bpmnProfile.bpmnElementType === 'TASK'
+        ? taskUiTaskName(taskUiJson, node.title)
+        : node.title
       return {
         node_key: node.nodeKey,
         node_type: node.nodeType,
@@ -525,16 +541,16 @@ function denormalizeSwimlaneVersionBody(body: SaveSwimlaneComponentVersionBody) 
         bpmn_gateway_type: bpmnProfile.bpmnGatewayType,
         bpmn_subprocess_kind: bpmnProfile.bpmnSubProcessKind,
         bpmn_call_activity_ref: bpmnProfile.bpmnCallActivityRef,
-        title: node.title,
-        description: node.description,
-        actor: node.actor,
-        business_rule: node.businessRule,
-        input_summary: node.inputSummary,
-        output_summary: node.outputSummary,
+        title,
+        description: bpmnProfile.bpmnElementType === 'TASK' ? null : node.description,
+        actor: bpmnProfile.bpmnElementType === 'TASK' ? null : node.actor,
+        business_rule: bpmnProfile.bpmnElementType === 'TASK' ? null : node.businessRule,
+        input_summary: bpmnProfile.bpmnElementType === 'TASK' ? null : node.inputSummary,
+        output_summary: bpmnProfile.bpmnElementType === 'TASK' ? null : node.outputSummary,
         semantic_profile_key: node.semanticProfileKey,
         semantic_profile_version: node.semanticProfileVersion,
         semantic_payload_json: node.semanticPayloadJson ?? {},
-        task_ui_json: node.taskUiJson ?? {},
+        task_ui_json: taskUiJson ?? {},
         process_container_json: node.processContainerJson ?? {},
         container_node_key: node.containerNodeKey ?? null,
         position_x: node.position.x,
@@ -633,6 +649,12 @@ function normalizeBusinessFlowEditorState(
         bpmnCallActivityRef: node.bpmn_call_activity_ref,
         propertiesJson: node.properties_json,
       })
+      const taskUiJson = bpmnProfile.bpmnElementType === 'TASK'
+        ? normalizeTaskUiContext(node.task_ui_json, { taskName: node.title })
+        : node.task_ui_json ?? null
+      const title = bpmnProfile.bpmnElementType === 'TASK'
+        ? taskUiTaskName(taskUiJson, node.title)
+        : node.title
       return {
         kind: 'BUSINESS_FLOW_NODE',
         businessFlowId: state.business_flow_id,
@@ -642,14 +664,14 @@ function normalizeBusinessFlowEditorState(
         originComponentNodeKey: node.origin_component_node_key ?? null,
         nodeType: node.node_type,
         ...bpmnProfile,
-        title: node.title,
+        title,
         description: node.description ?? null,
         actor: node.actor ?? null,
         businessRule: node.business_rule ?? null,
         semanticProfileKey: node.semantic_profile_key ?? null,
         semanticProfileVersion: node.semantic_profile_version ?? null,
         semanticPayloadJson: node.semantic_payload_json ?? {},
-        taskUiJson: node.task_ui_json ?? null,
+        taskUiJson,
         processContainerJson: node.process_container_json ?? null,
         containerNodeKey: node.container_node_key ?? null,
         erRefs: (node.er_refs ?? []).map((ref) => ({

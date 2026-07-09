@@ -200,16 +200,6 @@ def business_flow_quality_issues(
                     "message": "已选择业务语义 Profile，但任务缺少操作类型。",
                 }
             )
-        if profile_key and element_type == "TASK" and not refs.get(node_key):
-            issues.append(
-                {
-                    "severity": "warning",
-                    "targetType": "NODE",
-                    "targetKey": node_key,
-                    "code": "MISSING_ER_REF",
-                    "message": "关键业务任务缺少 ER 读写/检查绑定，Agent 生成用例可能不完整。",
-                }
-            )
         if element_type in {"DATA_OBJECT", "DATA_INPUT", "DATA_OUTPUT", "DATA_STORE"}:
             if not payload.get("businessObject") and not refs.get(node_key):
                 issues.append(

@@ -34,31 +34,66 @@ export type BusinessFlowErRefType = 'READ' | 'CREATE' | 'UPDATE' | 'DELETE' | 'C
 export type BusinessFlowJson = Record<string, unknown>
 
 export type TaskUiElementType =
+  | 'ContextMenu'
   | 'Button'
-  | 'Input'
-  | 'Select'
   | 'Checkbox'
-  | 'Radio'
-  | 'DatePicker'
-  | 'Upload'
   | 'DataTable'
-  | 'Dialog'
+  | 'DatePicker'
+  | 'Input'
   | 'Label'
+  | 'RadioGroup'
+  | 'Select'
+  | 'Textarea'
 
 export type TaskUiActionType =
   | 'click'
+  | 'doubleClick'
+  | 'rightClick'
   | 'input'
+  | 'clear'
   | 'select'
   | 'check'
   | 'uncheck'
-  | 'upload'
+  | 'toggle'
+  | 'selectDate'
+  | 'selectRange'
+  | 'search'
+  | 'filter'
+  | 'sort'
+  | 'selectRow'
   | 'assertVisible'
   | 'assertText'
-  | 'assertData'
-  | 'wait'
+  | 'assertValue'
+  | 'assertCell'
+  | 'selectMenuItem'
+
+export type TaskUiTaskType = 'userTask' | 'serviceTask' | 'manualTask'
+
+export type TaskUiValueSource = 'fixed' | 'testData' | 'previousStep' | 'apiResponse'
+
+export type TaskUiOption = {
+  label: string
+  value: string
+  businessMeaning?: string | null
+}
+
+export type TaskUiColumn = {
+  title: string
+  field: string
+}
+
+export type TaskUiAssertion =
+  | string
+  | {
+      assertionType?: string | null
+      target?: string | null
+      expected?: unknown
+      description?: string | null
+    }
 
 export type TaskUiPageContext = {
   pageName?: string | null
+  urlPattern?: string | null
   routePattern?: string | null
   moduleName?: string | null
 }
@@ -69,17 +104,92 @@ export type TaskUiOperationStep = {
   elementType: TaskUiElementType | string
   elementName: string
   actionType: TaskUiActionType | string
+  elementLocationHint?: string | null
   value?: unknown
+  valueSource?: TaskUiValueSource | string | null
+  required?: boolean
   businessMeaning?: string | null
+  expectedState?: string | null
   expectedResult?: string | null
+  screenshotRequired?: boolean
+  waitCondition?: string | null
   negativeTestHints?: string[]
+  buttonText?: string | null
+  buttonRole?: string | null
+  disabledCondition?: string | null
+  confirmRequired?: boolean
+  loadingExpected?: boolean
+  inputType?: string | null
+  placeholder?: string | null
+  minLength?: number | null
+  maxLength?: number | null
+  pattern?: string | null
+  defaultValue?: unknown
+  testValues?: string[]
+  invalidValues?: string[]
+  clearBeforeInput?: boolean
+  rows?: number | null
+  allowLineBreak?: boolean
+  sensitive?: boolean
+  options?: TaskUiOption[]
+  multiple?: boolean
+  searchable?: boolean
+  clearable?: boolean
+  selectedValue?: unknown
+  disabledOptions?: string[]
+  optionSource?: string | null
+  optionApiRef?: string | null
+  layout?: string | null
+  checked?: boolean
+  requiredToSubmit?: boolean
+  labelText?: string | null
+  checkedMeaning?: string | null
+  uncheckedMeaning?: string | null
+  pickerType?: string | null
+  dateFormat?: string | null
+  minDate?: string | null
+  maxDate?: string | null
+  disabledDates?: string[]
+  presets?: TaskUiOption[]
+  selectedDate?: string | null
+  selectedRange?: { start?: string | null; end?: string | null } | null
+  timezone?: string | null
+  columns?: TaskUiColumn[]
+  rowKey?: string | null
+  pagination?: boolean
+  sortableColumns?: string[]
+  filterableColumns?: string[]
+  selectable?: boolean
+  rowActions?: TaskUiOption[]
+  expectedRows?: Record<string, unknown>[]
+  assertionRules?: string[]
+  triggerElement?: string | null
+  triggerAction?: string | null
+  menuItems?: TaskUiOption[]
+  selectedMenuItem?: string | null
+  disabledMenuItems?: string[]
+  visibleCondition?: string | null
+  associatedControl?: string | null
+  requiredMark?: boolean
+  accessibilityName?: string | null
+  expectedText?: string | null
 }
 
 export type TaskUiContext = {
+  taskName?: string | null
+  taskType?: TaskUiTaskType | string | null
+  actor?: string | null
+  businessIntent?: string | null
+  businessRules?: string[]
+  preconditions?: string[]
+  postconditions?: string[]
   page?: TaskUiPageContext | null
   uiSteps: TaskUiOperationStep[]
+  inputDataRefs?: string[]
+  outputDataRefs?: string[]
   expectedResults?: string[]
-  assertions?: string[]
+  assertions?: TaskUiAssertion[]
+  mockRequirements?: string[]
 }
 
 export type ProcessContainerMode = 'embedded' | 'reusableCall'

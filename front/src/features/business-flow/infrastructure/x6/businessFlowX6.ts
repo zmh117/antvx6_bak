@@ -22,6 +22,9 @@ import {
   mergeBpmnIntoProperties,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
+  normalizeTaskUiContext,
+  taskUiEmpty,
+  taskUiTaskName,
 } from '@/entities/business-flow'
 import type {
   ComponentEditorEdgeDraft,
@@ -730,6 +733,22 @@ export function shapeName(type: BusinessFlowNodeType, profile?: BpmnNodeProfile 
   return shapeNameForProfile(profile ?? normalizeBpmnNodeProfile({ nodeType: type }))
 }
 
+function taskUiForProfile(profile: BpmnNodeProfile, value: TaskUiContext | null | undefined, fallbackTitle: string) {
+  return profile.bpmnElementType === 'TASK'
+    ? normalizeTaskUiContext(value ?? taskUiEmpty(fallbackTitle), { taskName: fallbackTitle })
+    : value ?? null
+}
+
+function titleForProfile(profile: BpmnNodeProfile, taskUi: TaskUiContext | null | undefined, fallbackTitle: string) {
+  return profile.bpmnElementType === 'TASK'
+    ? taskUiTaskName(taskUi, fallbackTitle || bpmnNodeTitle(profile))
+    : fallbackTitle || bpmnNodeTitle(profile)
+}
+
+function legacyTaskTextField<T>(profile: BpmnNodeProfile, value: T | null | undefined) {
+  return profile.bpmnElementType === 'TASK' ? null : value ?? null
+}
+
 export function graphPointFromEvent(graph: Graph, event: DragEvent): Point {
   const client = graph.clientToLocal({ x: event.clientX, y: event.clientY })
   return { x: client.x, y: client.y }
@@ -748,6 +767,8 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
     propertiesJson: draft.propertiesJson,
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
+  const taskUiJson = taskUiForProfile(bpmnProfile, draft.taskUiJson, draft.title)
+  const title = titleForProfile(bpmnProfile, taskUiJson, draft.title)
   return graph.addNode({
     id: draft.nodeKey,
     shape: shapeName(nodeType, bpmnProfile),
@@ -755,7 +776,7 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
     y: draft.position.y,
     width: draft.size.width,
     height: draft.size.height,
-    attrs: nodeAttrs(bpmnProfile, draft.title),
+    attrs: nodeAttrs(bpmnProfile, title),
     ports: NODE_PORTS,
     data: {
       boundedContext: 'business-flow',
@@ -763,16 +784,16 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       nodeKey: draft.nodeKey,
       nodeType,
       ...bpmnProfile,
-      title: draft.title,
-      description: draft.description ?? null,
-      actor: draft.actor ?? null,
-      businessRule: draft.businessRule ?? null,
-      inputSummary: draft.inputSummary ?? null,
-      outputSummary: draft.outputSummary ?? null,
+      title,
+      description: legacyTaskTextField(bpmnProfile, draft.description),
+      actor: legacyTaskTextField(bpmnProfile, draft.actor),
+      businessRule: legacyTaskTextField(bpmnProfile, draft.businessRule),
+      inputSummary: legacyTaskTextField(bpmnProfile, draft.inputSummary),
+      outputSummary: legacyTaskTextField(bpmnProfile, draft.outputSummary),
       semanticProfileKey: draft.semanticProfileKey ?? null,
       semanticProfileVersion: draft.semanticProfileVersion ?? null,
       semanticPayloadJson: draft.semanticPayloadJson ?? {},
-      taskUiJson: draft.taskUiJson ?? null,
+      taskUiJson,
       processContainerJson: null,
       containerNodeKey: null,
       erRefs: draft.erRefs ?? [],
@@ -796,6 +817,8 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
     propertiesJson: record.propertiesJson,
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
+  const taskUiJson = taskUiForProfile(bpmnProfile, record.taskUiJson, record.title)
+  const title = titleForProfile(bpmnProfile, taskUiJson, record.title)
   return graph.addNode({
     id: record.nodeKey,
     shape: shapeName(nodeType, bpmnProfile),
@@ -803,7 +826,7 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
     y: record.position.y,
     width: record.size.width,
     height: record.size.height,
-    attrs: nodeAttrs(bpmnProfile, record.title),
+    attrs: nodeAttrs(bpmnProfile, title),
     ports: NODE_PORTS,
     data: {
       boundedContext: 'business-flow',
@@ -815,16 +838,16 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       originComponentNodeKey: record.originComponentNodeKey,
       nodeType,
       ...bpmnProfile,
-      title: record.title,
-      description: record.description ?? null,
-      actor: record.actor ?? null,
-      businessRule: record.businessRule ?? null,
-      inputSummary: record.inputSummary ?? null,
-      outputSummary: record.outputSummary ?? null,
+      title,
+      description: legacyTaskTextField(bpmnProfile, record.description),
+      actor: legacyTaskTextField(bpmnProfile, record.actor),
+      businessRule: legacyTaskTextField(bpmnProfile, record.businessRule),
+      inputSummary: legacyTaskTextField(bpmnProfile, record.inputSummary),
+      outputSummary: legacyTaskTextField(bpmnProfile, record.outputSummary),
       semanticProfileKey: record.semanticProfileKey ?? null,
       semanticProfileVersion: record.semanticProfileVersion ?? null,
       semanticPayloadJson: record.semanticPayloadJson ?? {},
-      taskUiJson: record.taskUiJson ?? null,
+      taskUiJson,
       processContainerJson: null,
       containerNodeKey: null,
       erRefs: record.erRefs ?? [],
@@ -1195,6 +1218,8 @@ function upsertFlowNodeCell(
     propertiesJson: node.propertiesJson,
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
+  const taskUiJson = taskUiForProfile(bpmnProfile, node.taskUiJson, node.title)
+  const title = titleForProfile(bpmnProfile, taskUiJson, node.title)
   const expectedShape = shapeName(nodeType, bpmnProfile)
   const existing = graph.getCellById(node.nodeKey)
   if (
@@ -1216,7 +1241,7 @@ function upsertFlowNodeCell(
     )
   }
   existing.resize(node.size.width, node.size.height)
-  existing.attr(nodeAttrs(bpmnProfile, node.title))
+  existing.attr(nodeAttrs(bpmnProfile, title))
   existing.setData(
     {
       ...readCellData(existing),
@@ -1230,16 +1255,16 @@ function upsertFlowNodeCell(
       originComponentNodeKey: node.originComponentNodeKey,
       nodeType,
       ...bpmnProfile,
-      title: node.title,
-      description: node.description ?? null,
-      actor: node.actor ?? null,
-      businessRule: node.businessRule ?? null,
-      inputSummary: node.inputSummary ?? null,
-      outputSummary: node.outputSummary ?? null,
+      title,
+      description: legacyTaskTextField(bpmnProfile, node.description),
+      actor: legacyTaskTextField(bpmnProfile, node.actor),
+      businessRule: legacyTaskTextField(bpmnProfile, node.businessRule),
+      inputSummary: legacyTaskTextField(bpmnProfile, node.inputSummary),
+      outputSummary: legacyTaskTextField(bpmnProfile, node.outputSummary),
       semanticProfileKey: node.semanticProfileKey ?? null,
       semanticProfileVersion: node.semanticProfileVersion ?? null,
       semanticPayloadJson: node.semanticPayloadJson ?? {},
-      taskUiJson: node.taskUiJson ?? null,
+      taskUiJson,
       processContainerJson: null,
       erRefs: node.erRefs ?? [],
       styleJson: node.styleJson ?? null,
@@ -1543,20 +1568,23 @@ export function componentDraftFromGraph(graph: Graph) {
       const bpmnProfile = nodeProfileFromData(data)
       const position = nodePositionForStorage(node)
       const size = node.size()
+      const fallbackTitle = data.title ?? String(node.attr('label/text') ?? '任务')
+      const taskUiJson = taskUiForProfile(bpmnProfile, data.taskUiJson, fallbackTitle)
+      const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle)
       return {
         nodeKey: data.nodeKey ?? node.id,
         nodeType: legacyNodeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
-        title: data.title ?? String(node.attr('label/text') ?? '任务'),
-        description: data.description ?? null,
-        actor: data.actor ?? null,
-        businessRule: data.businessRule ?? null,
-        inputSummary: data.inputSummary ?? null,
-        outputSummary: data.outputSummary ?? null,
+        title,
+        description: legacyTaskTextField(bpmnProfile, data.description),
+        actor: legacyTaskTextField(bpmnProfile, data.actor),
+        businessRule: legacyTaskTextField(bpmnProfile, data.businessRule),
+        inputSummary: legacyTaskTextField(bpmnProfile, data.inputSummary),
+        outputSummary: legacyTaskTextField(bpmnProfile, data.outputSummary),
         semanticProfileKey: data.semanticProfileKey ?? null,
         semanticProfileVersion: data.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? {},
-        taskUiJson: data.taskUiJson ?? null,
+        taskUiJson,
         processContainerJson: null,
         containerNodeKey: null,
         erRefs: data.erRefs ?? [],
@@ -1653,6 +1681,9 @@ export function flowDraftFromGraph(
       const position = nodePositionForStorage(node)
       const size = node.size()
       const laneKey = data.laneInstanceKey ?? laneKeyForNodeCell(node)
+      const fallbackTitle = data.title ?? String(node.attr('label/text') ?? previousNode?.title ?? '任务')
+      const taskUiJson = taskUiForProfile(bpmnProfile, data.taskUiJson ?? previousNode?.taskUiJson, fallbackTitle)
+      const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle)
       nodeLaneKey.set(node.id, laneKey)
       return {
         kind: 'BUSINESS_FLOW_NODE' as const,
@@ -1663,19 +1694,19 @@ export function flowDraftFromGraph(
         originComponentNodeKey: data.originComponentNodeKey ?? previousNode?.originComponentNodeKey ?? null,
         nodeType: legacyNodeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
-        title: data.title ?? String(node.attr('label/text') ?? '任务'),
-        description: data.description ?? null,
-        actor: data.actor ?? null,
-        businessRule: data.businessRule ?? null,
+        title,
+        description: legacyTaskTextField(bpmnProfile, data.description),
+        actor: legacyTaskTextField(bpmnProfile, data.actor),
+        businessRule: legacyTaskTextField(bpmnProfile, data.businessRule),
         erRefs: data.erRefs ?? [],
         position,
         size,
-        inputSummary: data.inputSummary ?? previousNode?.inputSummary ?? null,
-        outputSummary: data.outputSummary ?? previousNode?.outputSummary ?? null,
+        inputSummary: legacyTaskTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
+        outputSummary: legacyTaskTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
         semanticProfileKey: data.semanticProfileKey ?? previousNode?.semanticProfileKey ?? null,
         semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
-        taskUiJson: data.taskUiJson ?? previousNode?.taskUiJson ?? null,
+        taskUiJson,
         processContainerJson: null,
         containerNodeKey: null,
         isOverridden: true,
@@ -1812,6 +1843,9 @@ export function flowNodeRecordFromCell(
   const laneKey = data.laneInstanceKey ?? laneKeyForNodeCell(node)
   const position = nodePositionForStorage(node)
   const size = node.size()
+  const fallbackTitle = data.title ?? String(node.attr('label/text') ?? previousNode?.title ?? '任务')
+  const taskUiJson = taskUiForProfile(bpmnProfile, data.taskUiJson ?? previousNode?.taskUiJson, fallbackTitle)
+  const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle)
   return {
     kind: 'BUSINESS_FLOW_NODE',
     businessFlowId: canvas.businessFlowId,
@@ -1821,19 +1855,19 @@ export function flowNodeRecordFromCell(
     originComponentNodeKey: data.originComponentNodeKey ?? previousNode?.originComponentNodeKey ?? null,
     nodeType: legacyNodeTypeForBpmn(bpmnProfile),
     ...bpmnProfile,
-    title: data.title ?? String(node.attr('label/text') ?? '任务'),
-    description: data.description ?? null,
-    actor: data.actor ?? null,
-    businessRule: data.businessRule ?? null,
+    title,
+    description: legacyTaskTextField(bpmnProfile, data.description),
+    actor: legacyTaskTextField(bpmnProfile, data.actor),
+    businessRule: legacyTaskTextField(bpmnProfile, data.businessRule),
     erRefs: data.erRefs ?? previousNode?.erRefs ?? [],
     position,
     size,
-    inputSummary: data.inputSummary ?? previousNode?.inputSummary ?? null,
-    outputSummary: data.outputSummary ?? previousNode?.outputSummary ?? null,
+    inputSummary: legacyTaskTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
+    outputSummary: legacyTaskTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
     semanticProfileKey: data.semanticProfileKey ?? previousNode?.semanticProfileKey ?? null,
     semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
     semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
-    taskUiJson: data.taskUiJson ?? previousNode?.taskUiJson ?? null,
+    taskUiJson,
     processContainerJson: null,
     containerNodeKey: null,
     isOverridden: true,

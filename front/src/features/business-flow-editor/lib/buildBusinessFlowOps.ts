@@ -5,6 +5,10 @@ import type {
   BusinessFlowNodeRecord,
   LocalBusinessFlowCanvas,
 } from '@/entities/business-flow'
+import {
+  normalizeTaskUiContext,
+  taskUiTaskName,
+} from '@/entities/business-flow'
 import type { flowDraftFromGraph } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 
 type FlowDraft = ReturnType<typeof flowDraftFromGraph>
@@ -45,6 +49,9 @@ function nodePatch(
   draft: FlowDraft,
   node: BusinessFlowNodeRecord,
 ): Record<string, unknown> {
+  const isTask = node.bpmnElementType === 'TASK'
+  const taskUiJson = isTask ? normalizeTaskUiContext(node.taskUiJson, { taskName: node.title }) : node.taskUiJson ?? {}
+  const title = isTask ? taskUiTaskName(taskUiJson, node.title) : node.title
   return {
     laneInstanceKey: laneKeyForNode(draft, node),
     nodeType: node.nodeType,
@@ -55,20 +62,20 @@ function nodePatch(
     bpmnGatewayType: node.bpmnGatewayType,
     bpmnSubProcessKind: node.bpmnSubProcessKind,
     bpmnCallActivityRef: node.bpmnCallActivityRef,
-    title: node.title,
+    title,
     x: node.position.x,
     y: node.position.y,
     width: node.size.width,
     height: node.size.height,
-    description: node.description,
-    actor: node.actor,
-    businessRule: node.businessRule,
-    inputSummary: node.inputSummary,
-    outputSummary: node.outputSummary,
+    description: isTask ? null : node.description,
+    actor: isTask ? null : node.actor,
+    businessRule: isTask ? null : node.businessRule,
+    inputSummary: isTask ? null : node.inputSummary,
+    outputSummary: isTask ? null : node.outputSummary,
     semanticProfileKey: node.semanticProfileKey ?? null,
     semanticProfileVersion: node.semanticProfileVersion ?? null,
     semanticPayloadJson: node.semanticPayloadJson ?? {},
-    taskUiJson: node.taskUiJson ?? {},
+    taskUiJson,
     processContainerJson: node.processContainerJson ?? {},
     containerNodeKey: node.containerNodeKey ?? null,
     styleJson: node.styleJson ?? {},

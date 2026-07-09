@@ -8,6 +8,7 @@ import type {
   TaskUiContext,
 } from '@/entities/business-flow'
 import {
+  normalizeTaskUiContext,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
 } from '@/entities/business-flow'
@@ -99,7 +100,9 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       semanticProfileKey: data.semanticProfileKey ?? '',
       semanticProfileVersion: data.semanticProfileVersion ?? null,
       semanticPayloadJson: data.semanticPayloadJson ?? {},
-      taskUiJson: data.taskUiJson ?? null,
+      taskUiJson: bpmnProfile.bpmnElementType === 'TASK'
+        ? normalizeTaskUiContext(data.taskUiJson, { taskName: data.title ?? String(cell.attr('label/text') ?? '') })
+        : data.taskUiJson ?? null,
       processContainerJson: data.processContainerJson ?? null,
       containerNodeKey: data.containerNodeKey ?? null,
       bpmnProfile,

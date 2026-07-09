@@ -75,10 +75,14 @@ def _semantic_line(prefix: str, item: dict[str, Any]) -> str:
 
 
 def _task_ui_line(node: dict[str, Any]) -> str:
-    payload = task_ui_payload(node.get("task_ui_json"))
+    payload = task_ui_payload(node.get("task_ui_json"), fallback_task_name=node.get("title"))
     if not payload:
         return ""
     return f"  Task UI：{_json_summary(payload)}"
+
+
+def _is_task_node(node: dict[str, Any]) -> bool:
+    return node.get("bpmn_element_type") == "TASK"
 
 
 def _flow_paths(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, list[Any]]:
@@ -183,6 +187,41 @@ def _strip_legacy_process_containers(
         and str(edge.get("target_node_key") or "") not in removed_keys
     ]
     return clean_nodes, clean_edges
+
+
+def _step_context_item(
+    node: dict[str, Any],
+    refs_by_node_key: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    node_key = node.get("node_key") or ""
+    is_task = _is_task_node(node)
+    task_ui = task_ui_payload(node.get("task_ui_json"), fallback_task_name=node.get("title")) if is_task else {}
+    return {
+        "stepKey": node.get("node_key"),
+        "title": task_ui.get("taskName") if is_task else node.get("title"),
+        "nodeType": node.get("node_type"),
+        "bpmn": {
+            "elementType": node.get("bpmn_element_type"),
+            "eventKind": node.get("bpmn_event_kind"),
+            "taskType": node.get("bpmn_task_type"),
+            "gatewayType": node.get("bpmn_gateway_type"),
+            "subProcessKind": node.get("bpmn_subprocess_kind"),
+        },
+        "lane": node.get("lane_name"),
+        "actor": None if is_task else node.get("actor"),
+        "businessRule": None if is_task else node.get("business_rule"),
+        "inputSummary": None if is_task else node.get("input_summary"),
+        "outputSummary": None if is_task else node.get("output_summary"),
+        "semantic": {
+            "profileKey": node.get("semantic_profile_key"),
+            "profileVersion": node.get("semantic_profile_version"),
+            "payload": semantic_payload(node.get("semantic_payload_json")),
+        },
+        "erRefs": [] if is_task else refs_by_node_key.get(str(node_key), []),
+        "taskUi": task_ui,
+        "processContainer": process_container_payload(node.get("process_container_json")),
+        "containerNodeKey": node.get("container_node_key"),
+    }
 
 
 def enrich_relation_documents(
@@ -293,12 +332,12 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                         else ""
                     ),
                     f"  泳道：{node.get('lane_name') or ''}" if node.get("lane_name") else "",
-                    f"  角色：{node.get('actor') or ''}" if node.get("actor") else "",
+                    f"  角色：{node.get('actor') or ''}" if node.get("actor") and not _is_task_node(node) else "",
                     f"  规则：{node.get('business_rule') or ''}"
-                    if node.get("business_rule")
+                    if node.get("business_rule") and not _is_task_node(node)
                     else "",
-                    f"  输入：{node.get('input_summary') or ''}" if node.get("input_summary") else "",
-                    f"  输出：{node.get('output_summary') or ''}" if node.get("output_summary") else "",
+                    f"  输入：{node.get('input_summary') or ''}" if node.get("input_summary") and not _is_task_node(node) else "",
+                    f"  输出：{node.get('output_summary') or ''}" if node.get("output_summary") and not _is_task_node(node) else "",
                     _semantic_line("业务语义", node),
                     _task_ui_line(node),
                 ],
@@ -392,7 +431,12 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
         nodes, edges = _strip_legacy_process_containers(nodes, edges)
         refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
         node_keys = {node.get("node_key") for node in nodes}
-        refs = [ref for ref in refs if ref.get("node_key") in node_keys]
+        task_node_keys = {node.get("node_key") for node in nodes if _is_task_node(node)}
+        refs = [
+            ref
+            for ref in refs
+            if ref.get("node_key") in node_keys and ref.get("node_key") not in task_node_keys
+        ]
         refs_by_node_key: dict[str, list[dict[str, Any]]] = {}
         for ref in refs:
             refs_by_node_key.setdefault(ref["node_key"], []).append(ref)
@@ -426,35 +470,7 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                 if item.get("semantic_profile_key")
             }
         )
-        step_context = [
-            {
-                "stepKey": node.get("node_key"),
-                "title": node.get("title"),
-                "nodeType": node.get("node_type"),
-                "bpmn": {
-                    "elementType": node.get("bpmn_element_type"),
-                    "eventKind": node.get("bpmn_event_kind"),
-                    "taskType": node.get("bpmn_task_type"),
-                    "gatewayType": node.get("bpmn_gateway_type"),
-                    "subProcessKind": node.get("bpmn_subprocess_kind"),
-                },
-                "lane": node.get("lane_name"),
-                "actor": node.get("actor"),
-                "businessRule": node.get("business_rule"),
-                "inputSummary": node.get("input_summary"),
-                "outputSummary": node.get("output_summary"),
-                "semantic": {
-                    "profileKey": node.get("semantic_profile_key"),
-                    "profileVersion": node.get("semantic_profile_version"),
-                    "payload": semantic_payload(node.get("semantic_payload_json")),
-                },
-                "erRefs": refs_by_node_key.get(node.get("node_key") or "", []),
-                "taskUi": task_ui_payload(node.get("task_ui_json")),
-                "processContainer": process_container_payload(node.get("process_container_json")),
-                "containerNodeKey": node.get("container_node_key"),
-            }
-            for node in nodes
-        ]
+        step_context = [_step_context_item(node, refs_by_node_key) for node in nodes]
         edge_context = [
             {
                 "edgeKey": edge.get("edge_key"),
@@ -500,7 +516,7 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                         "businessRule": node.get("business_rule"),
                     }
                     for node in nodes
-                    if node.get("business_rule")
+                    if node.get("business_rule") and not _is_task_node(node)
                 ],
                 "qualityIssues": quality_issues,
                 **paths,
@@ -562,7 +578,12 @@ def fetch_business_flow_documents(
         edges = repo.fetch_swimlane_flow_edges(cur, flow["id"])
         nodes, edges = _strip_legacy_process_containers(nodes, edges)
         node_keys = {node.get("node_key") for node in nodes}
-        refs = [ref for ref in refs if ref.get("node_key") in node_keys]
+        task_node_keys = {node.get("node_key") for node in nodes if _is_task_node(node)}
+        refs = [
+            ref
+            for ref in refs
+            if ref.get("node_key") in node_keys and ref.get("node_key") not in task_node_keys
+        ]
         searchable = json.dumps(
             {
                 "code": flow["code"],
