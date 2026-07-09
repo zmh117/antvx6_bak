@@ -1,6 +1,7 @@
 import type {
   BpmnEdgeProfile,
   BpmnNodeProfile,
+  BpmnSemanticJson,
   BusinessFlowEdgeRecord,
   BusinessFlowEdgeType,
   BusinessFlowLaneInstance,
@@ -27,6 +28,9 @@ import {
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
   taskUiEmpty,
+  emptyBpmnSemantic,
+  edgeSemanticType,
+  nodeSemanticType,
 } from '@/entities/business-flow'
 
 const STORAGE_KEY = 'antvx6:business-flow-demo:v1'
@@ -58,6 +62,7 @@ export type ComponentEditorNodeDraft = {
   semanticProfileKey?: string | null
   semanticProfileVersion?: number | null
   semanticPayloadJson?: Record<string, unknown> | null
+  bpmnSemanticJson?: BpmnSemanticJson | null
   taskUiJson?: TaskUiContext | null
   processContainerJson?: ProcessContainerConfig | null
   containerNodeKey?: string | null
@@ -85,6 +90,7 @@ export type ComponentEditorEdgeDraft = {
   semanticProfileKey?: string | null
   semanticProfileVersion?: number | null
   semanticPayloadJson?: Record<string, unknown> | null
+  bpmnSemanticJson?: BpmnSemanticJson | null
   styleJson?: Record<string, unknown> | null
   propertiesJson?: Record<string, unknown> | null
 }
@@ -134,6 +140,7 @@ function makeComponentNode(
     propertiesJson: extra?.propertiesJson,
   })
   const nextNodeType = extra?.nodeType ?? legacyNodeTypeForBpmn(bpmnProfile)
+  const semanticType = nodeSemanticType(bpmnProfile)
   return {
     id: createLocalId('scn'),
     componentVersionId,
@@ -150,6 +157,9 @@ function makeComponentNode(
     semanticProfileKey: extra?.semanticProfileKey ?? null,
     semanticProfileVersion: extra?.semanticProfileVersion ?? null,
     semanticPayloadJson: extra?.semanticPayloadJson ?? {},
+    bpmnSemanticJson: semanticType
+      ? extra?.bpmnSemanticJson ?? emptyBpmnSemantic(semanticType, extra?.title ?? title)
+      : null,
     taskUiJson: extra?.taskUiJson ?? (bpmnProfile.bpmnElementType === 'TASK' ? taskUiEmpty(extra?.title ?? title) : null),
     processContainerJson: extra?.processContainerJson ?? null,
     containerNodeKey: extra?.containerNodeKey ?? null,
@@ -168,6 +178,7 @@ function makeComponentEdge(
   label?: string | null,
 ): SwimlaneComponentEdge {
   const bpmnProfile = normalizeBpmnEdgeProfile({ edgeType: 'SEQUENCE' })
+  const semanticType = edgeSemanticType(bpmnProfile)
   return {
     id: createLocalId('sce'),
     componentVersionId,
@@ -184,6 +195,7 @@ function makeComponentEdge(
     semanticProfileKey: null,
     semanticProfileVersion: null,
     semanticPayloadJson: {},
+    bpmnSemanticJson: emptyBpmnSemantic(semanticType, label ?? ''),
     styleJson: null,
     propertiesJson: mergeBpmnIntoProperties(null, bpmnProfile),
   }

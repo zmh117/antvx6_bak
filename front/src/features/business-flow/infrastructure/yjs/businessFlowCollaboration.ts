@@ -3,6 +3,12 @@ import { Edge, Graph, Node, type Cell } from '@antv/x6'
 import * as Y from 'yjs'
 
 import type {
+  BpmnEventKind,
+  BpmnFlowType,
+  BpmnGatewayType,
+  BpmnSequenceFlowKind,
+  BpmnSubProcessKind,
+  BusinessFlowEdgeType,
   BusinessFlowEdgeRecord,
   BusinessFlowNodeErRef,
   BusinessFlowNodeRecord,
@@ -10,6 +16,13 @@ import type {
   LocalBusinessFlowCanvas,
 } from '@/entities/business-flow'
 import {
+  bpmnSemanticDisplayName,
+  edgeSemanticType,
+  isDataBpmnElement,
+  nodeSemanticType,
+  normalizeBpmnEdgeProfile,
+  normalizeBpmnNodeProfile,
+  normalizeBpmnSemantic,
   normalizeTaskUiContext,
   taskUiTaskName,
 } from '@/entities/business-flow'
@@ -30,6 +43,7 @@ import {
   type BusinessFlowCollabPatchEntry,
   type BusinessFlowCollabPatchPlan,
 } from '@/features/business-flow/infrastructure/yjs/businessFlowCollabPatch'
+import { patchYMapObjectFields } from '@/features/business-flow/infrastructure/yjs/yMapFields'
 import { BUSINESS_FLOW_INCREMENTAL_COLLAB, COLLAB_WS_URL } from '@/shared/api/config'
 
 const LOCAL_ORIGIN = 'business-flow-x6-local'
@@ -89,20 +103,75 @@ export type BusinessFlowCollaborationOptions = {
 
 function mapObject(value: unknown): Record<string, unknown> {
   if (!value) return {}
-  if (value instanceof Y.Map) return Object.fromEntries(value.entries())
+  if (value instanceof Y.Map) {
+    return Object.fromEntries(
+      Array.from(value.entries()).map(([key, item]) => [key, materializeYValue(item)]),
+    )
+  }
   return typeof value === 'object' ? { ...(value as Record<string, unknown>) } : {}
+}
+
+function materializeYValue(value: unknown): unknown {
+  if (value instanceof Y.Map) return mapObject(value)
+  if (value instanceof Y.Array) return value.toArray().map(materializeYValue)
+  return value
 }
 
 function clearMap(map: Y.Map<unknown>) {
   Array.from(map.keys()).forEach((key) => map.delete(key))
 }
 
-function setMapObject(root: Y.Map<unknown>, key: string, value: Record<string, unknown>) {
-  const child = new Y.Map()
-  Object.entries(value).forEach(([k, v]) => {
-    if (v !== undefined) child.set(k, v)
+function setMapObject(
+  root: Y.Map<unknown>,
+  key: string,
+  value: Record<string, unknown>,
+  skipKeys?: Set<string>,
+) {
+  const current = root.get(key)
+  const child = current instanceof Y.Map ? current : new Y.Map<unknown>()
+  if (!(current instanceof Y.Map)) root.set(key, child)
+  setYMapFields(child, value, skipKeys)
+}
+
+function setYMapFields(
+  target: Y.Map<unknown>,
+  value: Record<string, unknown>,
+  skipKeys?: Set<string>,
+) {
+  const nextKeys = new Set(
+    Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .map(([key]) => key),
+  )
+  Array.from(target.keys()).forEach((key) => {
+    if (!nextKeys.has(key)) target.delete(key)
   })
-  root.set(key, child)
+  Object.entries(value).forEach(([key, item]) => {
+    if (item === undefined || skipKeys?.has(key)) return
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const current = target.get(key)
+      const nested = current instanceof Y.Map ? current : new Y.Map<unknown>()
+      if (!(current instanceof Y.Map)) target.set(key, nested)
+      setYMapFields(nested, item as Record<string, unknown>)
+      return
+    }
+    target.set(key, item)
+  })
+}
+
+function patchNestedObject(
+  root: Y.Map<unknown>,
+  recordKey: string,
+  fieldKey: string,
+  previous: Record<string, unknown>,
+  next: Record<string, unknown>,
+) {
+  const record = root.get(recordKey)
+  if (!(record instanceof Y.Map)) return
+  const current = record.get(fieldKey)
+  const nested = current instanceof Y.Map ? current : new Y.Map<unknown>()
+  if (!(current instanceof Y.Map)) record.set(fieldKey, nested)
+  patchYMapObjectFields(nested, previous, next)
 }
 
 function numberValue(value: unknown, fallback = 0) {
@@ -112,6 +181,13 @@ function numberValue(value: unknown, fallback = 0) {
 
 function stringValue(value: unknown, fallback = '') {
   return typeof value === 'string' && value ? value : fallback
+}
+
+function typedString<T extends string>(
+  value: unknown,
+  fallback?: T | null,
+): T | null | undefined {
+  return typeof value === 'string' ? value as T : fallback
 }
 
 function refSignature(ref: BusinessFlowNodeErRef | Record<string, unknown>) {
@@ -133,18 +209,18 @@ function taskUiForNode(node: Pick<BusinessFlowNodeRecord, 'bpmnElementType' | 't
     : node.taskUiJson ?? null
 }
 
-function titleForNode(node: Pick<BusinessFlowNodeRecord, 'bpmnElementType' | 'taskUiJson' | 'title'>) {
+function titleForNode(node: Pick<BusinessFlowNodeRecord, 'bpmnElementType' | 'taskUiJson' | 'title' | 'bpmnSemanticJson'>) {
   const taskUiJson = taskUiForNode(node)
   return node.bpmnElementType === 'TASK'
     ? taskUiTaskName(taskUiJson, node.title || '任务')
-    : node.title
+    : bpmnSemanticDisplayName(node.bpmnSemanticJson, node.title)
 }
 
-function legacyTaskText<T>(
-  node: Pick<BusinessFlowNodeRecord, 'bpmnElementType'>,
-  value: T | null | undefined,
+function retiredNodeText<T>(
+  _node: Pick<BusinessFlowNodeRecord, 'bpmnElementType'>,
+  _value: T | null | undefined,
 ) {
-  return node.bpmnElementType === 'TASK' ? null : value ?? null
+  return null
 }
 
 function writeLaneToDoc(
@@ -177,6 +253,7 @@ function writeNodeToDoc(
   erRefs: Y.Map<unknown>,
   laneKeyById: Map<string, string>,
   node: BusinessFlowNodeRecord,
+  previous?: BusinessFlowNodeRecord,
 ) {
   const laneInstanceKey = laneKeyById.get(node.laneInstanceId) ?? null
   const taskUiJson = taskUiForNode(node)
@@ -196,14 +273,15 @@ function writeNodeToDoc(
     bpmn_subprocess_kind: node.bpmnSubProcessKind ?? null,
     bpmn_call_activity_ref: node.bpmnCallActivityRef ?? null,
     title,
-    description: legacyTaskText(node, node.description),
-    actor: legacyTaskText(node, node.actor),
-    business_rule: legacyTaskText(node, node.businessRule),
-    input_summary: legacyTaskText(node, node.inputSummary),
-    output_summary: legacyTaskText(node, node.outputSummary),
+    description: retiredNodeText(node, node.description),
+    actor: retiredNodeText(node, node.actor),
+    business_rule: retiredNodeText(node, node.businessRule),
+    input_summary: retiredNodeText(node, node.inputSummary),
+    output_summary: retiredNodeText(node, node.outputSummary),
     semantic_profile_key: node.semanticProfileKey ?? null,
     semantic_profile_version: node.semanticProfileVersion ?? null,
     semantic_payload_json: node.semanticPayloadJson ?? {},
+    bpmn_semantic_json: node.bpmnSemanticJson ?? {},
     task_ui_json: taskUiJson ?? {},
     process_container_json: node.processContainerJson ?? {},
     container_node_key: node.containerNodeKey ?? null,
@@ -214,12 +292,21 @@ function writeNodeToDoc(
     is_overridden: node.isOverridden,
     style_json: node.styleJson ?? {},
     properties_json: node.propertiesJson ?? {},
-  })
+  }, previous ? new Set(['bpmn_semantic_json']) : undefined)
+  if (previous) {
+    patchNestedObject(
+      nodes,
+      node.nodeKey,
+      'bpmn_semantic_json',
+      (previous.bpmnSemanticJson ?? {}) as unknown as Record<string, unknown>,
+      (node.bpmnSemanticJson ?? {}) as unknown as Record<string, unknown>,
+    )
+  }
   Array.from(erRefs.keys()).forEach((key) => {
     const ref = mapObject(erRefs.get(key))
     if ((ref.node_key || ref.nodeKey) === node.nodeKey) erRefs.delete(key)
   })
-  ;(node.erRefs ?? []).forEach((ref) => {
+  ;(isDataBpmnElement(node.bpmnElementType) ? node.erRefs ?? [] : []).forEach((ref) => {
     setMapObject(erRefs, erRefKey(node.nodeKey, ref), {
       id: ref.id,
       node_key: node.nodeKey,
@@ -232,7 +319,11 @@ function writeNodeToDoc(
   })
 }
 
-function writeEdgeToDoc(edges: Y.Map<unknown>, edge: BusinessFlowEdgeRecord) {
+function writeEdgeToDoc(
+  edges: Y.Map<unknown>,
+  edge: BusinessFlowEdgeRecord,
+  previous?: BusinessFlowEdgeRecord,
+) {
   setMapObject(edges, edge.edgeKey, {
     id: edge.edgeId,
     lane_instance_id: edge.laneInstanceId ?? null,
@@ -256,11 +347,21 @@ function writeEdgeToDoc(edges: Y.Map<unknown>, edge: BusinessFlowEdgeRecord) {
     semantic_profile_key: edge.semanticProfileKey ?? null,
     semantic_profile_version: edge.semanticProfileVersion ?? null,
     semantic_payload_json: edge.semanticPayloadJson ?? {},
+    bpmn_semantic_json: edge.bpmnSemanticJson ?? {},
     origin_component_edge_key: edge.originComponentEdgeKey ?? null,
     is_overridden: edge.isOverridden,
     style_json: edge.styleJson ?? {},
     properties_json: edge.propertiesJson ?? {},
-  })
+  }, previous ? new Set(['bpmn_semantic_json']) : undefined)
+  if (previous) {
+    patchNestedObject(
+      edges,
+      edge.edgeKey,
+      'bpmn_semantic_json',
+      (previous.bpmnSemanticJson ?? {}) as unknown as Record<string, unknown>,
+      (edge.bpmnSemanticJson ?? {}) as unknown as Record<string, unknown>,
+    )
+  }
 }
 
 function writeCanvasToDoc(
@@ -375,10 +476,23 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       ? String(raw.bpmn_element_type || raw.bpmnElementType) as BusinessFlowNodeRecord['bpmnElementType']
       : null
     const rawTitle = stringValue(raw.title, '任务')
+    const bpmnProfile = normalizeBpmnNodeProfile({
+      nodeType: typedString<BusinessFlowNodeType>(raw.node_type || raw.nodeType),
+      bpmnElementType,
+      bpmnEventKind: typedString<BpmnEventKind>(raw.bpmn_event_kind || raw.bpmnEventKind),
+      bpmnGatewayType: typedString<BpmnGatewayType>(raw.bpmn_gateway_type || raw.bpmnGatewayType),
+      bpmnSubProcessKind: typedString<BpmnSubProcessKind>(raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind),
+    })
+    const semanticType = nodeSemanticType(bpmnProfile)
+    const bpmnSemanticJson = semanticType
+      ? normalizeBpmnSemantic(raw.bpmn_semantic_json || raw.bpmnSemanticJson, semanticType, rawTitle)
+      : null
     const taskUiJson = bpmnElementType === 'TASK'
       ? normalizeTaskUiContext(raw.task_ui_json || raw.taskUiJson || null, { taskName: rawTitle })
       : (raw.task_ui_json || raw.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson']
-    const title = bpmnElementType === 'TASK' ? taskUiTaskName(taskUiJson, rawTitle) : rawTitle
+    const title = bpmnElementType === 'TASK'
+      ? taskUiTaskName(taskUiJson, rawTitle)
+      : bpmnSemanticDisplayName(bpmnSemanticJson, rawTitle)
     return {
       kind: 'BUSINESS_FLOW_NODE' as const,
       businessFlowId: base.businessFlowId,
@@ -409,13 +523,9 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
         : null,
       title,
-      description: bpmnElementType === 'TASK' ? null : raw.description ? String(raw.description) : null,
-      actor: bpmnElementType === 'TASK' ? null : raw.actor ? String(raw.actor) : null,
-      businessRule: bpmnElementType === 'TASK'
-        ? null
-        : raw.business_rule || raw.businessRule
-          ? String(raw.business_rule || raw.businessRule)
-          : null,
+      description: null,
+      actor: null,
+      businessRule: null,
       semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
         ? String(raw.semantic_profile_key || raw.semanticProfileKey)
         : null,
@@ -423,12 +533,13 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
         : null,
       semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || {}) as Record<string, unknown>,
+      bpmnSemanticJson,
       taskUiJson,
       processContainerJson: (raw.process_container_json || raw.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
       containerNodeKey: raw.container_node_key || raw.containerNodeKey
         ? String(raw.container_node_key || raw.containerNodeKey)
         : null,
-      erRefs: refsByNodeKey.get(nodeKey) ?? [],
+      erRefs: isDataBpmnElement(bpmnElementType) ? refsByNodeKey.get(nodeKey) ?? [] : [],
       position: {
         x: numberValue(raw.position_x ?? raw.x),
         y: numberValue(raw.position_y ?? raw.y),
@@ -437,12 +548,8 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         width: numberValue(raw.width, 120),
         height: numberValue(raw.height, 60),
       },
-      inputSummary: bpmnElementType === 'TASK'
-        ? null
-        : raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : null,
-      outputSummary: bpmnElementType === 'TASK'
-        ? null
-        : raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : null,
+      inputSummary: null,
+      outputSummary: null,
       isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden),
       styleJson: (raw.style_json || raw.styleJson || {}) as Record<string, unknown>,
       propertiesJson: (raw.properties_json || raw.propertiesJson || {}) as Record<string, unknown>,
@@ -464,6 +571,16 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
     const sourceLane = sourceNodeKey ? nodeLaneByKey.get(sourceNodeKey) : null
     const targetLane = targetNodeKey ? nodeLaneByKey.get(targetNodeKey) : null
     const isCrossLane = Boolean(sourceLane && targetLane && sourceLane !== targetLane)
+    const edgeProfile = normalizeBpmnEdgeProfile({
+      edgeType: typedString<BusinessFlowEdgeType>(raw.edge_type || raw.edgeType),
+      bpmnFlowType: typedString<BpmnFlowType>(raw.bpmn_flow_type || raw.bpmnFlowType),
+      bpmnSequenceFlowKind: typedString<BpmnSequenceFlowKind>(raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind),
+    })
+    const bpmnSemanticJson = normalizeBpmnSemantic(
+      raw.bpmn_semantic_json || raw.bpmnSemanticJson,
+      edgeSemanticType(edgeProfile),
+      raw.label ? String(raw.label) : '',
+    )
     return {
       kind: 'BUSINESS_FLOW_EDGE' as const,
       businessFlowId: base.businessFlowId,
@@ -485,7 +602,7 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
       bpmnConditionExpression: raw.bpmn_condition_expression || raw.bpmnConditionExpression
         ? String(raw.bpmn_condition_expression || raw.bpmnConditionExpression)
         : null,
-      label: raw.label ? String(raw.label) : null,
+      label: bpmnSemanticDisplayName(bpmnSemanticJson, raw.label ? String(raw.label) : '') || null,
       conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : null,
       dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
       semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
@@ -495,6 +612,7 @@ function canvasFromDoc(doc: Y.Doc, base: LocalBusinessFlowCanvas): LocalBusiness
         ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
         : null,
       semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || {}) as Record<string, unknown>,
+      bpmnSemanticJson,
       isCrossLane,
       sourceType: stringValue(raw.source_type || raw.sourceType, 'NODE') as BusinessFlowEdgeRecord['sourceType'],
       sourceNodeKey,
@@ -642,10 +760,27 @@ function nodeFromDocEntry(
     ? String(raw.bpmn_element_type || raw.bpmnElementType) as BusinessFlowNodeRecord['bpmnElementType']
     : previous?.bpmnElementType ?? null
   const rawTitle = stringValue(raw.title, previous?.title ?? '任务')
+  const bpmnProfile = normalizeBpmnNodeProfile({
+    nodeType: typedString<BusinessFlowNodeType>(raw.node_type || raw.nodeType, previous?.nodeType),
+    bpmnElementType,
+    bpmnEventKind: typedString<BpmnEventKind>(raw.bpmn_event_kind || raw.bpmnEventKind, previous?.bpmnEventKind),
+    bpmnGatewayType: typedString<BpmnGatewayType>(raw.bpmn_gateway_type || raw.bpmnGatewayType, previous?.bpmnGatewayType),
+    bpmnSubProcessKind: typedString<BpmnSubProcessKind>(raw.bpmn_subprocess_kind || raw.bpmnSubProcessKind, previous?.bpmnSubProcessKind),
+  })
+  const semanticType = nodeSemanticType(bpmnProfile)
+  const bpmnSemanticJson = semanticType
+    ? normalizeBpmnSemantic(
+        raw.bpmn_semantic_json || raw.bpmnSemanticJson || previous?.bpmnSemanticJson,
+        semanticType,
+        rawTitle,
+      )
+    : null
   const taskUiJson = bpmnElementType === 'TASK'
     ? normalizeTaskUiContext(raw.task_ui_json || raw.taskUiJson || previous?.taskUiJson || null, { taskName: rawTitle })
     : (raw.task_ui_json || raw.taskUiJson || previous?.taskUiJson || null) as BusinessFlowNodeRecord['taskUiJson']
-  const title = bpmnElementType === 'TASK' ? taskUiTaskName(taskUiJson, rawTitle) : rawTitle
+  const title = bpmnElementType === 'TASK'
+    ? taskUiTaskName(taskUiJson, rawTitle)
+    : bpmnSemanticDisplayName(bpmnSemanticJson, rawTitle)
   return {
     kind: 'BUSINESS_FLOW_NODE',
     businessFlowId: base.businessFlowId,
@@ -676,13 +811,9 @@ function nodeFromDocEntry(
       ? String(raw.bpmn_call_activity_ref || raw.bpmnCallActivityRef)
       : previous?.bpmnCallActivityRef ?? null,
     title,
-    description: bpmnElementType === 'TASK' ? null : raw.description ? String(raw.description) : previous?.description ?? null,
-    actor: bpmnElementType === 'TASK' ? null : raw.actor ? String(raw.actor) : previous?.actor ?? null,
-    businessRule: bpmnElementType === 'TASK'
-      ? null
-      : raw.business_rule || raw.businessRule
-        ? String(raw.business_rule || raw.businessRule)
-        : previous?.businessRule ?? null,
+    description: null,
+    actor: null,
+    businessRule: null,
     semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
       ? String(raw.semantic_profile_key || raw.semanticProfileKey)
       : previous?.semanticProfileKey ?? null,
@@ -690,12 +821,13 @@ function nodeFromDocEntry(
       ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
       : previous?.semanticProfileVersion ?? null,
     semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || previous?.semanticPayloadJson || {}) as Record<string, unknown>,
+    bpmnSemanticJson,
     taskUiJson,
     processContainerJson: (raw.process_container_json || raw.processContainerJson || previous?.processContainerJson || null) as BusinessFlowNodeRecord['processContainerJson'],
     containerNodeKey: raw.container_node_key || raw.containerNodeKey
       ? String(raw.container_node_key || raw.containerNodeKey)
       : previous?.containerNodeKey ?? null,
-    erRefs: refsByNodeKey.get(nodeKey) ?? [],
+    erRefs: isDataBpmnElement(bpmnElementType) ? refsByNodeKey.get(nodeKey) ?? [] : [],
     position: {
       x: numberValue(raw.position_x ?? raw.x, previous?.position.x ?? 0),
       y: numberValue(raw.position_y ?? raw.y, previous?.position.y ?? 0),
@@ -704,12 +836,8 @@ function nodeFromDocEntry(
       width: numberValue(raw.width, previous?.size.width ?? 120),
       height: numberValue(raw.height, previous?.size.height ?? 60),
     },
-    inputSummary: bpmnElementType === 'TASK'
-      ? null
-      : raw.input_summary || raw.inputSummary ? String(raw.input_summary || raw.inputSummary) : previous?.inputSummary ?? null,
-    outputSummary: bpmnElementType === 'TASK'
-      ? null
-      : raw.output_summary || raw.outputSummary ? String(raw.output_summary || raw.outputSummary) : previous?.outputSummary ?? null,
+    inputSummary: null,
+    outputSummary: null,
     isOverridden: Boolean(raw.is_overridden ?? raw.isOverridden ?? previous?.isOverridden),
     styleJson: (raw.style_json || raw.styleJson || previous?.styleJson || {}) as Record<string, unknown>,
     propertiesJson: (raw.properties_json || raw.propertiesJson || previous?.propertiesJson || {}) as Record<string, unknown>,
@@ -739,6 +867,16 @@ function edgeFromDocEntry(
   const sourceLane = sourceNodeKey ? nodeLaneByKey.get(sourceNodeKey) : null
   const targetLane = targetNodeKey ? nodeLaneByKey.get(targetNodeKey) : null
   const isCrossLane = Boolean(sourceLane && targetLane && sourceLane !== targetLane)
+  const edgeProfile = normalizeBpmnEdgeProfile({
+    edgeType: typedString<BusinessFlowEdgeType>(raw.edge_type || raw.edgeType, previous?.edgeType),
+    bpmnFlowType: typedString<BpmnFlowType>(raw.bpmn_flow_type || raw.bpmnFlowType, previous?.bpmnFlowType),
+    bpmnSequenceFlowKind: typedString<BpmnSequenceFlowKind>(raw.bpmn_sequence_flow_kind || raw.bpmnSequenceFlowKind, previous?.bpmnSequenceFlowKind),
+  })
+  const bpmnSemanticJson = normalizeBpmnSemantic(
+    raw.bpmn_semantic_json || raw.bpmnSemanticJson || previous?.bpmnSemanticJson,
+    edgeSemanticType(edgeProfile),
+    raw.label ? String(raw.label) : previous?.label ?? '',
+  )
   return {
     kind: 'BUSINESS_FLOW_EDGE',
     businessFlowId: base.businessFlowId,
@@ -760,7 +898,10 @@ function edgeFromDocEntry(
     bpmnConditionExpression: raw.bpmn_condition_expression || raw.bpmnConditionExpression
       ? String(raw.bpmn_condition_expression || raw.bpmnConditionExpression)
       : previous?.bpmnConditionExpression ?? null,
-    label: raw.label ? String(raw.label) : previous?.label ?? null,
+    label: bpmnSemanticDisplayName(
+      bpmnSemanticJson,
+      raw.label ? String(raw.label) : previous?.label ?? '',
+    ) || null,
     conditionText: raw.condition_text || raw.conditionText ? String(raw.condition_text || raw.conditionText) : previous?.conditionText ?? null,
     dataContract: (raw.data_contract_json || raw.dataContractJson || raw.dataContract || previous?.dataContract || undefined) as BusinessFlowEdgeRecord['dataContract'],
     semanticProfileKey: raw.semantic_profile_key || raw.semanticProfileKey
@@ -770,6 +911,7 @@ function edgeFromDocEntry(
       ? Number(raw.semantic_profile_version || raw.semanticProfileVersion)
       : previous?.semanticProfileVersion ?? null,
     semanticPayloadJson: (raw.semantic_payload_json || raw.semanticPayloadJson || previous?.semanticPayloadJson || {}) as Record<string, unknown>,
+    bpmnSemanticJson,
     isCrossLane,
     sourceType: stringValue(raw.source_type || raw.sourceType, previous?.sourceType ?? 'NODE') as BusinessFlowEdgeRecord['sourceType'],
     sourceNodeKey,
@@ -1153,7 +1295,13 @@ export function createBusinessFlowCollaboration(
       const nextCanvas = nextCanvasWithNode(previous, flowNode)
       const laneKeyById = new Map(nextCanvas.laneInstances.map((lane) => [lane.laneInstanceId, lane.instanceKey]))
       doc.transact(() => {
-        writeNodeToDoc(doc.getMap('nodes'), doc.getMap('erRefs'), laneKeyById, flowNode)
+        writeNodeToDoc(
+          doc.getMap('nodes'),
+          doc.getMap('erRefs'),
+          laneKeyById,
+          flowNode,
+          previous.nodes.find((item) => item.nodeKey === flowNode.nodeKey),
+        )
         doc.getMap('meta').set('updatedAt', new Date().toISOString())
       }, origin)
       return nextCanvas
@@ -1165,7 +1313,11 @@ export function createBusinessFlowCollaboration(
       if (!flowEdge) return pushDraft(origin)
       const nextCanvas = nextCanvasWithEdge(previous, flowEdge)
       doc.transact(() => {
-        writeEdgeToDoc(doc.getMap('edges'), flowEdge)
+        writeEdgeToDoc(
+          doc.getMap('edges'),
+          flowEdge,
+          previous.edges.find((item) => item.edgeKey === flowEdge.edgeKey),
+        )
         doc.getMap('meta').set('updatedAt', new Date().toISOString())
       }, origin)
       return nextCanvas

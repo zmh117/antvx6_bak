@@ -16,6 +16,14 @@ from app.domain.business_flow.semantic_profile import (
     business_flow_quality_issues,
     semantic_payload,
 )
+from app.domain.business_flow.bpmn_semantic import (
+    bpmn_semantic_payload,
+    bpmn_semantic_quality_issues,
+    edge_semantic_type,
+    is_data_element,
+    node_semantic_type,
+    semantic_display_name,
+)
 from app.domain.business_flow.task_ui import (
     edge_scope,
     is_legacy_process_container,
@@ -72,6 +80,16 @@ def _semantic_line(prefix: str, item: dict[str, Any]) -> str:
     if not profile_key and not payload:
         return ""
     return f"  {prefix}：{profile_key or ''} {_json_summary(payload)}".rstrip()
+
+
+def _bpmn_semantic_line(prefix: str, item: dict[str, Any], target: str) -> str:
+    semantic_type = node_semantic_type(item) if target == "NODE" else edge_semantic_type(item)
+    payload = bpmn_semantic_payload(
+        item.get("bpmn_semantic_json"),
+        semantic_type,
+        item.get("title") or item.get("label"),
+    )
+    return f"  {prefix}：{_json_summary(payload)}" if payload else ""
 
 
 def _task_ui_line(node: dict[str, Any]) -> str:
@@ -196,9 +214,14 @@ def _step_context_item(
     node_key = node.get("node_key") or ""
     is_task = _is_task_node(node)
     task_ui = task_ui_payload(node.get("task_ui_json"), fallback_task_name=node.get("title")) if is_task else {}
+    bpmn_semantic = bpmn_semantic_payload(
+        node.get("bpmn_semantic_json"),
+        node_semantic_type(node),
+        node.get("title"),
+    )
     return {
         "stepKey": node.get("node_key"),
-        "title": task_ui.get("taskName") if is_task else node.get("title"),
+        "title": task_ui.get("taskName") if is_task else semantic_display_name(bpmn_semantic, node.get("title")),
         "nodeType": node.get("node_type"),
         "bpmn": {
             "elementType": node.get("bpmn_element_type"),
@@ -208,16 +231,17 @@ def _step_context_item(
             "subProcessKind": node.get("bpmn_subprocess_kind"),
         },
         "lane": node.get("lane_name"),
-        "actor": None if is_task else node.get("actor"),
-        "businessRule": None if is_task else node.get("business_rule"),
-        "inputSummary": None if is_task else node.get("input_summary"),
-        "outputSummary": None if is_task else node.get("output_summary"),
+        "actor": None,
+        "businessRule": None,
+        "inputSummary": None,
+        "outputSummary": None,
         "semantic": {
             "profileKey": node.get("semantic_profile_key"),
             "profileVersion": node.get("semantic_profile_version"),
             "payload": semantic_payload(node.get("semantic_payload_json")),
         },
-        "erRefs": [] if is_task else refs_by_node_key.get(str(node_key), []),
+        "bpmnSemantic": bpmn_semantic,
+        "erRefs": refs_by_node_key.get(str(node_key), []) if is_data_element(node) else [],
         "taskUi": task_ui,
         "processContainer": process_container_payload(node.get("process_container_json")),
         "containerNodeKey": node.get("container_node_key"),
@@ -324,7 +348,7 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
             filter(
                 None,
                 [
-                    f"- {node['node_key']}: {node['title']} ({node['node_type']})",
+                    f"- {node['node_key']}: {semantic_display_name(bpmn_semantic_payload(node.get('bpmn_semantic_json'), node_semantic_type(node), node.get('title')), node.get('title'))} ({node['node_type']})",
                     f"  BPMN：{node.get('bpmn_element_type') or ''}"
                     + (
                         f"/{node.get('bpmn_event_kind') or node.get('bpmn_task_type') or node.get('bpmn_gateway_type')}"
@@ -332,13 +356,7 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                         else ""
                     ),
                     f"  泳道：{node.get('lane_name') or ''}" if node.get("lane_name") else "",
-                    f"  角色：{node.get('actor') or ''}" if node.get("actor") and not _is_task_node(node) else "",
-                    f"  规则：{node.get('business_rule') or ''}"
-                    if node.get("business_rule") and not _is_task_node(node)
-                    else "",
-                    f"  输入：{node.get('input_summary') or ''}" if node.get("input_summary") and not _is_task_node(node) else "",
-                    f"  输出：{node.get('output_summary') or ''}" if node.get("output_summary") and not _is_task_node(node) else "",
-                    _semantic_line("业务语义", node),
+                    _bpmn_semantic_line("BPMN 业务语义", node, "NODE"),
                     _task_ui_line(node),
                 ],
             )
@@ -364,7 +382,7 @@ def swimlane_flow_doc_from_row(cur: psycopg.Cursor, row: dict[str, Any]) -> dict
                     f"  数据契约：{_json_summary(edge.get('data_contract_json'))}"
                     if edge.get("data_contract_json")
                     else "",
-                    _semantic_line("连线语义", edge),
+                    _bpmn_semantic_line("BPMN 连线语义", edge, "EDGE"),
                 ],
             )
         )
@@ -431,16 +449,32 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
         nodes, edges = _strip_legacy_process_containers(nodes, edges)
         refs = repo.fetch_swimlane_flow_er_refs(cur, flow["id"])
         node_keys = {node.get("node_key") for node in nodes}
-        task_node_keys = {node.get("node_key") for node in nodes if _is_task_node(node)}
+        data_node_keys = {node.get("node_key") for node in nodes if is_data_element(node)}
         refs = [
             ref
             for ref in refs
-            if ref.get("node_key") in node_keys and ref.get("node_key") not in task_node_keys
+            if ref.get("node_key") in node_keys and ref.get("node_key") in data_node_keys
         ]
         refs_by_node_key: dict[str, list[dict[str, Any]]] = {}
         for ref in refs:
             refs_by_node_key.setdefault(ref["node_key"], []).append(ref)
         quality_issues = business_flow_quality_issues(nodes, edges, refs_by_node_key)
+        for node in nodes:
+            quality_issues.extend(
+                bpmn_semantic_quality_issues(
+                    node,
+                    node.get("bpmn_semantic_json") or {},
+                    "NODE",
+                )
+            )
+        for edge in edges:
+            quality_issues.extend(
+                bpmn_semantic_quality_issues(
+                    edge,
+                    edge.get("bpmn_semantic_json") or {},
+                    "EDGE",
+                )
+            )
         child_keys_by_container: dict[str, list[str]] = {}
         node_by_key = {node.get("node_key"): node for node in nodes if node.get("node_key")}
         for node in nodes:
@@ -491,6 +525,11 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                     "profileVersion": edge.get("semantic_profile_version"),
                     "payload": semantic_payload(edge.get("semantic_payload_json")),
                 },
+                "bpmnSemantic": bpmn_semantic_payload(
+                    edge.get("bpmn_semantic_json"),
+                    edge_semantic_type(edge),
+                    edge.get("label"),
+                ),
                 "edgeScope": edge_scope(
                     edge.get("source_container_node_key"),
                     edge.get("target_container_node_key"),
@@ -510,14 +549,7 @@ def build_business_flow_context(cur: psycopg.Cursor, graph_id: UUID) -> dict[str
                 "edges": edge_context,
                 "containers": containers,
                 "erRefs": refs,
-                "rules": [
-                    {
-                        "stepKey": node.get("node_key"),
-                        "businessRule": node.get("business_rule"),
-                    }
-                    for node in nodes
-                    if node.get("business_rule") and not _is_task_node(node)
-                ],
+                "rules": [],
                 "qualityIssues": quality_issues,
                 **paths,
             }

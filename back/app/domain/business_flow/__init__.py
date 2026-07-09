@@ -16,6 +16,14 @@ from app.domain.business_flow.entities import (
     SwimlaneComponentVersion,
 )
 from app.domain.business_flow.flow import BusinessFlow, ErBinding
+from app.domain.business_flow.bpmn_semantic import (
+    bpmn_semantic_payload,
+    bpmn_semantic_quality_issues,
+    edge_semantic_type,
+    is_data_element,
+    node_semantic_type,
+    semantic_display_name,
+)
 
 __all__ = [
     "BusinessFlow",
@@ -35,4 +43,10 @@ __all__ = [
     "BusinessFlowChangeOp",
     "BusinessFlowSnapshot",
     "CollabDocument",
+    "bpmn_semantic_payload",
+    "bpmn_semantic_quality_issues",
+    "edge_semantic_type",
+    "is_data_element",
+    "node_semantic_type",
+    "semantic_display_name",
 ]

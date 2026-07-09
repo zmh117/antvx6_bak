@@ -262,6 +262,114 @@ export type BpmnEdgeProfile = {
   bpmnConditionExpression?: string | null
 }
 
+export type BpmnSemanticType =
+  | 'startEvent'
+  | 'intermediateEvent'
+  | 'endEvent'
+  | 'transaction'
+  | 'exclusiveGateway'
+  | 'inclusiveGateway'
+  | 'parallelGateway'
+  | 'complexGateway'
+  | 'dataObject'
+  | 'dataInput'
+  | 'dataOutput'
+  | 'dataStore'
+  | 'sequenceFlow'
+  | 'messageFlow'
+  | 'association'
+
+export type BpmnBranchCondition = {
+  flowId: string
+  label: string
+  condition: string
+}
+
+type BpmnSemanticBase<T extends BpmnSemanticType> = {
+  schemaVersion: 1
+  semanticType: T
+}
+
+export type BpmnSemanticJson =
+  | (BpmnSemanticBase<'startEvent'> & {
+      eventName: string; triggerType: string; triggerSource: string
+      startCondition: string; inputDataRefs: string[]; initiator: string
+      frequency: string; preCheckRules: string[]
+    })
+  | (BpmnSemanticBase<'intermediateEvent'> & {
+      eventName: string; catchOrThrow: string; eventDefinition: string
+      interrupting: boolean; timeout: string; messageName: string
+      errorCode: string; escalationCode: string; businessMeaning: string
+    })
+  | (BpmnSemanticBase<'endEvent'> & {
+      eventName: string; resultType: string; finalBusinessState: string
+      outputDataRefs: string[]; notifyTargets: string[]
+      auditRequired: boolean; rollbackRequired: boolean
+    })
+  | (BpmnSemanticBase<'transaction'> & {
+      transactionName: string; transactionType: string; successCriteria: string[]
+      cancelTriggers: string[]; compensationPolicy: string
+      compensationOrder: string; consistencyLevel: string; timeout: string
+      isolationNote: string; compensationTasks: string[]
+      partialSuccessPolicy: string; auditRequired: boolean
+    })
+  | (BpmnSemanticBase<'exclusiveGateway'> & {
+      decisionName: string; decisionVariable: string
+      branches: BpmnBranchCondition[]; defaultFlowId: string
+      conditionExpressionType: string; mutuallyExclusive: boolean
+      coverageRequired: boolean
+    })
+  | (BpmnSemanticBase<'inclusiveGateway'> & {
+      decisionName: string; branchConditions: BpmnBranchCondition[]
+      allowMultipleBranches: boolean; mergePolicy: string
+      minSelectedBranches: number | null; coverageRequired: boolean
+    })
+  | (BpmnSemanticBase<'parallelGateway'> & {
+      gatewayName: string; parallelMode: string; waitForAll: boolean
+      expectedBranches: string[]; partialFailurePolicy: string
+      timeout: string; concurrencyLimit: number | null
+    })
+  | (BpmnSemanticBase<'complexGateway'> & {
+      gatewayName: string; activationCondition: string
+      completionCondition: string; requiredCount: number | null
+      totalCount: number | null; customRule: string; explanation: string
+    })
+  | (BpmnSemanticBase<'dataObject'> & {
+      dataName: string; entityName: string; schemaRef: string
+      lifecycleState: string; ownerActivityRef: string
+      readByRefs: string[]; writeByRefs: string[]
+    })
+  | (BpmnSemanticBase<'dataInput'> & {
+      dataName: string; sourceType: string; sourceRef: string
+      required: boolean; validationRules: string[]; exampleValue: string
+      sensitiveLevel: string; defaultValue: string
+    })
+  | (BpmnSemanticBase<'dataOutput'> & {
+      dataName: string; targetType: string; targetRef: string
+      outputContract: string; transformRule: string
+      successOutput: string; failureOutput: string
+    })
+  | (BpmnSemanticBase<'dataStore'> & {
+      dataName: string; storeType: string; systemRef: string
+      accessMode: string; consistencyLevel: string
+      retentionPolicy: string; privacyLevel: string
+    })
+  | (BpmnSemanticBase<'sequenceFlow'> & {
+      flowName: string; flowKind: string; conditionText: string
+      conditionExpression: string; conditionExpressionType: string
+      priority: number | null; isDefault: boolean; businessRuleRefs: string[]
+      testScenarioType: string; expectedResult: string
+    })
+  | (BpmnSemanticBase<'messageFlow'> & {
+      messageName: string; businessMeaning: string; senderRef: string
+      receiverRef: string; payloadDataRefs: string[]; deliveryMode: string
+      timeout: string; testScenarioType: string; expectedResult: string
+    })
+  | (BpmnSemanticBase<'association'> & {
+      associationName: string; businessMeaning: string; direction: string
+      dataRole: string; testScenarioType: string; expectedResult: string
+    })
+
 export type CanvasPosition = {
   x: number
   y: number
@@ -293,6 +401,7 @@ export type SwimlaneComponentNode = {
   semanticProfileKey?: string | null
   semanticProfileVersion?: number | null
   semanticPayloadJson?: BusinessFlowJson | null
+  bpmnSemanticJson?: BpmnSemanticJson | null
   taskUiJson?: TaskUiContext | null
   processContainerJson?: ProcessContainerConfig | null
   containerNodeKey?: string | null
@@ -322,6 +431,7 @@ export type SwimlaneComponentEdge = {
   semanticProfileKey?: string | null
   semanticProfileVersion?: number | null
   semanticPayloadJson?: BusinessFlowJson | null
+  bpmnSemanticJson?: BpmnSemanticJson | null
   styleJson?: BusinessFlowJson | null
   propertiesJson?: BusinessFlowJson | null
 }
@@ -423,6 +533,7 @@ export type BusinessFlowNodeData = {
   semanticProfileKey?: string | null
   semanticProfileVersion?: number | null
   semanticPayloadJson?: BusinessFlowJson | null
+  bpmnSemanticJson?: BpmnSemanticJson | null
   taskUiJson?: TaskUiContext | null
   processContainerJson?: ProcessContainerConfig | null
   containerNodeKey?: string | null
@@ -463,6 +574,7 @@ export type BusinessFlowEdgeData = {
   semanticProfileKey?: string | null
   semanticProfileVersion?: number | null
   semanticPayloadJson?: BusinessFlowJson | null
+  bpmnSemanticJson?: BpmnSemanticJson | null
   isCrossLane: boolean
 }
 

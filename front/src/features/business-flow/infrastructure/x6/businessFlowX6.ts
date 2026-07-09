@@ -3,6 +3,7 @@ import type { CellAttrs } from '@antv/x6/lib/registry/attr'
 import type {
   BpmnEdgeProfile,
   BpmnNodeProfile,
+  BpmnSemanticJson,
   BusinessFlowEdgeRecord,
   BusinessFlowJson,
   BusinessFlowNodeErRef,
@@ -25,6 +26,11 @@ import {
   normalizeTaskUiContext,
   taskUiEmpty,
   taskUiTaskName,
+  bpmnSemanticDisplayName,
+  edgeSemanticType,
+  emptyBpmnSemantic,
+  nodeSemanticType,
+  normalizeBpmnSemantic,
 } from '@/entities/business-flow'
 import type {
   ComponentEditorEdgeDraft,
@@ -76,6 +82,7 @@ export type FlowCellData = {
   semanticProfileKey?: string | null
   semanticProfileVersion?: number | null
   semanticPayloadJson?: BusinessFlowJson | null
+  bpmnSemanticJson?: BpmnSemanticJson | null
   taskUiJson?: TaskUiContext | null
   processContainerJson?: ProcessContainerConfig | null
   containerNodeKey?: string | null
@@ -739,14 +746,30 @@ function taskUiForProfile(profile: BpmnNodeProfile, value: TaskUiContext | null 
     : value ?? null
 }
 
-function titleForProfile(profile: BpmnNodeProfile, taskUi: TaskUiContext | null | undefined, fallbackTitle: string) {
-  return profile.bpmnElementType === 'TASK'
-    ? taskUiTaskName(taskUi, fallbackTitle || bpmnNodeTitle(profile))
-    : fallbackTitle || bpmnNodeTitle(profile)
+function semanticForNodeProfile(
+  profile: BpmnNodeProfile,
+  value: BpmnSemanticJson | null | undefined,
+  fallbackTitle: string,
+) {
+  const semanticType = nodeSemanticType(profile)
+  return semanticType
+    ? normalizeBpmnSemantic(value ?? emptyBpmnSemantic(semanticType, fallbackTitle), semanticType, fallbackTitle)
+    : null
 }
 
-function legacyTaskTextField<T>(profile: BpmnNodeProfile, value: T | null | undefined) {
-  return profile.bpmnElementType === 'TASK' ? null : value ?? null
+function titleForProfile(
+  profile: BpmnNodeProfile,
+  taskUi: TaskUiContext | null | undefined,
+  fallbackTitle: string,
+  bpmnSemantic?: BpmnSemanticJson | null,
+) {
+  return profile.bpmnElementType === 'TASK'
+    ? taskUiTaskName(taskUi, fallbackTitle || bpmnNodeTitle(profile))
+    : bpmnSemanticDisplayName(bpmnSemantic, fallbackTitle || bpmnNodeTitle(profile))
+}
+
+function retiredNodeTextField<T>(_profile: BpmnNodeProfile, _value: T | null | undefined) {
+  return null
 }
 
 export function graphPointFromEvent(graph: Graph, event: DragEvent): Point {
@@ -768,7 +791,8 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
   const taskUiJson = taskUiForProfile(bpmnProfile, draft.taskUiJson, draft.title)
-  const title = titleForProfile(bpmnProfile, taskUiJson, draft.title)
+  const bpmnSemanticJson = semanticForNodeProfile(bpmnProfile, draft.bpmnSemanticJson, draft.title)
+  const title = titleForProfile(bpmnProfile, taskUiJson, draft.title, bpmnSemanticJson)
   return graph.addNode({
     id: draft.nodeKey,
     shape: shapeName(nodeType, bpmnProfile),
@@ -785,18 +809,19 @@ export function addComponentNode(graph: Graph, draft: ComponentEditorNodeDraft) 
       nodeType,
       ...bpmnProfile,
       title,
-      description: legacyTaskTextField(bpmnProfile, draft.description),
-      actor: legacyTaskTextField(bpmnProfile, draft.actor),
-      businessRule: legacyTaskTextField(bpmnProfile, draft.businessRule),
-      inputSummary: legacyTaskTextField(bpmnProfile, draft.inputSummary),
-      outputSummary: legacyTaskTextField(bpmnProfile, draft.outputSummary),
+      description: retiredNodeTextField(bpmnProfile, draft.description),
+      actor: retiredNodeTextField(bpmnProfile, draft.actor),
+      businessRule: retiredNodeTextField(bpmnProfile, draft.businessRule),
+      inputSummary: retiredNodeTextField(bpmnProfile, draft.inputSummary),
+      outputSummary: retiredNodeTextField(bpmnProfile, draft.outputSummary),
       semanticProfileKey: draft.semanticProfileKey ?? null,
       semanticProfileVersion: draft.semanticProfileVersion ?? null,
       semanticPayloadJson: draft.semanticPayloadJson ?? {},
+      bpmnSemanticJson,
       taskUiJson,
       processContainerJson: null,
       containerNodeKey: null,
-      erRefs: draft.erRefs ?? [],
+      erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? draft.erRefs ?? [] : [],
       styleJson: draft.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(draft.propertiesJson, bpmnProfile),
     } satisfies FlowCellData,
@@ -818,7 +843,8 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
   const taskUiJson = taskUiForProfile(bpmnProfile, record.taskUiJson, record.title)
-  const title = titleForProfile(bpmnProfile, taskUiJson, record.title)
+  const bpmnSemanticJson = semanticForNodeProfile(bpmnProfile, record.bpmnSemanticJson, record.title)
+  const title = titleForProfile(bpmnProfile, taskUiJson, record.title, bpmnSemanticJson)
   return graph.addNode({
     id: record.nodeKey,
     shape: shapeName(nodeType, bpmnProfile),
@@ -839,18 +865,19 @@ export function addFlowNode(graph: Graph, record: BusinessFlowNodeRecord) {
       nodeType,
       ...bpmnProfile,
       title,
-      description: legacyTaskTextField(bpmnProfile, record.description),
-      actor: legacyTaskTextField(bpmnProfile, record.actor),
-      businessRule: legacyTaskTextField(bpmnProfile, record.businessRule),
-      inputSummary: legacyTaskTextField(bpmnProfile, record.inputSummary),
-      outputSummary: legacyTaskTextField(bpmnProfile, record.outputSummary),
+      description: retiredNodeTextField(bpmnProfile, record.description),
+      actor: retiredNodeTextField(bpmnProfile, record.actor),
+      businessRule: retiredNodeTextField(bpmnProfile, record.businessRule),
+      inputSummary: retiredNodeTextField(bpmnProfile, record.inputSummary),
+      outputSummary: retiredNodeTextField(bpmnProfile, record.outputSummary),
       semanticProfileKey: record.semanticProfileKey ?? null,
       semanticProfileVersion: record.semanticProfileVersion ?? null,
       semanticPayloadJson: record.semanticPayloadJson ?? {},
+      bpmnSemanticJson,
       taskUiJson,
       processContainerJson: null,
       containerNodeKey: null,
-      erRefs: record.erRefs ?? [],
+      erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? record.erRefs ?? [] : [],
       styleJson: record.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(record.propertiesJson, bpmnProfile),
     } satisfies FlowCellData,
@@ -971,12 +998,18 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
       bpmnConditionExpression: edge.bpmnConditionExpression,
       propertiesJson: edge.propertiesJson,
     })
+    const bpmnSemanticJson = normalizeBpmnSemantic(
+      edge.bpmnSemanticJson,
+      edgeSemanticType(bpmnProfile),
+      edge.label ?? '',
+    )
+    const label = bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? '')
     graph.addEdge({
       id: edge.edgeKey,
       source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
       target: { cell: edge.targetNodeKey, port: edge.targetPort ?? undefined },
       attrs: edgeAttrs(false, bpmnProfile),
-      labels: edgeLabels(edge.label),
+      labels: edgeLabels(label),
       data: {
         boundedContext: 'business-flow',
         cellRole: 'COMPONENT_EDGE',
@@ -986,8 +1019,9 @@ export function renderComponentVersion(graph: Graph, version: SwimlaneComponentV
         semanticProfileKey: edge.semanticProfileKey ?? null,
         semanticProfileVersion: edge.semanticProfileVersion ?? null,
         semanticPayloadJson: edge.semanticPayloadJson ?? {},
+        bpmnSemanticJson,
         propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
-        title: edge.label ?? '',
+        title: label,
       } satisfies FlowCellData,
       zIndex: EDGE_Z_INDEX,
     })
@@ -1075,12 +1109,18 @@ function addFlowEdgeCell(
     propertiesJson: edge.propertiesJson,
     isCrossLane: edge.isCrossLane,
   })
+  const bpmnSemanticJson = normalizeBpmnSemantic(
+    edge.bpmnSemanticJson,
+    edgeSemanticType(bpmnProfile),
+    edge.label ?? '',
+  )
+  const label = bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? '')
   graph.addEdge({
     id: edge.edgeKey,
     source: { cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined },
     target: { cell: edge.targetNodeKey, port: edge.targetPort ?? undefined },
     attrs: edgeAttrs(edge.isCrossLane, bpmnProfile),
-    labels: edgeLabels(edge.label),
+    labels: edgeLabels(label),
     data: {
       boundedContext: 'business-flow',
       cellRole: 'FLOW_EDGE',
@@ -1093,8 +1133,9 @@ function addFlowEdgeCell(
       semanticProfileKey: edge.semanticProfileKey ?? null,
       semanticProfileVersion: edge.semanticProfileVersion ?? null,
       semanticPayloadJson: edge.semanticPayloadJson ?? {},
+      bpmnSemanticJson,
       propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
-      title: edge.label ?? '',
+      title: label,
     } satisfies FlowCellData,
     zIndex: EDGE_Z_INDEX,
   })
@@ -1219,7 +1260,8 @@ function upsertFlowNodeCell(
   })
   const nodeType = legacyNodeTypeForBpmn(bpmnProfile)
   const taskUiJson = taskUiForProfile(bpmnProfile, node.taskUiJson, node.title)
-  const title = titleForProfile(bpmnProfile, taskUiJson, node.title)
+  const bpmnSemanticJson = semanticForNodeProfile(bpmnProfile, node.bpmnSemanticJson, node.title)
+  const title = titleForProfile(bpmnProfile, taskUiJson, node.title, bpmnSemanticJson)
   const expectedShape = shapeName(nodeType, bpmnProfile)
   const existing = graph.getCellById(node.nodeKey)
   if (
@@ -1256,17 +1298,18 @@ function upsertFlowNodeCell(
       nodeType,
       ...bpmnProfile,
       title,
-      description: legacyTaskTextField(bpmnProfile, node.description),
-      actor: legacyTaskTextField(bpmnProfile, node.actor),
-      businessRule: legacyTaskTextField(bpmnProfile, node.businessRule),
-      inputSummary: legacyTaskTextField(bpmnProfile, node.inputSummary),
-      outputSummary: legacyTaskTextField(bpmnProfile, node.outputSummary),
+      description: retiredNodeTextField(bpmnProfile, node.description),
+      actor: retiredNodeTextField(bpmnProfile, node.actor),
+      businessRule: retiredNodeTextField(bpmnProfile, node.businessRule),
+      inputSummary: retiredNodeTextField(bpmnProfile, node.inputSummary),
+      outputSummary: retiredNodeTextField(bpmnProfile, node.outputSummary),
       semanticProfileKey: node.semanticProfileKey ?? null,
       semanticProfileVersion: node.semanticProfileVersion ?? null,
       semanticPayloadJson: node.semanticPayloadJson ?? {},
+      bpmnSemanticJson,
       taskUiJson,
       processContainerJson: null,
-      erRefs: node.erRefs ?? [],
+      erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? node.erRefs ?? [] : [],
       styleJson: node.styleJson ?? null,
       propertiesJson: mergeBpmnIntoProperties(node.propertiesJson, bpmnProfile),
     } satisfies FlowCellData,
@@ -1298,6 +1341,12 @@ function upsertFlowEdgeCell(
     propertiesJson: edge.propertiesJson,
     isCrossLane: edge.isCrossLane,
   })
+  const bpmnSemanticJson = normalizeBpmnSemantic(
+    edge.bpmnSemanticJson,
+    edgeSemanticType(bpmnProfile),
+    edge.label ?? '',
+  )
+  const label = bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? '')
   const existing = graph.getCellById(edge.edgeKey)
   if (!(existing instanceof Edge) || readCellData(existing).cellRole !== 'FLOW_EDGE') {
     if (existing) graph.removeCell(existing)
@@ -1307,7 +1356,7 @@ function upsertFlowEdgeCell(
   existing.setSource({ cell: edge.sourceNodeKey, port: edge.sourcePort ?? undefined })
   existing.setTarget({ cell: edge.targetNodeKey, port: edge.targetPort ?? undefined })
   existing.attr(edgeAttrs(edge.isCrossLane, bpmnProfile))
-  existing.setLabels(edgeLabels(edge.label))
+  existing.setLabels(edgeLabels(label))
   existing.setData(
     {
       ...readCellData(existing),
@@ -1319,8 +1368,12 @@ function upsertFlowEdgeCell(
       edgeType: legacyEdgeTypeForBpmn(bpmnProfile, edge.isCrossLane),
       ...bpmnProfile,
       originComponentEdgeKey: edge.originComponentEdgeKey,
+      semanticProfileKey: edge.semanticProfileKey ?? null,
+      semanticProfileVersion: edge.semanticProfileVersion ?? null,
+      semanticPayloadJson: edge.semanticPayloadJson ?? {},
+      bpmnSemanticJson,
       propertiesJson: mergeBpmnIntoProperties(edge.propertiesJson, bpmnProfile),
-      title: edge.label ?? '',
+      title: label,
     } satisfies FlowCellData,
     { silent: true },
   )
@@ -1570,24 +1623,26 @@ export function componentDraftFromGraph(graph: Graph) {
       const size = node.size()
       const fallbackTitle = data.title ?? String(node.attr('label/text') ?? '任务')
       const taskUiJson = taskUiForProfile(bpmnProfile, data.taskUiJson, fallbackTitle)
-      const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle)
+      const bpmnSemanticJson = semanticForNodeProfile(bpmnProfile, data.bpmnSemanticJson, fallbackTitle)
+      const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle, bpmnSemanticJson)
       return {
         nodeKey: data.nodeKey ?? node.id,
         nodeType: legacyNodeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
         title,
-        description: legacyTaskTextField(bpmnProfile, data.description),
-        actor: legacyTaskTextField(bpmnProfile, data.actor),
-        businessRule: legacyTaskTextField(bpmnProfile, data.businessRule),
-        inputSummary: legacyTaskTextField(bpmnProfile, data.inputSummary),
-        outputSummary: legacyTaskTextField(bpmnProfile, data.outputSummary),
+        description: retiredNodeTextField(bpmnProfile, data.description),
+        actor: retiredNodeTextField(bpmnProfile, data.actor),
+        businessRule: retiredNodeTextField(bpmnProfile, data.businessRule),
+        inputSummary: retiredNodeTextField(bpmnProfile, data.inputSummary),
+        outputSummary: retiredNodeTextField(bpmnProfile, data.outputSummary),
         semanticProfileKey: data.semanticProfileKey ?? null,
         semanticProfileVersion: data.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? {},
+        bpmnSemanticJson,
         taskUiJson,
         processContainerJson: null,
         containerNodeKey: null,
-        erRefs: data.erRefs ?? [],
+        erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
         position,
         size,
         styleJson: data.styleJson ?? null,
@@ -1610,6 +1665,15 @@ export function componentDraftFromGraph(graph: Graph) {
         defaultProfile.bpmnFlowType === 'ASSOCIATION'
           ? defaultProfile
           : requestedProfile
+      const bpmnSemanticJson = normalizeBpmnSemantic(
+        data.bpmnSemanticJson,
+        edgeSemanticType(bpmnProfile),
+        data.title || readEdgeLabel(edge) || '',
+      )
+      const label = bpmnSemanticDisplayName(
+        bpmnSemanticJson,
+        data.title || readEdgeLabel(edge) || '',
+      )
       return [
         {
           edgeKey: data.edgeKey ?? edge.id,
@@ -1619,11 +1683,12 @@ export function componentDraftFromGraph(graph: Graph) {
           targetPort: terminalPort(target),
           edgeType: legacyEdgeTypeForBpmn(bpmnProfile),
           ...bpmnProfile,
-          label: data.title ?? readEdgeLabel(edge),
+          label,
           conditionText: data.bpmnConditionExpression ?? null,
           semanticProfileKey: data.semanticProfileKey ?? null,
           semanticProfileVersion: data.semanticProfileVersion ?? null,
           semanticPayloadJson: data.semanticPayloadJson ?? {},
+          bpmnSemanticJson,
           styleJson: data.styleJson ?? null,
           propertiesJson: mergeBpmnIntoProperties(data.propertiesJson, bpmnProfile),
         },
@@ -1683,7 +1748,12 @@ export function flowDraftFromGraph(
       const laneKey = data.laneInstanceKey ?? laneKeyForNodeCell(node)
       const fallbackTitle = data.title ?? String(node.attr('label/text') ?? previousNode?.title ?? '任务')
       const taskUiJson = taskUiForProfile(bpmnProfile, data.taskUiJson ?? previousNode?.taskUiJson, fallbackTitle)
-      const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle)
+      const bpmnSemanticJson = semanticForNodeProfile(
+        bpmnProfile,
+        data.bpmnSemanticJson ?? previousNode?.bpmnSemanticJson,
+        fallbackTitle,
+      )
+      const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle, bpmnSemanticJson)
       nodeLaneKey.set(node.id, laneKey)
       return {
         kind: 'BUSINESS_FLOW_NODE' as const,
@@ -1695,17 +1765,18 @@ export function flowDraftFromGraph(
         nodeType: legacyNodeTypeForBpmn(bpmnProfile),
         ...bpmnProfile,
         title,
-        description: legacyTaskTextField(bpmnProfile, data.description),
-        actor: legacyTaskTextField(bpmnProfile, data.actor),
-        businessRule: legacyTaskTextField(bpmnProfile, data.businessRule),
-        erRefs: data.erRefs ?? [],
+        description: retiredNodeTextField(bpmnProfile, data.description),
+        actor: retiredNodeTextField(bpmnProfile, data.actor),
+        businessRule: retiredNodeTextField(bpmnProfile, data.businessRule),
+        erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
         position,
         size,
-        inputSummary: legacyTaskTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
-        outputSummary: legacyTaskTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
+        inputSummary: retiredNodeTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
+        outputSummary: retiredNodeTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
         semanticProfileKey: data.semanticProfileKey ?? previousNode?.semanticProfileKey ?? null,
         semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
         semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
+        bpmnSemanticJson,
         taskUiJson,
         processContainerJson: null,
         containerNodeKey: null,
@@ -1747,6 +1818,15 @@ export function flowDraftFromGraph(
         enforcedProfile.bpmnFlowType === 'ASSOCIATION'
           ? enforcedProfile
           : bpmnProfile
+      const bpmnSemanticJson = normalizeBpmnSemantic(
+        data.bpmnSemanticJson ?? previousEdge?.bpmnSemanticJson,
+        edgeSemanticType(finalProfile),
+        data.title || readEdgeLabel(edge) || '',
+      )
+      const label = bpmnSemanticDisplayName(
+        bpmnSemanticJson,
+        data.title || readEdgeLabel(edge) || '',
+      )
       return [
         {
           kind: 'BUSINESS_FLOW_EDGE' as const,
@@ -1756,12 +1836,13 @@ export function flowDraftFromGraph(
           laneInstanceId: isCrossLane ? null : laneIdByKey.get(sourceLaneKey ?? '') ?? null,
           edgeType: legacyEdgeTypeForBpmn(finalProfile, isCrossLane),
           ...finalProfile,
-          label: data.title ?? readEdgeLabel(edge),
+          label,
           conditionText: data.bpmnConditionExpression ?? previousEdge?.conditionText ?? null,
           dataContract: previousEdge?.dataContract,
           semanticProfileKey: data.semanticProfileKey ?? previousEdge?.semanticProfileKey ?? null,
           semanticProfileVersion: data.semanticProfileVersion ?? previousEdge?.semanticProfileVersion ?? null,
           semanticPayloadJson: data.semanticPayloadJson ?? previousEdge?.semanticPayloadJson ?? {},
+          bpmnSemanticJson,
           isCrossLane,
           sourceType: 'NODE' as const,
           sourceNodeKey,
@@ -1845,7 +1926,12 @@ export function flowNodeRecordFromCell(
   const size = node.size()
   const fallbackTitle = data.title ?? String(node.attr('label/text') ?? previousNode?.title ?? '任务')
   const taskUiJson = taskUiForProfile(bpmnProfile, data.taskUiJson ?? previousNode?.taskUiJson, fallbackTitle)
-  const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle)
+  const bpmnSemanticJson = semanticForNodeProfile(
+    bpmnProfile,
+    data.bpmnSemanticJson ?? previousNode?.bpmnSemanticJson,
+    fallbackTitle,
+  )
+  const title = titleForProfile(bpmnProfile, taskUiJson, fallbackTitle, bpmnSemanticJson)
   return {
     kind: 'BUSINESS_FLOW_NODE',
     businessFlowId: canvas.businessFlowId,
@@ -1856,17 +1942,20 @@ export function flowNodeRecordFromCell(
     nodeType: legacyNodeTypeForBpmn(bpmnProfile),
     ...bpmnProfile,
     title,
-    description: legacyTaskTextField(bpmnProfile, data.description),
-    actor: legacyTaskTextField(bpmnProfile, data.actor),
-    businessRule: legacyTaskTextField(bpmnProfile, data.businessRule),
-    erRefs: data.erRefs ?? previousNode?.erRefs ?? [],
+    description: retiredNodeTextField(bpmnProfile, data.description),
+    actor: retiredNodeTextField(bpmnProfile, data.actor),
+    businessRule: retiredNodeTextField(bpmnProfile, data.businessRule),
+    erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType)
+      ? data.erRefs ?? previousNode?.erRefs ?? []
+      : [],
     position,
     size,
-    inputSummary: legacyTaskTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
-    outputSummary: legacyTaskTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
+    inputSummary: retiredNodeTextField(bpmnProfile, data.inputSummary ?? previousNode?.inputSummary),
+    outputSummary: retiredNodeTextField(bpmnProfile, data.outputSummary ?? previousNode?.outputSummary),
     semanticProfileKey: data.semanticProfileKey ?? previousNode?.semanticProfileKey ?? null,
     semanticProfileVersion: data.semanticProfileVersion ?? previousNode?.semanticProfileVersion ?? null,
     semanticPayloadJson: data.semanticPayloadJson ?? previousNode?.semanticPayloadJson ?? {},
+    bpmnSemanticJson,
     taskUiJson,
     processContainerJson: null,
     containerNodeKey: null,
@@ -1909,6 +1998,15 @@ export function flowEdgeRecordFromCell(
     enforcedProfile.bpmnFlowType === 'ASSOCIATION'
       ? enforcedProfile
       : bpmnProfile
+  const bpmnSemanticJson = normalizeBpmnSemantic(
+    data.bpmnSemanticJson ?? previousEdge?.bpmnSemanticJson,
+    edgeSemanticType(finalProfile),
+    data.title || readEdgeLabel(edge) || '',
+  )
+  const label = bpmnSemanticDisplayName(
+    bpmnSemanticJson,
+    data.title || readEdgeLabel(edge) || '',
+  )
   return {
     kind: 'BUSINESS_FLOW_EDGE',
     businessFlowId: canvas.businessFlowId,
@@ -1917,12 +2015,13 @@ export function flowEdgeRecordFromCell(
     laneInstanceId: isCrossLane ? null : laneIdByKey.get(sourceLaneKey ?? '') ?? null,
     edgeType: legacyEdgeTypeForBpmn(finalProfile, isCrossLane),
     ...finalProfile,
-    label: data.title ?? readEdgeLabel(edge),
+    label,
     conditionText: data.bpmnConditionExpression ?? previousEdge?.conditionText ?? null,
     dataContract: previousEdge?.dataContract,
     semanticProfileKey: data.semanticProfileKey ?? previousEdge?.semanticProfileKey ?? null,
     semanticProfileVersion: data.semanticProfileVersion ?? previousEdge?.semanticProfileVersion ?? null,
     semanticPayloadJson: data.semanticPayloadJson ?? previousEdge?.semanticPayloadJson ?? {},
+    bpmnSemanticJson,
     isCrossLane,
     sourceType: 'NODE',
     sourceNodeKey: sourceCell,

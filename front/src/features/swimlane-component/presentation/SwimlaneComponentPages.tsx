@@ -79,6 +79,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type {
   BpmnEdgeProfile,
   BpmnNodeProfile,
+  BpmnSemanticJson,
   BusinessFlowNodeErRef,
   BusinessFlowNodeType,
   ProcessContainerConfig,
@@ -86,17 +87,19 @@ import type {
   TaskUiContext,
 } from '@/entities/business-flow'
 import {
-  BUSINESS_SEMANTIC_PROFILES,
   BPMN_NODE_OPTIONS,
+  bpmnSemanticDisplayName,
+  edgeSemanticType,
+  isDataBpmnElement,
   legacyNodeTypeForBpmn,
   mergeBpmnIntoProperties,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
+  nodeSemanticType,
+  normalizeBpmnSemantic,
   normalizeTaskUiContext,
   semanticPayload,
   taskUiTaskName,
-  textArrayValue,
-  updateSemanticPayload,
 } from '@/entities/business-flow'
 import {
   useArchiveSwimlaneComponentMutation,
@@ -124,15 +127,10 @@ import {
   readCellData,
   removeBusinessFlowCells,
   renderComponentVersion,
-  updateEdgeBpmnProfile,
   updateEdgeText,
-  updateNodeBpmnProfile,
   updateNodeText,
 } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
-import {
-  BpmnEdgeProfileFields,
-  BpmnNodeProfileFields,
-} from '@/features/business-flow/presentation/components/BpmnFields'
+import { BpmnSemanticFields } from '@/features/business-flow/presentation/components/BpmnSemanticFields'
 import {
   TaskUiContextFields,
 } from '@/features/business-flow/presentation/components/TaskUiContextFields'
@@ -174,6 +172,7 @@ type SelectedComponentCell =
       semanticProfileKey: string
       semanticProfileVersion: number | null
       semanticPayloadJson: Record<string, unknown>
+      bpmnSemanticJson: BpmnSemanticJson | null
       taskUiJson: TaskUiContext | null
       processContainerJson: ProcessContainerConfig | null
       containerNodeKey: string | null
@@ -187,6 +186,7 @@ type SelectedComponentCell =
       semanticProfileKey: string
       semanticProfileVersion: number | null
       semanticPayloadJson: Record<string, unknown>
+      bpmnSemanticJson: BpmnSemanticJson
     }
   | null
 
@@ -1145,6 +1145,16 @@ function ComponentPanelShell({
   )
 }
 
+function outgoingFlowOptions(cell: Cell) {
+  return (cell.model?.getConnectedEdges(cell) ?? [])
+    .filter((edge) => edge.getSourceCellId() === cell.id)
+    .map((edge) => {
+      const data = readCellData(edge)
+      const value = data.edgeKey ?? edge.id
+      return { value, label: data.title || value }
+    })
+}
+
 function ComponentInspector({
   selected,
   erGraphs,
@@ -1162,42 +1172,22 @@ function ComponentInspector({
     )
   }
   if (selected.kind === 'edge') {
+    const semanticType = edgeSemanticType(selected.bpmnProfile)
     return (
-      <div className="space-y-4">
-        <FieldGroup>
-          <Field>
-            <FieldLabel>标签</FieldLabel>
-            <Input
-              value={selected.label}
-              onChange={(event) => {
-                const label = event.target.value
-                updateEdgeText(selected.cell, label)
-                onChange({ ...selected, label })
-              }}
-            />
-          </Field>
-        </FieldGroup>
-        <div>
-          <div className="mb-2 text-xs font-semibold">BPMN 连线</div>
-          <BpmnEdgeProfileFields
-            profile={selected.bpmnProfile}
-            onChange={(profile) => {
-              const bpmnProfile = updateEdgeBpmnProfile(selected.cell, profile)
-              onChange({ ...selected, bpmnProfile })
-            }}
-          />
-        </div>
-        <SemanticProfileEditor
-          targetScope="EDGE"
-          profileKey={selected.semanticProfileKey}
-          profileVersion={selected.semanticProfileVersion}
-          payload={selected.semanticPayloadJson}
-          onChange={(next) => {
-            selected.cell.setData({ ...readCellData(selected.cell), ...next })
-            onChange({ ...selected, ...next })
-          }}
-        />
-      </div>
+      <BpmnSemanticFields
+        value={selected.bpmnSemanticJson}
+        semanticType={semanticType}
+        onChange={(bpmnSemanticJson) => {
+          const label = bpmnSemanticDisplayName(bpmnSemanticJson, selected.label)
+          updateEdgeText(selected.cell, label)
+          selected.cell.setData({
+            ...readCellData(selected.cell),
+            title: label,
+            bpmnSemanticJson,
+          })
+          onChange({ ...selected, label, bpmnSemanticJson })
+        }}
+      />
     )
   }
   if (selected.bpmnProfile.bpmnElementType === 'TASK') {
@@ -1236,248 +1226,49 @@ function ComponentInspector({
       </div>
     )
   }
+  const semanticType = nodeSemanticType(selected.bpmnProfile)
+  if (!semanticType || !selected.bpmnSemanticJson) return null
   return (
-    <div className="space-y-4">
-      <FieldGroup>
-        <Field>
-          <FieldLabel>标题</FieldLabel>
-          <Input
-            value={selected.title}
-            onChange={(event) => {
-              const title = event.target.value
-              updateNodeText(selected.cell, title)
-              onChange({ ...selected, title })
-            }}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>描述</FieldLabel>
-          <Textarea
-            value={selected.description}
-            rows={3}
-            onChange={(event) => {
-              const description = event.target.value
-              selected.cell.setData({ ...readCellData(selected.cell), description })
-              onChange({ ...selected, description })
-            }}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>角色</FieldLabel>
-          <Input
-            value={selected.actor}
-            onChange={(event) => {
-              const actor = event.target.value
-              selected.cell.setData({ ...readCellData(selected.cell), actor })
-              onChange({ ...selected, actor })
-            }}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>业务规则</FieldLabel>
-          <Textarea
-            value={selected.businessRule}
-            rows={3}
-            onChange={(event) => {
-              const businessRule = event.target.value
-              selected.cell.setData({ ...readCellData(selected.cell), businessRule })
-              onChange({ ...selected, businessRule })
-            }}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>输入摘要</FieldLabel>
-          <Textarea
-            value={selected.inputSummary}
-            rows={2}
-            onChange={(event) => {
-              const inputSummary = event.target.value
-              selected.cell.setData({ ...readCellData(selected.cell), inputSummary })
-              onChange({ ...selected, inputSummary })
-            }}
-          />
-        </Field>
-        <Field>
-          <FieldLabel>输出摘要</FieldLabel>
-          <Textarea
-            value={selected.outputSummary}
-            rows={2}
-            onChange={(event) => {
-              const outputSummary = event.target.value
-              selected.cell.setData({ ...readCellData(selected.cell), outputSummary })
-              onChange({ ...selected, outputSummary })
-            }}
-          />
-        </Field>
-      </FieldGroup>
-      <div>
-        <div className="mb-2 text-xs font-semibold">BPMN 节点</div>
-        <BpmnNodeProfileFields
-          profile={selected.bpmnProfile}
-          onChange={(profile) => {
-            const bpmnProfile = updateNodeBpmnProfile(selected.cell, profile)
-            onChange({ ...selected, bpmnProfile })
+    <BpmnSemanticFields
+      value={selected.bpmnSemanticJson}
+      semanticType={semanticType}
+      flowOptions={outgoingFlowOptions(selected.cell)}
+      onChange={(bpmnSemanticJson) => {
+        const title = bpmnSemanticDisplayName(bpmnSemanticJson, selected.title)
+        updateNodeText(selected.cell, title)
+        selected.cell.setData({
+          ...readCellData(selected.cell),
+          title,
+          description: null,
+          actor: null,
+          businessRule: null,
+          inputSummary: null,
+          outputSummary: null,
+          bpmnSemanticJson,
+        })
+        onChange({
+          ...selected,
+          title,
+          description: '',
+          actor: '',
+          businessRule: '',
+          inputSummary: '',
+          outputSummary: '',
+          bpmnSemanticJson,
+        })
+      }}
+    >
+      {isDataBpmnElement(selected.bpmnProfile.bpmnElementType) ? (
+        <NodeErBindingEditor
+          erRefs={selected.erRefs}
+          erGraphs={erGraphs}
+          onChange={(erRefs) => {
+            selected.cell.setData({ ...readCellData(selected.cell), erRefs })
+            onChange({ ...selected, erRefs })
           }}
         />
-      </div>
-      <NodeErBindingEditor
-        erRefs={selected.erRefs}
-        erGraphs={erGraphs}
-        onChange={(erRefs) => {
-          selected.cell.setData({ ...readCellData(selected.cell), erRefs })
-          onChange({ ...selected, erRefs })
-        }}
-      />
-    </div>
-  )
-}
-
-function SemanticProfileEditor({
-  targetScope,
-  profileKey,
-  profileVersion,
-  payload,
-  onChange,
-}: {
-  targetScope: 'NODE' | 'EDGE'
-  profileKey: string
-  profileVersion: number | null
-  payload: Record<string, unknown>
-  onChange: (next: {
-    semanticProfileKey: string
-    semanticProfileVersion: number | null
-    semanticPayloadJson: Record<string, unknown>
-  }) => void
-}) {
-  const profiles = BUSINESS_SEMANTIC_PROFILES.filter(
-    (profile) => profile.targetScope === targetScope,
-  )
-  const selectedProfile = profiles.find((profile) => profile.profileKey === profileKey)
-  const data = semanticPayload(payload)
-  const updatePayload = (key: string, value: unknown) => {
-    onChange({
-      semanticProfileKey: profileKey,
-      semanticProfileVersion: profileVersion,
-      semanticPayloadJson: updateSemanticPayload(data, key, value),
-    })
-  }
-  return (
-    <div>
-      <div className="mb-2 text-xs font-semibold">业务语义 Profile</div>
-      <FieldGroup>
-        <Field>
-          <FieldLabel>Profile</FieldLabel>
-          <Select
-            value={profileKey || 'none'}
-            onValueChange={(value) => {
-              const profile = profiles.find((item) => item.profileKey === value)
-              onChange({
-                semanticProfileKey: value === 'none' ? '' : value,
-                semanticProfileVersion: profile?.version ?? null,
-                semanticPayloadJson: {},
-              })
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue>{selectedProfile?.name ?? '未选择'}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="none">未选择</SelectItem>
-                {profiles.map((profile) => (
-                  <SelectItem key={profile.profileKey} value={profile.profileKey}>
-                    {profile.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        {targetScope === 'NODE' && profileKey ? (
-          <>
-            <Field>
-              <FieldLabel>操作类型</FieldLabel>
-              <Input
-                value={String(data.operationType ?? '')}
-                onChange={(event) => updatePayload('operationType', event.target.value.trim())}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>业务对象</FieldLabel>
-              <Input
-                value={String(data.businessObject ?? '')}
-                onChange={(event) => updatePayload('businessObject', event.target.value.trim())}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>前置条件</FieldLabel>
-              <Textarea
-                rows={2}
-                value={textArrayValue(data.preconditions).join('\n')}
-                onChange={(event) => updatePayload('preconditions', textArrayValue(event.target.value))}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>后置条件</FieldLabel>
-              <Textarea
-                rows={2}
-                value={textArrayValue(data.postconditions).join('\n')}
-                onChange={(event) => updatePayload('postconditions', textArrayValue(event.target.value))}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>校验规则</FieldLabel>
-              <Textarea
-                rows={2}
-                value={textArrayValue(data.validationRules).join('\n')}
-                onChange={(event) => updatePayload('validationRules', textArrayValue(event.target.value))}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>异常处理</FieldLabel>
-              <Textarea
-                rows={2}
-                value={textArrayValue(data.exceptionHandlers).join('\n')}
-                onChange={(event) => updatePayload('exceptionHandlers', textArrayValue(event.target.value))}
-              />
-            </Field>
-          </>
-        ) : null}
-        {targetScope === 'EDGE' && profileKey ? (
-          <>
-            <Field>
-              <FieldLabel>条件</FieldLabel>
-              <Textarea
-                rows={2}
-                value={String(data.condition ?? '')}
-                onChange={(event) => updatePayload('condition', event.target.value.trim())}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>交接</FieldLabel>
-              <Input
-                value={String(data.handoff ?? '')}
-                onChange={(event) => updatePayload('handoff', event.target.value.trim())}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>消息</FieldLabel>
-              <Input
-                value={String(data.message ?? '')}
-                onChange={(event) => updatePayload('message', event.target.value.trim())}
-              />
-            </Field>
-            <Field>
-              <FieldLabel>异常类型</FieldLabel>
-              <Input
-                value={String(data.exceptionType ?? '')}
-                onChange={(event) => updatePayload('exceptionType', event.target.value.trim())}
-              />
-            </Field>
-          </>
-        ) : null}
-      </FieldGroup>
-    </div>
+      ) : null}
+    </BpmnSemanticFields>
   )
 }
 
@@ -1500,6 +1291,11 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       semanticProfileKey: data.semanticProfileKey ?? '',
       semanticProfileVersion: data.semanticProfileVersion ?? null,
       semanticPayloadJson: semanticPayload(data.semanticPayloadJson),
+      bpmnSemanticJson: normalizeBpmnSemantic(
+        data.bpmnSemanticJson,
+        edgeSemanticType(bpmnProfile),
+        data.title ?? '',
+      ),
     }
   }
   if (data.cellRole === 'COMPONENT_NODE') {
@@ -1514,6 +1310,7 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       bpmnCallActivityRef: data.bpmnCallActivityRef,
       propertiesJson: data.propertiesJson,
     })
+    const semanticType = nodeSemanticType(bpmnProfile)
     return {
       kind: 'node',
       cell,
@@ -1527,12 +1324,19 @@ function readSelectedCell(cell: Cell): SelectedComponentCell {
       semanticProfileKey: data.semanticProfileKey ?? '',
       semanticProfileVersion: data.semanticProfileVersion ?? null,
       semanticPayloadJson: semanticPayload(data.semanticPayloadJson),
+      bpmnSemanticJson: semanticType
+        ? normalizeBpmnSemantic(
+            data.bpmnSemanticJson,
+            semanticType,
+            data.title ?? String(cell.attr('label/text') ?? ''),
+          )
+        : null,
       taskUiJson: bpmnProfile.bpmnElementType === 'TASK'
         ? normalizeTaskUiContext(data.taskUiJson, { taskName: data.title ?? String(cell.attr('label/text') ?? '') })
         : data.taskUiJson ?? null,
       processContainerJson: data.processContainerJson ?? null,
       containerNodeKey: data.containerNodeKey ?? null,
-      erRefs: data.erRefs ?? [],
+      erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
     }
   }
   return null

@@ -6,6 +6,13 @@ import type {
   LocalBusinessFlowCanvas,
 } from '@/entities/business-flow'
 import {
+  bpmnSemanticDisplayName,
+  edgeSemanticType,
+  isDataBpmnElement,
+  nodeSemanticType,
+  normalizeBpmnEdgeProfile,
+  normalizeBpmnNodeProfile,
+  normalizeBpmnSemantic,
   normalizeTaskUiContext,
   taskUiTaskName,
 } from '@/entities/business-flow'
@@ -24,6 +31,12 @@ function laneKeyForNode(draft: FlowDraft, node: BusinessFlowNodeRecord) {
 }
 
 function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
+  const profile = normalizeBpmnEdgeProfile(edge)
+  const bpmnSemanticJson = normalizeBpmnSemantic(
+    edge.bpmnSemanticJson,
+    edgeSemanticType(profile),
+    edge.label ?? '',
+  )
   return {
     sourceNodeKey: edge.sourceNodeKey,
     targetNodeKey: edge.targetNodeKey,
@@ -34,12 +47,13 @@ function edgePatch(edge: BusinessFlowEdgeRecord): Record<string, unknown> {
     bpmnSequenceFlowKind: edge.bpmnSequenceFlowKind,
     bpmnMessageName: edge.bpmnMessageName,
     bpmnConditionExpression: edge.bpmnConditionExpression,
-    label: edge.label,
+    label: bpmnSemanticDisplayName(bpmnSemanticJson, edge.label ?? ''),
     conditionText: edge.conditionText,
     dataContractJson: edge.dataContract ?? {},
     semanticProfileKey: edge.semanticProfileKey ?? null,
     semanticProfileVersion: edge.semanticProfileVersion ?? null,
     semanticPayloadJson: edge.semanticPayloadJson ?? {},
+    bpmnSemanticJson,
     styleJson: edge.styleJson ?? {},
     propertiesJson: edge.propertiesJson ?? {},
   }
@@ -50,8 +64,15 @@ function nodePatch(
   node: BusinessFlowNodeRecord,
 ): Record<string, unknown> {
   const isTask = node.bpmnElementType === 'TASK'
+  const profile = normalizeBpmnNodeProfile(node)
+  const semanticType = nodeSemanticType(profile)
+  const bpmnSemanticJson = semanticType
+    ? normalizeBpmnSemantic(node.bpmnSemanticJson, semanticType, node.title)
+    : null
   const taskUiJson = isTask ? normalizeTaskUiContext(node.taskUiJson, { taskName: node.title }) : node.taskUiJson ?? {}
-  const title = isTask ? taskUiTaskName(taskUiJson, node.title) : node.title
+  const title = isTask
+    ? taskUiTaskName(taskUiJson, node.title)
+    : bpmnSemanticDisplayName(bpmnSemanticJson, node.title)
   return {
     laneInstanceKey: laneKeyForNode(draft, node),
     nodeType: node.nodeType,
@@ -67,14 +88,15 @@ function nodePatch(
     y: node.position.y,
     width: node.size.width,
     height: node.size.height,
-    description: isTask ? null : node.description,
-    actor: isTask ? null : node.actor,
-    businessRule: isTask ? null : node.businessRule,
-    inputSummary: isTask ? null : node.inputSummary,
-    outputSummary: isTask ? null : node.outputSummary,
+    description: null,
+    actor: null,
+    businessRule: null,
+    inputSummary: null,
+    outputSummary: null,
     semanticProfileKey: node.semanticProfileKey ?? null,
     semanticProfileVersion: node.semanticProfileVersion ?? null,
     semanticPayloadJson: node.semanticPayloadJson ?? {},
+    bpmnSemanticJson: bpmnSemanticJson ?? {},
     taskUiJson,
     processContainerJson: node.processContainerJson ?? {},
     containerNodeKey: node.containerNodeKey ?? null,
@@ -256,7 +278,12 @@ export function buildBusinessFlowOps(
         patch: nodePatch(draft, node),
         summary: `新增节点：${node.title}`,
       })
-      ops.push(...buildErRefOps(key, node.title, [], node.erRefs ?? []))
+      ops.push(...buildErRefOps(
+        key,
+        node.title,
+        [],
+        isDataBpmnElement(node.bpmnElementType) ? node.erRefs ?? [] : [],
+      ))
       return
     }
     const patch: Record<string, unknown> = {}
@@ -290,6 +317,8 @@ export function buildBusinessFlowOps(
       patch.semanticProfileVersion = node.semanticProfileVersion ?? null
     if (!sameJson(prev.semanticPayloadJson, node.semanticPayloadJson))
       patch.semanticPayloadJson = node.semanticPayloadJson ?? {}
+    if (!sameJson(prev.bpmnSemanticJson, node.bpmnSemanticJson))
+      patch.bpmnSemanticJson = node.bpmnSemanticJson ?? {}
     if (!sameJson(prev.taskUiJson, node.taskUiJson))
       patch.taskUiJson = node.taskUiJson ?? {}
     if (!sameJson(prev.processContainerJson, node.processContainerJson))
@@ -322,7 +351,12 @@ export function buildBusinessFlowOps(
       })
     }
     ops.push(
-      ...buildErRefOps(key, node.title, prev.erRefs ?? [], node.erRefs ?? []),
+      ...buildErRefOps(
+        key,
+        node.title,
+        isDataBpmnElement(prev.bpmnElementType) ? prev.erRefs ?? [] : [],
+        isDataBpmnElement(node.bpmnElementType) ? node.erRefs ?? [] : [],
+      ),
     )
   })
 
@@ -364,6 +398,7 @@ export function buildBusinessFlowOps(
       (prev.semanticProfileKey ?? '') !== (edge.semanticProfileKey ?? '') ||
       (prev.semanticProfileVersion ?? null) !== (edge.semanticProfileVersion ?? null) ||
       !sameJson(prev.semanticPayloadJson, edge.semanticPayloadJson) ||
+      !sameJson(prev.bpmnSemanticJson, edge.bpmnSemanticJson) ||
       !sameJson(prev.styleJson, edge.styleJson) ||
       !sameJson(prev.propertiesJson, edge.propertiesJson)
     ) {

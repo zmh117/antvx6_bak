@@ -48,6 +48,7 @@ class SwimlaneComponentNodeDTO(BaseModel):
     semantic_profile_key: str | None = None
     semantic_profile_version: int | None = None
     semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    bpmn_semantic_json: dict[str, Any] = Field(default_factory=dict)
     task_ui_json: dict[str, Any] = Field(default_factory=dict)
     process_container_json: dict[str, Any] = Field(default_factory=dict)
     container_node_key: str | None = None
@@ -79,6 +80,7 @@ class SwimlaneComponentEdgeDTO(BaseModel):
     semantic_profile_key: str | None = None
     semantic_profile_version: int | None = None
     semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    bpmn_semantic_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -153,6 +155,7 @@ class SwimlaneComponentNodeInput(BaseModel):
     semantic_profile_key: str | None = None
     semantic_profile_version: int | None = None
     semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    bpmn_semantic_json: dict[str, Any] = Field(default_factory=dict)
     task_ui_json: dict[str, Any] = Field(default_factory=dict)
     process_container_json: dict[str, Any] = Field(default_factory=dict)
     container_node_key: str | None = None
@@ -182,6 +185,7 @@ class SwimlaneComponentEdgeInput(BaseModel):
     semantic_profile_key: str | None = None
     semantic_profile_version: int | None = None
     semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    bpmn_semantic_json: dict[str, Any] = Field(default_factory=dict)
     style_json: dict[str, Any] = Field(default_factory=dict)
     properties_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -239,6 +243,7 @@ class BusinessFlowNodeDTO(BaseModel):
     semantic_profile_key: str | None = None
     semantic_profile_version: int | None = None
     semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    bpmn_semantic_json: dict[str, Any] = Field(default_factory=dict)
     task_ui_json: dict[str, Any] = Field(default_factory=dict)
     process_container_json: dict[str, Any] = Field(default_factory=dict)
     container_node_key: str | None = None
@@ -279,6 +284,7 @@ class BusinessFlowEdgeDTO(BaseModel):
     semantic_profile_key: str | None = None
     semantic_profile_version: int | None = None
     semantic_payload_json: dict[str, Any] = Field(default_factory=dict)
+    bpmn_semantic_json: dict[str, Any] = Field(default_factory=dict)
     origin_component_edge_key: str | None = None
     is_overridden: bool = False
     style_json: dict[str, Any] = Field(default_factory=dict)

@@ -172,14 +172,8 @@ def business_flow_quality_issues(
     edges: list[dict[str, Any]],
     refs_by_node_key: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
-    refs = refs_by_node_key or {}
     issues: list[dict[str, Any]] = []
-    outgoing_by_node: dict[str, list[dict[str, Any]]] = {}
     children_by_container: dict[str, list[str]] = {}
-    for edge in edges:
-        source_key = edge.get("source_node_key")
-        if source_key:
-            outgoing_by_node.setdefault(str(source_key), []).append(edge)
     for node in nodes:
         container_key = node.get("container_node_key")
         node_key = node.get("node_key")
@@ -187,47 +181,6 @@ def business_flow_quality_issues(
             children_by_container.setdefault(str(container_key), []).append(str(node_key))
     for node in nodes:
         node_key = str(node.get("node_key") or "")
-        payload = semantic_payload(node.get("semantic_payload_json"))
-        profile_key = semantic_profile_key(node.get("semantic_profile_key"))
-        element_type = node.get("bpmn_element_type")
-        if profile_key and element_type == "TASK" and not payload.get("operationType"):
-            issues.append(
-                {
-                    "severity": "warning",
-                    "targetType": "NODE",
-                    "targetKey": node_key,
-                    "code": "MISSING_OPERATION_TYPE",
-                    "message": "已选择业务语义 Profile，但任务缺少操作类型。",
-                }
-            )
-        if element_type in {"DATA_OBJECT", "DATA_INPUT", "DATA_OUTPUT", "DATA_STORE"}:
-            if not payload.get("businessObject") and not refs.get(node_key):
-                issues.append(
-                    {
-                        "severity": "info",
-                        "targetType": "NODE",
-                        "targetKey": node_key,
-                        "code": "DATA_NODE_WITHOUT_BUSINESS_OBJECT",
-                        "message": "数据节点缺少业务对象或 ER 绑定。",
-                    }
-                )
-        if element_type == "GATEWAY":
-            for edge in outgoing_by_node.get(node_key, []):
-                edge_payload = semantic_payload(edge.get("semantic_payload_json"))
-                if not (
-                    edge.get("condition_text")
-                    or edge.get("bpmn_condition_expression")
-                    or edge_payload.get("condition")
-                ):
-                    issues.append(
-                        {
-                            "severity": "warning",
-                            "targetType": "EDGE",
-                            "targetKey": edge.get("edge_key"),
-                            "code": "MISSING_GATEWAY_CONDITION",
-                            "message": "网关出边缺少条件，Agent 难以判断分支场景。",
-                        }
-                    )
         issues.extend(task_ui_quality_issues(node))
         if is_process_container(node):
             issues.extend(

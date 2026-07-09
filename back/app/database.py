@@ -109,5 +109,9 @@ def run_migrations() -> None:
                 migrations_dir / "017_bpmn_task_ui_process_container.sql"
             ).read_text(encoding="utf-8")
             cur.execute(task_ui_process_container_sql)
+            bpmn_non_task_semantics_sql = (
+                migrations_dir / "018_bpmn_non_task_semantics.sql"
+            ).read_text(encoding="utf-8")
+            cur.execute(bpmn_non_task_semantics_sql)
             database_connection_service.seed_env_target_connection(cur)
         conn.commit()

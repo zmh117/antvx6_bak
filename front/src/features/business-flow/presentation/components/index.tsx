@@ -13,3 +13,5 @@ export function BusinessFlowToolbarSkeleton() {
 export function ErBindingPanelSkeleton() {
   return null
 }
+
+export { BpmnSemanticFields } from './BpmnSemanticFields'

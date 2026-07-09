@@ -13,6 +13,13 @@ from app.domain.business_flow.bpmn import (
     node_profile_error,
     strip_mes_json,
 )
+from app.domain.business_flow.bpmn_semantic import (
+    bpmn_semantic_payload,
+    edge_semantic_type,
+    is_data_element,
+    node_semantic_type,
+    semantic_display_name,
+)
 from app.domain.business_flow.semantic_profile import (
     semantic_payload,
     semantic_payload_error,
@@ -57,15 +64,23 @@ def _component_product_id(cur, component_id: UUID) -> UUID:
 
 
 def _node_response(row: dict) -> dict:
+    semantic_type = node_semantic_type(row)
+    bpmn_semantic = bpmn_semantic_payload(
+        row.get("bpmn_semantic_json"),
+        semantic_type,
+        row.get("title"),
+    )
     return {
         **row,
+        "title": semantic_display_name(bpmn_semantic, row.get("title")),
         "position_x": float(row["position_x"]),
         "position_y": float(row["position_y"]),
         "width": float(row["width"]),
         "height": float(row["height"]),
-        "er_refs": row.get("er_refs") or [],
+        "er_refs": (row.get("er_refs") or []) if is_data_element(row) else [],
         "style_json": row.get("style_json") or {},
         "semantic_payload_json": row.get("semantic_payload_json") or {},
+        "bpmn_semantic_json": bpmn_semantic,
         "task_ui_json": row.get("task_ui_json") or {},
         "process_container_json": row.get("process_container_json") or {},
         "properties_json": strip_mes_json(row.get("properties_json") or {}),
@@ -73,10 +88,17 @@ def _node_response(row: dict) -> dict:
 
 
 def _edge_response(row: dict) -> dict:
+    bpmn_semantic = bpmn_semantic_payload(
+        row.get("bpmn_semantic_json"),
+        edge_semantic_type(row),
+        row.get("label"),
+    )
     return {
         **row,
+        "label": semantic_display_name(bpmn_semantic, row.get("label")) or None,
         "data_contract_json": row.get("data_contract_json") or {},
         "semantic_payload_json": row.get("semantic_payload_json") or {},
+        "bpmn_semantic_json": bpmn_semantic,
         "style_json": row.get("style_json") or {},
         "properties_json": strip_mes_json(row.get("properties_json") or {}),
     }
@@ -167,6 +189,7 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
                    bpmn_call_activity_ref,
                    position_x, position_y, width, height, style_json, properties_json,
                    semantic_profile_key, semantic_profile_version, semantic_payload_json,
+                   bpmn_semantic_json,
                    task_ui_json, process_container_json, container_node_key
             FROM swimlane_component_node
             WHERE component_version_id = %s
@@ -191,6 +214,7 @@ def _fetch_component(cur, component_id: UUID) -> SwimlaneComponentResponse:
                    bpmn_condition_expression, data_contract_json,
                    style_json, properties_json,
                    semantic_profile_key, semantic_profile_version, semantic_payload_json
+                   , bpmn_semantic_json
             FROM swimlane_component_edge
             WHERE component_version_id = %s
             ORDER BY created_at ASC, edge_key ASC
@@ -322,6 +346,18 @@ def _insert_version_payload(
     )
     version_id = cur.fetchone()["id"]
     for node in body.nodes:
+        node_data = node.model_dump(mode="python")
+        semantic_type = node_semantic_type(node_data)
+        bpmn_semantic = bpmn_semantic_payload(
+            node.bpmn_semantic_json,
+            semantic_type,
+            node.title,
+        )
+        title = (
+            semantic_display_name(bpmn_semantic, node.title)
+            if semantic_type
+            else node.title
+        )
         cur.execute(
             """
             INSERT INTO swimlane_component_node (
@@ -332,21 +368,22 @@ def _insert_version_payload(
                 bpmn_call_activity_ref,
                 position_x, position_y, width, height, style_json, properties_json,
                 semantic_profile_key, semantic_profile_version, semantic_payload_json,
+                bpmn_semantic_json,
                 task_ui_json, process_container_json, container_node_key
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 version_id,
                 node.node_key,
                 node.node_type,
-                node.title,
-                node.description,
-                node.actor,
-                node.business_rule,
-                node.input_summary,
-                node.output_summary,
+                title,
+                None if semantic_type else node.description,
+                None if semantic_type else node.actor,
+                None if semantic_type else node.business_rule,
+                None if semantic_type else node.input_summary,
+                None if semantic_type else node.output_summary,
                 node.bpmn_element_type,
                 node.bpmn_event_kind,
                 node.bpmn_event_definition,
@@ -363,13 +400,14 @@ def _insert_version_payload(
                 node.semantic_profile_key,
                 node.semantic_profile_version,
                 Jsonb(semantic_payload(node.semantic_payload_json)),
+                Jsonb(bpmn_semantic),
                 Jsonb(task_ui_payload(node.task_ui_json)),
                 Jsonb(process_container_payload(node.process_container_json)),
                 node.container_node_key,
             ),
         )
         node_id = cur.fetchone()["id"]
-        for ref in node.er_refs:
+        for ref in node.er_refs if is_data_element(node_data) else []:
             cur.execute(
                 """
                 INSERT INTO swimlane_component_node_er_ref (
@@ -390,6 +428,12 @@ def _insert_version_payload(
                 ),
             )
     for edge in body.edges:
+        edge_data = edge.model_dump(mode="python")
+        bpmn_semantic = bpmn_semantic_payload(
+            edge.bpmn_semantic_json,
+            edge_semantic_type(edge_data),
+            edge.label,
+        )
         cur.execute(
             """
             INSERT INTO swimlane_component_edge (
@@ -399,8 +443,9 @@ def _insert_version_payload(
                 bpmn_condition_expression, data_contract_json,
                 style_json, properties_json,
                 semantic_profile_key, semantic_profile_version, semantic_payload_json
+                , bpmn_semantic_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 version_id,
@@ -410,7 +455,7 @@ def _insert_version_payload(
                 edge.source_port,
                 edge.target_port,
                 edge.edge_type,
-                edge.label,
+                semantic_display_name(bpmn_semantic, edge.label) or None,
                 edge.condition_text,
                 edge.bpmn_flow_type,
                 edge.bpmn_sequence_flow_kind,
@@ -422,6 +467,7 @@ def _insert_version_payload(
                 edge.semantic_profile_key,
                 edge.semantic_profile_version,
                 Jsonb(semantic_payload(edge.semantic_payload_json)),
+                Jsonb(bpmn_semantic),
             ),
         )
     return version_id
@@ -691,6 +737,7 @@ def publish_swimlane_component_version(
                            bpmn_call_activity_ref,
                            style_json, properties_json,
                            semantic_profile_key, semantic_profile_version, semantic_payload_json,
+                           bpmn_semantic_json,
                            task_ui_json, process_container_json, container_node_key
                     FROM swimlane_component_node
                     WHERE component_version_id = %s
@@ -725,6 +772,7 @@ def publish_swimlane_component_version(
                            bpmn_condition_expression, data_contract_json,
                            style_json, properties_json,
                            semantic_profile_key, semantic_profile_version, semantic_payload_json
+                           , bpmn_semantic_json
                     FROM swimlane_component_edge
                     WHERE component_version_id = %s
                     ORDER BY created_at ASC, edge_key ASC

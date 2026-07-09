@@ -3,6 +3,7 @@ import type { Cell, Edge } from '@antv/x6'
 import type {
   BpmnEdgeProfile,
   BpmnNodeProfile,
+  BpmnSemanticJson,
   BusinessFlowNodeErRef,
   ProcessContainerConfig,
   TaskUiContext,
@@ -11,6 +12,10 @@ import {
   normalizeTaskUiContext,
   normalizeBpmnEdgeProfile,
   normalizeBpmnNodeProfile,
+  edgeSemanticType,
+  isDataBpmnElement,
+  nodeSemanticType,
+  normalizeBpmnSemantic,
 } from '@/entities/business-flow'
 import { readCellData } from '@/features/business-flow/infrastructure/x6/businessFlowX6'
 
@@ -30,6 +35,7 @@ export type SelectedBusinessCell =
       semanticProfileKey: string
       semanticProfileVersion: number | null
       semanticPayloadJson: Record<string, unknown>
+      bpmnSemanticJson: BpmnSemanticJson | null
       taskUiJson: TaskUiContext | null
       processContainerJson: ProcessContainerConfig | null
       containerNodeKey: string | null
@@ -43,6 +49,7 @@ export type SelectedBusinessCell =
       semanticProfileKey: string
       semanticProfileVersion: number | null
       semanticPayloadJson: Record<string, unknown>
+      bpmnSemanticJson: BpmnSemanticJson
       bpmnProfile: BpmnEdgeProfile
     }
   | null
@@ -65,6 +72,11 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       semanticProfileKey: data.semanticProfileKey ?? '',
       semanticProfileVersion: data.semanticProfileVersion ?? null,
       semanticPayloadJson: data.semanticPayloadJson ?? {},
+      bpmnSemanticJson: normalizeBpmnSemantic(
+        data.bpmnSemanticJson,
+        edgeSemanticType(bpmnProfile),
+        data.title ?? '',
+      ),
       bpmnProfile,
     }
   }
@@ -88,6 +100,7 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       bpmnCallActivityRef: data.bpmnCallActivityRef,
       propertiesJson: data.propertiesJson,
     })
+    const semanticType = nodeSemanticType(bpmnProfile)
     return {
       kind: 'node',
       cell,
@@ -100,13 +113,20 @@ export function readSelectedBusinessCell(cell: Cell): SelectedBusinessCell {
       semanticProfileKey: data.semanticProfileKey ?? '',
       semanticProfileVersion: data.semanticProfileVersion ?? null,
       semanticPayloadJson: data.semanticPayloadJson ?? {},
+      bpmnSemanticJson: semanticType
+        ? normalizeBpmnSemantic(
+            data.bpmnSemanticJson,
+            semanticType,
+            data.title ?? String(cell.attr('label/text') ?? ''),
+          )
+        : null,
       taskUiJson: bpmnProfile.bpmnElementType === 'TASK'
         ? normalizeTaskUiContext(data.taskUiJson, { taskName: data.title ?? String(cell.attr('label/text') ?? '') })
         : data.taskUiJson ?? null,
       processContainerJson: data.processContainerJson ?? null,
       containerNodeKey: data.containerNodeKey ?? null,
       bpmnProfile,
-      erRefs: data.erRefs ?? [],
+      erRefs: isDataBpmnElement(bpmnProfile.bpmnElementType) ? data.erRefs ?? [] : [],
     }
   }
   return null

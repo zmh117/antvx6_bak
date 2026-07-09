@@ -84,6 +84,7 @@ class SwimlaneComponentNode:
     er_refs: list[ErReference] = field(default_factory=list)
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
+    bpmn_semantic_json: JsonDict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -105,6 +106,7 @@ class SwimlaneComponentEdge:
     data_contract_json: JsonDict = field(default_factory=dict)
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
+    bpmn_semantic_json: JsonDict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -172,6 +174,7 @@ class BusinessFlowNode:
     is_overridden: bool = False
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
+    bpmn_semantic_json: JsonDict = field(default_factory=dict)
     er_refs: list[ErReference] = field(default_factory=list)
 
 
@@ -201,6 +204,7 @@ class BusinessFlowEdge:
     is_overridden: bool = False
     style_json: JsonDict = field(default_factory=dict)
     properties_json: JsonDict = field(default_factory=dict)
+    bpmn_semantic_json: JsonDict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
