@@ -1,10 +1,12 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.application.agent_context_service import _step_context_item
+from app.application.agent_context_service import _step_context_item, build_business_flow_context
 from app.domain.business_flow.bpmn_semantic import (
     FIELD_KINDS,
     bpmn_semantic_payload,
@@ -14,9 +16,24 @@ from app.domain.business_flow.bpmn_semantic import (
     node_semantic_type,
     semantic_display_name,
 )
+from app.interfaces.http.routers.business_flow.routes import _remap_component_semantic_refs
 
 
 class BpmnSemanticTest(unittest.TestCase):
+    def test_migration_is_additive_and_keeps_legacy_columns(self) -> None:
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "018_bpmn_non_task_semantics.sql"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(migration.count("ADD COLUMN IF NOT EXISTS bpmn_semantic_json"), 4)
+        self.assertNotIn("DROP COLUMN", migration.upper())
+        for legacy_column in {
+            "title", "description", "actor", "business_rule",
+            "input_summary", "output_summary",
+        }:
+            self.assertNotIn(f"DROP COLUMN {legacy_column}".upper(), migration.upper())
+
     def test_maps_current_non_task_node_and_edge_profiles(self) -> None:
         self.assertEqual(node_semantic_type({"bpmn_element_type": "EVENT", "bpmn_event_kind": "START"}), "startEvent")
         self.assertEqual(node_semantic_type({"bpmn_element_type": "SUB_PROCESS", "bpmn_subprocess_kind": "TRANSACTION"}), "transaction")
@@ -124,6 +141,93 @@ class BpmnSemanticTest(unittest.TestCase):
         codes = {issue["code"] for issue in issues}
         self.assertIn("BPMN_SEMANTIC_DUPLICATE_BRANCH", codes)
         self.assertIn("BPMN_SEMANTIC_INVALID_DEFAULT_FLOW", codes)
+
+    def test_er_binding_boundary_covers_every_non_task_profile(self) -> None:
+        allowed = {"DATA_OBJECT", "DATA_INPUT", "DATA_OUTPUT", "DATA_STORE"}
+        for element_type in {
+            "EVENT", "SUB_PROCESS", "GATEWAY", "DATA_OBJECT",
+            "DATA_INPUT", "DATA_OUTPUT", "DATA_STORE", "TASK",
+        }:
+            self.assertEqual(
+                is_data_element({"bpmn_element_type": element_type}),
+                element_type in allowed,
+            )
+
+    def test_component_reference_remap_updates_gateway_and_data_references(self) -> None:
+        remapped = _remap_component_semantic_refs(
+            {
+                "defaultFlowId": "edge-1",
+                "branches": [{"flowId": "edge-1", "label": "通过", "condition": "ok"}],
+                "ownerActivityRef": "task-1",
+                "readByRefs": ["task-1"],
+            },
+            {"task-1": "lane-task-1"},
+            {"edge-1": "lane-edge-1"},
+        )
+        self.assertEqual(remapped["defaultFlowId"], "lane-edge-1")
+        self.assertEqual(remapped["branches"][0]["flowId"], "lane-edge-1")
+        self.assertEqual(remapped["ownerActivityRef"], "lane-task-1")
+        self.assertEqual(remapped["readByRefs"], ["lane-task-1"])
+
+    @patch("app.application.agent_context_service.repo.fetch_swimlane_flow_er_refs")
+    @patch("app.application.agent_context_service.repo.fetch_swimlane_flow_edges")
+    @patch("app.application.agent_context_service.repo.fetch_swimlane_flow_nodes")
+    @patch("app.application.agent_context_service.repo.fetch_swimlane_business_flow_rows")
+    def test_agent_context_projects_structured_semantics_and_filters_legacy_fields(
+        self,
+        fetch_flows,
+        fetch_nodes,
+        fetch_edges,
+        fetch_refs,
+    ) -> None:
+        flow_id = uuid4()
+        fetch_flows.return_value = [{"id": flow_id, "code": "ORDER", "name": "订单流程", "description": None}]
+        fetch_nodes.return_value = [
+            {
+                "node_key": "start", "node_type": "START", "bpmn_element_type": "EVENT",
+                "bpmn_event_kind": "START", "title": "旧开始", "actor": "旧角色",
+                "bpmn_semantic_json": {
+                    "eventName": "订单开始", "triggerType": "message",
+                    "startCondition": "收到订单消息",
+                },
+            },
+            {
+                "node_key": "gateway", "node_type": "GATEWAY", "bpmn_element_type": "GATEWAY",
+                "bpmn_gateway_type": "EXCLUSIVE", "title": "旧判断",
+                "bpmn_semantic_json": {
+                    "decisionName": "库存判断", "decisionVariable": "stock",
+                    "branches": [{"flowId": "flow-ok", "label": "有库存", "condition": "stock > 0"}],
+                    "defaultFlowId": "flow-ok",
+                },
+            },
+            {
+                "node_key": "order-data", "node_type": "DATA_OBJECT",
+                "bpmn_element_type": "DATA_OBJECT", "title": "旧数据",
+                "bpmn_semantic_json": {"dataName": "订单数据", "entityName": "订单"},
+            },
+        ]
+        fetch_edges.return_value = [
+            {
+                "edge_key": "flow-ok", "edge_type": "SEQUENCE", "bpmn_flow_type": "SEQUENCE",
+                "source_node_key": "gateway", "target_node_key": "order-data", "label": "旧路径",
+                "bpmn_semantic_json": {
+                    "flowName": "库存充足", "flowKind": "conditional",
+                    "conditionText": "库存大于零", "testScenarioType": "normal",
+                },
+            },
+        ]
+        fetch_refs.return_value = [
+            {"node_key": "start", "er_table_key": "illegal"},
+            {"node_key": "order-data", "er_table_key": "orders"},
+        ]
+
+        context = build_business_flow_context(object(), uuid4())
+        flow = context["businessFlows"][0]
+        self.assertEqual(flow["steps"][0]["title"], "订单开始")
+        self.assertIsNone(flow["steps"][0]["actor"])
+        self.assertEqual(flow["steps"][1]["bpmnSemantic"]["defaultFlowId"], "flow-ok")
+        self.assertEqual(flow["edges"][0]["bpmnSemantic"]["conditionText"], "库存大于零")
+        self.assertEqual(flow["erRefs"], [{"node_key": "order-data", "er_table_key": "orders"}])
 
 
 if __name__ == "__main__":

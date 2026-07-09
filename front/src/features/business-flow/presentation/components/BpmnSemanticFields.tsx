@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -259,11 +259,115 @@ function BranchEditor({
                 onChange={(event) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, condition: event.target.value } : item))}
               />
             </div>
-            <Button
+            <div className="flex flex-col">
+              <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="上移分支"
+              disabled={index === 0}
+              onClick={() => {
+                const next = [...value]
+                ;[next[index - 1], next[index]] = [next[index], next[index - 1]]
+                onChange(next)
+              }}
+            >
+              <ArrowUp />
+              </Button>
+              <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="下移分支"
+              disabled={index === value.length - 1}
+              onClick={() => {
+                const next = [...value]
+                ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
+                onChange(next)
+              }}
+            >
+              <ArrowDown />
+              </Button>
+              <Button
               type="button"
               variant="ghost"
               size="icon-sm"
               title="删除分支"
+              onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}
+            >
+              <Trash2 />
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Field>
+  )
+}
+
+function StringListEditor({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string[]
+  onChange: (value: string[]) => void
+}) {
+  return (
+    <Field>
+      <div className="flex items-center justify-between">
+        <FieldLabel>{label}</FieldLabel>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-sm"
+          title="添加条目"
+          onClick={() => onChange([...value, ''])}
+        >
+          <Plus />
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {value.map((item, index) => (
+          <div key={index} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-1">
+            <Input
+              value={item}
+              onChange={(event) => onChange(value.map((current, itemIndex) => itemIndex === index ? event.target.value : current))}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="上移条目"
+              disabled={index === 0}
+              onClick={() => {
+                const next = [...value]
+                ;[next[index - 1], next[index]] = [next[index], next[index - 1]]
+                onChange(next)
+              }}
+            >
+              <ArrowUp />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="下移条目"
+              disabled={index === value.length - 1}
+              onClick={() => {
+                const next = [...value]
+                ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
+                onChange(next)
+              }}
+            >
+              <ArrowDown />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              title="删除条目"
               onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}
             >
               <Trash2 />
@@ -369,14 +473,12 @@ export function BpmnSemanticFields({
           }
           if (kind === 'list') {
             return (
-              <Field key={field.key}>
-                <FieldLabel>{field.label}</FieldLabel>
-                <Textarea
-                  rows={3}
-                  value={(data[field.key] as string[] | undefined)?.join('\n') ?? ''}
-                  onChange={(event) => update(field.key, event.target.value.split('\n').map((item) => item.trim()).filter(Boolean))}
-                />
-              </Field>
+              <StringListEditor
+                key={field.key}
+                label={field.label}
+                value={(data[field.key] as string[] | undefined) ?? []}
+                onChange={(items) => update(field.key, items)}
+              />
             )
           }
           if (kind === 'textarea') {
